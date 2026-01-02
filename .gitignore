@@ -1,0 +1,41 @@
+# Конфигурация и секреты (НИКОГДА НЕ ПУШИТЬ)
+.env
+config.ini
+
+# Python кэш и артефакты
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Виртуальное окружение
+venv/
+env/
+ENV/
+.venv/
+
+# IDE настройки
+.idea/
+.vscode/
+*.swp
+
+# Логи и базы данных (если локальные файлы)
+*.log
+*.sqlite
+*.db
