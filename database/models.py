@@ -11,6 +11,14 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=True)
+    
+    # Если None - значит подписка на ВСЕ страны. Иначе - список через запятую.
+    country_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
+    
+    # Лимит ключей в подписке. 0 = Безлимит (все доступные).
+    # Полезно для старых телефонов, которые не тянут 1000+ ключей.
+    subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -19,7 +27,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    vless_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False) # Text для длинных ключей
+    vless_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     region: Mapped[str] = mapped_column(String, nullable=False, index=True)
     latency_ms: Mapped[int] = mapped_column(Integer, default=9999)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
