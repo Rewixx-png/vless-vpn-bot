@@ -17,16 +17,10 @@ from handlers.admin.states import AdminStates
 
 router = Router()
 
-# --- UTILS FOR SAFE UI UPDATES ---
 async def safe_edit_text(message: Message, text: str, reply_markup=None, parse_mode="HTML"):
-    """
-    Безопасное редактирование сообщения с защитой от FloodWait.
-    Если ловим FloodWait, ждем и пробуем снова (но не слишком долго).
-    """
     try:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except TelegramRetryAfter as e:
-        # Если Telegram просит подождать, логируем и ждем, но не дольше 10 сек для UI
         wait_time = e.retry_after
         if wait_time < 15:
             await asyncio.sleep(wait_time)
@@ -35,12 +29,10 @@ async def safe_edit_text(message: Message, text: str, reply_markup=None, parse_m
             except Exception:
                 pass
     except TelegramBadRequest:
-        # Текст не изменился или сообщение удалено
         pass
     except Exception:
         pass
 
-# --- FIX UNKNOWN REGIONS ---
 @router.callback_query(F.data == "admin_fix_regions")
 async def fix_unknown_regions(callback: CallbackQuery):
     msg = await callback.message.edit_text(
@@ -71,7 +63,6 @@ async def fix_unknown_regions(callback: CallbackQuery):
     CHUNK_SIZE = 100
     chunks = [unique_hosts[i:i + CHUNK_SIZE] for i in range(0, len(unique_hosts), CHUNK_SIZE)]
 
-    # Запускаем UI Updater в фоне
     async def ui_updater():
         while not stats["is_finished"]:
             percent = int((stats["processed"] / total_hosts) * 100) if total_hosts > 0 else 0
@@ -81,7 +72,7 @@ async def fix_unknown_regions(callback: CallbackQuery):
                 f"📡 Проверено хостов: {stats['processed']}/{total_hosts}"
             )
             await safe_edit_text(msg, text)
-            await asyncio.sleep(5.0) # Обновляем раз в 5 секунд
+            await asyncio.sleep(5.0)
 
     updater_task = asyncio.create_task(ui_updater())
 
@@ -97,7 +88,6 @@ async def fix_unknown_regions(callback: CallbackQuery):
                             stats["fixed"] += 1
 
             stats["processed"] += len(chunk)
-            # Небольшая пауза между чанками, чтобы не грузить API
             await asyncio.sleep(0.5)
 
     stats["is_finished"] = True
@@ -111,13 +101,11 @@ async def fix_unknown_regions(callback: CallbackQuery):
         reply_markup=back_to_admin()
     )
 
-# --- FORCE RECHECK (DEEP) ---
 @router.callback_query(F.data == "admin_recheck")
 async def recheck_all_subs(callback: CallbackQuery):
     msg = await callback.message.edit_text(
         "🚀 <b>Starting DEEP Force Recheck...</b>\n"
-        "<i>Включаю эмуляцию VLESS клиента (Real URL Test)...</i>\n"
-        "⏳ Это займет больше времени, но результат будет точным.", 
+        "<i>Включаю эмуляцию VLESS клиента (Real URL Test)...</i>", 
         parse_mode="HTML"
     )
 
@@ -152,6 +140,7 @@ async def recheck_all_subs(callback: CallbackQuery):
                 latency = 9999
 
                 if parsed:
+                    # Таймаут здесь уже обрабатывается внутри check_connection в VlessChecker (мы его обновили)
                     latency_check = await VlessChecker.check_connection(parsed)
                     if latency_check != -1:
                         is_alive = True
@@ -184,11 +173,10 @@ async def recheck_all_subs(callback: CallbackQuery):
                 f"🆙 Воскресло: {stats['revived']}"
             )
             await safe_edit_text(msg, text)
-            await asyncio.sleep(5.0) # Безопасный интервал обновления
+            await asyncio.sleep(5.0)
 
     updater_task = asyncio.create_task(ui_updater())
 
-    # 30 параллельных проверок
     workers = [asyncio.create_task(worker()) for _ in range(30)]
     await asyncio.gather(*workers)
 
@@ -199,13 +187,12 @@ async def recheck_all_subs(callback: CallbackQuery):
         msg,
         f"🏁 <b>Deep Recheck завершен!</b>\n\n"
         f"Всего ключей: <b>{stats['total']}</b>\n"
-        f"🟢 <b>Активных (Real URL Test): {stats['active_now']}</b>\n"
+        f"🟢 <b>Активных: {stats['active_now']}</b>\n"
         f"💀 Отсеяно мертвых: <b>{stats['died']}</b>\n"
         f"🆙 Воскресло: <b>{stats['revived']}</b>\n",
         reply_markup=back_to_admin()
     )
 
-# --- ADD SUBSCRIPTIONS ---
 @router.callback_query(F.data == "admin_add")
 async def start_add_subs(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -265,7 +252,11 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                     break
 
                 try:
-                    success, region, latency, err = await VlessChecker.process_subscription(link, session=session)
+                    # Добавлен жесткий таймаут для воркера, хотя VlessChecker.process_subscription теперь тоже имеет таймаут
+                    success, region, latency, err = await asyncio.wait_for(
+                        VlessChecker.process_subscription(link, session=session),
+                        timeout=15.0
+                    )
 
                     if success:
                         try:
@@ -277,6 +268,9 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                     else:
                         stats["err"] += 1
                         report.append(f"❌ {err}")
+                except asyncio.TimeoutError:
+                    stats["err"] += 1
+                    report.append("❌ Timeout Worker")
                 except Exception:
                     stats["err"] += 1
                 finally:
@@ -311,7 +305,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     await safe_edit_text(msg, final_text, reply_markup=back_to_admin())
     await state.clear()
 
-# --- MANAGE SUBS ---
 @router.callback_query(F.data == "admin_manage")
 async def manage_regions(callback: CallbackQuery):
     regions = await SubRepo.get_regions()

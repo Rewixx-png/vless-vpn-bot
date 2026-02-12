@@ -12,11 +12,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=True)
     
-    # Если None - значит подписка на ВСЕ страны. Иначе - список через запятую.
     country_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
-    
-    # Лимит ключей в подписке. 0 = Безлимит (все доступные).
-    # Полезно для старых телефонов, которые не тянут 1000+ ключей.
     subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -37,3 +33,9 @@ class Subscription(Base):
 
     def __repr__(self):
         return f"<Subscription(id={self.id}, region='{self.region}')>"
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=True)

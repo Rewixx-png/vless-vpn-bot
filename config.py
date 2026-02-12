@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     CRYPTO_BOT_TOKEN: SecretStr
     
     # Новые настройки для подписки
-    PUBLIC_IP: str = "127.0.0.1"
-    WEB_PORT: int = 8000
+    PUBLIC_IP: str = "108.165.164.160"
+    WEB_PORT: int = 2096
 
     class Config:
         env_file = ".env"

@@ -26,8 +26,6 @@ async def do_broadcast(message: Message, state: FSMContext):
         try:
             await message.copy_to(chat_id=user_id)
             count += 1
-            # Увеличиваем задержку до 0.1с (10 сообщений в секунду)
-            # Лимит Telegram ~30 в сек, но лучше иметь запас
             await asyncio.sleep(0.1) 
         except Exception:
             pass

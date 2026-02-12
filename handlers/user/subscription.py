@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from database.repo import SubRepo, UserRepo
+from database.repo import SubRepo, UserRepo, SystemRepo
 from keyboards.user import settings_countries_kb, back_to_home, settings_main_kb, settings_limit_kb
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
@@ -12,9 +12,17 @@ router = Router()
 
 @router.callback_query(F.data == "my_subscription")
 async def give_subscription_link(callback: CallbackQuery):
-    """Выдача ссылки-подписки с ID пользователя"""
     user_id = callback.from_user.id
-    sub_url = f"http://{config.PUBLIC_IP}:{config.WEB_PORT}/sub?id={user_id}"
+    
+    # Проверяем наличие настроенного домена
+    domain = await SystemRepo.get_config("public_domain")
+    
+    if domain:
+        # Если домен есть, используем HTTPS
+        sub_url = f"https://{domain}/sub?id={user_id}"
+    else:
+        # Иначе старый метод (HTTP IP:PORT)
+        sub_url = f"http://{config.PUBLIC_IP}:{config.WEB_PORT}/sub?id={user_id}"
 
     user = await UserRepo.get_user(user_id)
     limit_txt = "Все доступные"
@@ -32,7 +40,6 @@ async def give_subscription_link(callback: CallbackQuery):
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_home())
 
-# --- HLAVNOE MENU NASTROEK ---
 @router.callback_query(F.data == "settings_main")
 async def open_settings_main(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -47,7 +54,6 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
         reply_markup=settings_main_kb(limit)
     )
 
-# --- LIMIT SETTINGS ---
 @router.callback_query(F.data == "settings_limit")
 async def open_settings_limit(callback: CallbackQuery):
     user = await UserRepo.get_user(callback.from_user.id)
@@ -72,7 +78,7 @@ async def set_limit_value(callback: CallbackQuery, state: FSMContext):
             "Пример: <code>15</code> или <code>500</code>\n"
             "<i>Отправьте 0 для безлимита.</i>",
             parse_mode="HTML",
-            reply_markup=back_to_home() # Или кнопка назад к настройкам, но home тоже ок
+            reply_markup=back_to_home()
         )
         await state.set_state(UserStates.waiting_for_custom_limit)
         return
@@ -94,7 +100,6 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
         await UserRepo.update_subscription_limit(message.from_user.id, limit)
         await state.clear()
         
-        # Подтверждение и возврат в меню
         await edit_or_answer(
             message, 
             f"✅ <b>Лимит установлен: {limit} шт.</b>\nНастройки обновлены.",
@@ -110,10 +115,8 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
             state
         )
 
-# --- COUNTRY SETTINGS ---
 @router.callback_query(F.data == "settings_countries")
 async def open_settings_countries(callback: CallbackQuery):
-    """Открывает меню настройки стран"""
     all_regions = await SubRepo.get_regions()
     user_filter = await UserRepo.get_user_filter(callback.from_user.id)
 
@@ -127,7 +130,6 @@ async def open_settings_countries(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("toggle_country_"))
 async def toggle_country(callback: CallbackQuery):
-    """Переключает статус одной страны"""
     region = callback.data.split("toggle_country_")[1]
     user_id = callback.from_user.id
 
@@ -154,7 +156,6 @@ async def toggle_country(callback: CallbackQuery):
 
 @router.callback_query(F.data == "set_all_on")
 async def set_all_on(callback: CallbackQuery):
-    """Включить все (сбросить фильтр)"""
     all_regions = await SubRepo.get_regions()
     await UserRepo.update_user_filter(callback.from_user.id, None)
     await callback.message.edit_reply_markup(
@@ -163,7 +164,6 @@ async def set_all_on(callback: CallbackQuery):
 
 @router.callback_query(F.data == "set_all_off")
 async def set_all_off(callback: CallbackQuery):
-    """Выключить все"""
     all_regions = await SubRepo.get_regions()
     first = [all_regions[0]] if all_regions else None
     await UserRepo.update_user_filter(callback.from_user.id, first)

@@ -8,9 +8,10 @@ def main_admin_kb():
     kb.button(text="♻️ Force Recheck", callback_data="admin_recheck")
     kb.button(text="🌍 Fix Unknowns", callback_data="admin_fix_regions")
     kb.button(text="📊 Статистика", callback_data="admin_stats")
+    kb.button(text="⚙️ Домен", callback_data="admin_domain")
     kb.button(text="📢 Рассылка", callback_data="admin_broadcast")
     kb.button(text="👤 Выйти в режим Юзера", callback_data="user_mode")
-    kb.adjust(2, 2, 1, 1, 1)
+    kb.adjust(2, 2, 2, 2)
     return kb.as_markup()
 
 def back_to_admin():
@@ -23,7 +24,6 @@ def regions_kb(regions: list, prefix: str):
     for reg in regions:
         kb.button(text=f"{reg}", callback_data=f"{prefix}_{reg}")
     
-    # Делаем 3 кнопки в ряд для компактности
     kb.adjust(3)
     
     back_callback = "admin_home" if "manage" in prefix else "home"
@@ -47,4 +47,14 @@ def sub_control_kb(sub_id: int, is_active: bool, region: str):
     kb.button(text="❌ УДАЛИТЬ", callback_data=f"sub_delete_{sub_id}")
     kb.button(text="🔙 Назад", callback_data=f"manage_region_{region}")
     kb.adjust(2, 1)
+    return kb.as_markup()
+
+def domain_error_kb(domain: str):
+    kb = InlineKeyboardBuilder()
+    # Передаем домен в callback data (обрезаем если слишком длинный, но для обычных доменов хватит)
+    # Макс длина callback_data = 64 байта.
+    safe_domain = domain[:40] 
+    kb.button(text="⚠️ Всё равно сохранить", callback_data=f"force_save_domain:{safe_domain}")
+    kb.button(text="🔙 Отмена", callback_data="admin_domain")
+    kb.adjust(1)
     return kb.as_markup()

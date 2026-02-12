@@ -7,6 +7,7 @@ import json
 import ssl
 import uuid
 import struct
+import socket
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Tuple, Dict, List
 
@@ -61,7 +62,7 @@ class VlessChecker:
                     "host": host,
                     "port": port,
                     "protocol": protocol,
-                    "uuid": parsed.username, # UUID находится в username части url
+                    "uuid": parsed.username, 
                     "security": security,
                     "sni": sni,
                     "path": path,
@@ -72,26 +73,13 @@ class VlessChecker:
 
     @classmethod
     async def check_connection(cls, config_data: Dict) -> int:
-        """
-        Умная проверка:
-        1. Если VLESS/Reality -> Выполняет реальный URL Test (Deep Check).
-        2. Если VMess/Trojan -> Выполняет TCP/SSL Handshake (Legacy).
-        """
         protocol = config_data.get("protocol")
-        
-        # Для VLESS используем глубокую проверку (URL Test)
         if protocol == "vless":
             return await cls._deep_check_vless(config_data)
-        
-        # Для остальных пока оставляем TCP Handshake (можно доработать позже)
         return await cls._simple_tcp_check(config_data)
 
     @staticmethod
     async def _deep_check_vless(conf: Dict) -> int:
-        """
-        Реализация VLESS URL Test на чистом Python.
-        Отправляет VLESS Request Header и пытается получить ответ от cp.cloudflare.com/generate_204
-        """
         host = conf["host"]
         port = conf["port"]
         user_uuid = conf.get("uuid")
@@ -101,35 +89,26 @@ class VlessChecker:
             return -1
 
         try:
-            # Преобразуем UUID в байты
             uid_bytes = uuid.UUID(user_uuid).bytes
         except ValueError:
             return -1
 
-        # Целевой URL для проверки (Google generate_204 или Cloudflare)
-        # Используем HTTP (порт 80), так как HTTPS внутри туннеля требует еще одного слоя TLS
         target_host = "cp.cloudflare.com"
         target_port = 80
         
-        # Формируем VLESS Request Header
-        # Ver(1) + UUID(16) + AddonsLen(1) + Cmd(1) + Port(2) + AddrType(1) + AddrLen(1) + Addr(N)
-        
-        # Cmd: 1 = TCP
-        # AddrType: 2 = Domain
         addr_bytes = target_host.encode()
         
         vless_header = (
-            b'\x00' +                 # Version
-            uid_bytes +               # UUID
-            b'\x00' +                 # Addons Length (0)
-            b'\x01' +                 # Command (TCP)
-            struct.pack('>H', target_port) + # Port (Big Endian)
-            b'\x02' +                 # Address Type (Domain)
-            struct.pack('B', len(addr_bytes)) + # Address Length
-            addr_bytes                # Address
+            b'\x00' +                 
+            uid_bytes +               
+            b'\x00' +                 
+            b'\x01' +                 
+            struct.pack('>H', target_port) + 
+            b'\x02' +                 
+            struct.pack('B', len(addr_bytes)) + 
+            addr_bytes                
         )
 
-        # HTTP Request Payload
         http_request = (
             f"HEAD /generate_204 HTTP/1.1\r\n"
             f"Host: {target_host}\r\n"
@@ -141,60 +120,37 @@ class VlessChecker:
         
         writer = None
         try:
-            # 1. Establish TCP/SSL Connection
             ssl_ctx = ssl.create_default_context()
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
             
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, ssl=ssl_ctx, server_hostname=sni),
-                timeout=4.0
+                timeout=5.0
             )
 
-            # 2. Send VLESS Header + HTTP Request
             writer.write(vless_header + http_request)
             await writer.drain()
 
-            # 3. Read Response Header (VLESS Response)
-            # VLESS Response: Ver(1) + AddonsLen(1) + Addons(N)
-            # Обычно 1-й байт версии ответа совпадает с версией запроса (0)
-            
-            # Читаем начало ответа. 
-            # В Reality при ошибке UUID сервер может вернуть HTML Fallback сайта,
-            # а при успехе - VLESS заголовок, а за ним HTTP ответ.
-            
-            # Читаем первые 512 байт
-            data = await asyncio.wait_for(reader.read(512), timeout=4.0)
+            data = await asyncio.wait_for(reader.read(512), timeout=5.0)
             
             latency = int((time.monotonic() - start_time) * 1000)
-            
-            # Анализируем ответ
-            # Успешный VLESS ответ должен начинаться с байта версии (0x00)
-            # И содержать внутри HTTP ответ от нашего таргета
             
             if len(data) < 2:
                 return -1
 
-            # Если вернулся чистый HTTP (начинается с 'HTTP' или '<html'), значит это Fallback -> UUID неверный
             if data.startswith(b'HTTP') or data.startswith(b'<html') or data.startswith(b'<!DOC'):
                 return -1
-            
-            # Проверяем наличие 204 ответа внутри бинарного потока (после заголовка VLESS)
-            # Заголовок VLESS ответа: 1 байт версия, 1 байт длина аддонов.
-            # Если аддонов 0, то данные начинаются с 3-го байта.
             
             if b'HTTP/1.1 204' in data or b'HTTP/1.0 204' in data:
                  return latency
             
-            # Иногда данные приходят кусками, попробуем дочитать если не нашли
             if len(data) > 2:
-                # Попробуем найти HTTP ответ
                 if b'HTTP' in data:
-                    # Проверяем код
                     if b'204 No Content' in data or b'200 OK' in data:
                         return latency
 
-            return -1 # Ответ непонятный, считаем сломанным
+            return -1 
 
         except Exception:
             return -1
@@ -205,7 +161,6 @@ class VlessChecker:
 
     @staticmethod
     async def _simple_tcp_check(conf: Dict) -> int:
-        """Старая проверка (для VMess/Trojan) - просто хендшейк"""
         host = conf["host"]
         port = conf["port"]
         sni = conf.get("sni", "") or host
@@ -236,13 +191,11 @@ class VlessChecker:
                 except: pass
             return -1
 
-    # --- BATCH GEOIP ---
     @classmethod
     async def get_regions_batch(cls, ips: List[str], session: aiohttp.ClientSession) -> Dict[str, str]:
         results = {}
         if not ips: return results
         try:
-            # Используем retry для ip-api, так как он часто сбоит
             for _ in range(2):
                 try:
                     payload = [{"query": ip, "fields": "status,query,country,countryCode"} for ip in ips]
@@ -252,7 +205,7 @@ class VlessChecker:
                             for item in data:
                                 if item.get("status") == "success":
                                     results[item.get("query")] = f"{cls._get_flag_emoji(item.get('countryCode'))} {item.get('country')}"
-                            break # Успех
+                            break 
                 except:
                     await asyncio.sleep(1)
         except: pass
@@ -272,10 +225,66 @@ class VlessChecker:
         parsed = cls.parse_config(config_url)
         if not parsed: return False, "", 0, "Format Error"
         
-        # Deep Check
-        latency = await cls.check_connection(parsed)
+        try:
+            # Оборачиваем всю проверку в жесткий таймаут, чтобы избежать зависаний на 99%
+            latency = await asyncio.wait_for(cls.check_connection(parsed), timeout=12.0)
+        except asyncio.TimeoutError:
+            latency = -1
+        except Exception:
+            latency = -1
         
         if latency == -1: return False, "", 0, "Dead (Deep Check)"
         
         region = await cls.get_region(parsed["host"], session)
         return True, region, latency, "OK"
+
+    @staticmethod
+    async def get_server_public_ip() -> str | None:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get('https://api.ipify.org', timeout=5) as resp:
+                    return await resp.text()
+        except:
+            return None
+
+    @staticmethod
+    async def verify_domain(domain: str) -> Tuple[bool, str]:
+        """
+        Проверка домена:
+        1. DNS резолв (должен совпадать с публичным IP сервера)
+        2. SSL handshake (порт 443)
+        """
+        try:
+            # 1. Получаем IP домена
+            domain_ip = socket.gethostbyname(domain)
+            
+            # 2. Получаем свой внешний IP
+            my_ip = await VlessChecker.get_server_public_ip()
+            
+            if not my_ip:
+                # Если не удалось узнать свой IP, пробуем проверить локально настроенный
+                # Но лучше вернуть ошибку, чтобы пользователь убедился
+                return False, "Не удалось определить внешний IP сервера."
+            
+            if domain_ip != my_ip:
+                return False, f"DNS домена указывает на {domain_ip}, а IP сервера: {my_ip}"
+
+            # 3. Проверка SSL (Порт 443)
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False # Проверяем само наличие SSL, валидность сертификата - вторично, но лучше проверить
+            ctx.verify_mode = ssl.CERT_NONE # Для теста соединения достаточно
+            
+            try:
+                conn = asyncio.open_connection(domain, 443, ssl=ctx)
+                reader, writer = await asyncio.wait_for(conn, timeout=5.0)
+                writer.close()
+                await writer.wait_closed()
+            except Exception as e:
+                return False, f"Ошибка подключения к порту 443 (SSL): {e}"
+
+            return True, "OK"
+
+        except socket.gaierror:
+            return False, "Не удалось разрешить DNS имя (Домен не существует?)"
+        except Exception as e:
+            return False, f"Ошибка проверки: {e}"

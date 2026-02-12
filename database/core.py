@@ -11,20 +11,16 @@ async_session_factory = async_sessionmaker(
 
 async def init_db():
     async with engine.begin() as conn:
-        # Создаем таблицы, если их нет
         await conn.run_sync(Base.metadata.create_all)
 
-        # --- AUTO-MIGRATION (HOTFIX) ---
-        # Ручные миграции для добавления колонок без потери данных
         try:
-            # 1. Добавляем country_filter
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL"))
-            
-            # 2. Добавляем subscription_limit (0 = все)
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0"))
             
+            # Миграция для SystemConfig (если таблицы нет, она создастся create_all, но на всякий случай)
+            # В данном контексте create_all выше уже создаст таблицу system_config, так как она добавлена в models.py
+            pass
         except Exception as e:
-            # Игнорируем ошибку, если колонка уже есть
             print(f"⚠️ Migration warning: {e}")
 
 async def get_session() -> AsyncSession:
