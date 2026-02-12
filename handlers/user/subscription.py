@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from database.repo import SubRepo, UserRepo, SystemRepo
-from keyboards.user import settings_countries_kb, back_to_home, settings_main_kb, settings_limit_kb, sub_action_kb
+from keyboards.user import settings_countries_kb, back_to_home, settings_main_kb, settings_limit_kb, sub_action_kb, settings_tags_kb
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
 from config import config
@@ -15,11 +15,33 @@ router = Router()
 async def give_subscription_menu(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    domain = await SystemRepo.get_config("public_domain")
+    db_domain = await SystemRepo.get_config("public_domain")
+    domain = db_domain if db_domain else config.public_domain
     
-    # Определяем протокол
-    protocol = "https" if domain else "http"
-    host = domain if domain else f"{config.PUBLIC_IP}:{config.WEB_PORT}"
+    cf_http_ports = [80, 8080, 2052, 2082, 2086, 2095]
+    cf_https_ports = [443, 2053, 2083, 2087, 2096, 8443]
+
+    protocol = "http"
+    host = ""
+
+    if domain:
+        if config.WEB_PORT in cf_https_ports:
+            protocol = "https"
+        elif config.WEB_PORT == 80:
+            protocol = "http"
+        else:
+            protocol = "http"
+
+        if ":" in domain:
+             host = domain
+        else:
+             if (protocol == "http" and config.WEB_PORT == 80) or (protocol == "https" and config.WEB_PORT == 443):
+                 host = domain
+             else:
+                 host = f"{domain}:{config.WEB_PORT}"
+    else:
+        protocol = "http"
+        host = f"{config.PUBLIC_IP}:{config.WEB_PORT}"
     
     sub_url = f"{protocol}://{host}/sub?id={user_id}"
 
@@ -28,28 +50,24 @@ async def give_subscription_menu(callback: CallbackQuery):
     if user and user.subscription_limit > 0:
         limit_txt = f"{user.subscription_limit} шт."
 
-    # Генерируем Deep Link для FlClash (экспериментально)
-    # Формат: clash://install-config?url=<encoded_url>&name=<name>
     encoded_url = urllib.parse.quote(sub_url)
     flclash_deep_link = f"clash://install-config?url={encoded_url}&name=VLESS-VPN"
     
-    # Текст сообщения
     text = (
         "📦 <b>Ваша ссылка подписки</b>\n\n"
         f"🔗 <b>URL:</b>\n<code>{sub_url}</code>\n\n"
         "👆 <i>Нажмите на ссылку, чтобы скопировать.</i>\n\n"
-        "⚙️ <b>Как добавить в FlClash / v2rayNG:</b>\n"
-        "1. Скопируйте ссылку выше.\n"
-        "2. Откройте приложение.\n"
-        "3. Нажмите кнопку ➕ -> «Импорт из буфера обмена» (Import from Clipboard).\n"
-        "4. Обновите подписку.\n\n"
+        "⚙️ <b>Инструкция:</b>\n"
+        "1. Скопируйте ссылку.\n"
+        "2. В приложении нажмите «+» -> «Импорт из буфера» / «Subscription».\n"
+        "3. Обновите подписку (Update Subscription).\n\n"
         f"ℹ️ Ключей в подписке: <b>{limit_txt}</b>"
     )
 
-    if not domain:
+    if protocol == "http":
         text += (
-            "\n\n⚠️ <b>Важно:</b> Ссылка использует <b>HTTP</b>.\n"
-            "Если приложение выдает ошибку, включите в настройках приложения:\n"
+            "\n\n⚠️ <b>Внимание:</b> Ссылка использует <b>HTTP</b>.\n"
+            "В настройках приложения (v2rayNG/FlClash) включите:\n"
             "<i>Allow Insecure / Разрешить небезопасные соединения</i>"
         )
 
@@ -71,6 +89,34 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
         reply_markup=settings_main_kb(limit)
     )
+
+@router.callback_query(F.data == "settings_tags")
+async def open_settings_tags(callback: CallbackQuery):
+    user_tags = await UserRepo.get_user_tags(callback.from_user.id)
+    await callback.message.edit_text(
+        "🏷 <b>Фильтр тегов</b>\n"
+        "Выберите, какие ключи добавлять в подписку.\n\n"
+        "✅ = Оставить только эти ключи\n"
+        "❌ = Не фильтровать по этому тегу\n\n"
+        "<i>Если выбрано несколько, будут показаны ключи, соответствующие ВСЕМ условиям сразу.</i>",
+        parse_mode="HTML",
+        reply_markup=settings_tags_kb(user_tags)
+    )
+
+@router.callback_query(F.data.startswith("toggle_tag_"))
+async def toggle_tag(callback: CallbackQuery):
+    tag = callback.data.split("toggle_tag_")[1]
+    user_id = callback.from_user.id
+    
+    current_tags = await UserRepo.get_user_tags(user_id)
+    
+    if tag in current_tags:
+        current_tags.remove(tag)
+    else:
+        current_tags.append(tag)
+        
+    await UserRepo.update_user_tags(user_id, current_tags)
+    await callback.message.edit_reply_markup(reply_markup=settings_tags_kb(current_tags))
 
 @router.callback_query(F.data == "settings_limit")
 async def open_settings_limit(callback: CallbackQuery):

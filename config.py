@@ -8,9 +8,18 @@ class Settings(BaseSettings):
     DB_URL: str
     CRYPTO_BOT_TOKEN: SecretStr
     
-    # Новые настройки для подписки
+    # Публичный IP сервера
     PUBLIC_IP: str = "108.165.164.160"
-    WEB_PORT: int = 2096
+    
+    # Порт веб-сервера подписок
+    # ВАЖНО: Используйте 2082 для Cloudflare (HTTP), так как 2096 требует SSL (HTTPS)
+    # Порты Cloudflare HTTP: 80, 8080, 2052, 2082, 2095
+    # Порты Cloudflare HTTPS: 443, 2053, 2083, 2096
+    WEB_PORT: int = 2082
+    
+    # Если вы хотите принудительно использовать HTTPS ссылки при работе через HTTP порт (за Cloudflare)
+    # установите этот домен (например: vpn.example.com)
+    public_domain: str | None = None
 
     class Config:
         env_file = ".env"

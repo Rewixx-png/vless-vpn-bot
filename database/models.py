@@ -13,6 +13,9 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=True)
     
     country_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
+    # Новое поле: фильтр тегов (через запятую: "ai,fast,wl")
+    tags_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
+    
     subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -26,6 +29,8 @@ class Subscription(Base):
     vless_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     region: Mapped[str] = mapped_column(String, nullable=False, index=True)
     latency_ms: Mapped[int] = mapped_column(Integer, default=9999)
+    ai_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     added_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

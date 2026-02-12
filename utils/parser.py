@@ -1,4 +1,3 @@
-import re
 import logging
 from urllib.parse import parse_qs, unquote
 
@@ -11,32 +10,39 @@ class LinkParser:
             if not link.startswith("vless://"):
                 return None
                 
+            full_link = link
             rest = link[8:]
             
             remarks = "VLESS Config"
             if "#" in rest:
                 rest, remarks_raw = rest.split("#", 1)
                 remarks = unquote(remarks_raw).strip()
-                if not remarks:
-                    remarks = "VLESS Config"
-                
+            
             params_str = ""
             if "?" in rest:
                 rest, params_str = rest.split("?", 1)
                 
             if "@" in rest:
-                userinfo, server_port = rest.split("@", 1)
+                userinfo, host_port = rest.split("@", 1)
             else:
                 return None
+            
+            # ИСПРАВЛЕНИЕ: Используем rsplit для корректного отделения порта
+            if ":" in host_port:
+                server, port_str = host_port.rsplit(":", 1)
                 
-            if ":" in server_port:
-                server, port = server_port.split(":", 1)
+                # Обработка IPv6 в скобках [::1]
+                if server.startswith("[") and server.endswith("]"):
+                    server = server[1:-1]
+                
                 try:
-                    port = int(port)
-                except:
-                    logger.warning(f"Invalid port in link: {link[:30]}...")
+                    port = int(port_str)
+                except ValueError:
+                    logger.warning(f"Invalid port: {port_str} in link {link[:30]}...")
                     return None
             else:
+                # Нет порта - некорректная ссылка VLESS
+                logger.warning(f"No port found in link: {link[:30]}...")
                 return None
                 
             params = parse_qs(params_str)
@@ -61,10 +67,10 @@ class LinkParser:
                 "mode": get_p("mode", ""),
                 "ps": remarks,
                 "name": remarks,
-                "full_config": link,
-                "original": link
+                "full_config": full_link,
+                "original": full_link
             }
             return config
         except Exception as e:
-            logger.error(f"Error parsing link: {link[:50]}... Error: {e}")
+            logger.error(f"Parser Error processing link: {link[:50]}... Exception: {e}")
             return None

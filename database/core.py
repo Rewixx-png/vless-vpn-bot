@@ -17,9 +17,10 @@ async def init_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0"))
             
-            # Миграция для SystemConfig (если таблицы нет, она создастся create_all, но на всякий случай)
-            # В данном контексте create_all выше уже создаст таблицу system_config, так как она добавлена в models.py
-            pass
+            # Миграция для тегов
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"))
+            
+            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE"))
         except Exception as e:
             print(f"⚠️ Migration warning: {e}")
 

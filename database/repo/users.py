@@ -20,13 +20,11 @@ class UserRepo:
 
     @staticmethod
     async def get_user(user_id: int) -> User | None:
-        """Получить объект пользователя целиком"""
         async with async_session_factory() as session:
             return await session.get(User, user_id)
 
     @staticmethod
     async def get_user_filter(user_id: int) -> list[str] | None:
-        """Возвращает список стран или None (если выбраны все)"""
         async with async_session_factory() as session:
             user = await session.get(User, user_id)
             if user and user.country_filter:
@@ -35,7 +33,6 @@ class UserRepo:
 
     @staticmethod
     async def update_user_filter(user_id: int, countries: list[str] | None):
-        """Обновляет фильтр стран. Если countries пустой или None - сброс на 'Все'"""
         filter_str = ",".join(countries) if countries else None
         async with async_session_factory() as session:
             stmt = update(User).where(User.id == user_id).values(country_filter=filter_str)
@@ -43,8 +40,23 @@ class UserRepo:
             await session.commit()
 
     @staticmethod
+    async def get_user_tags(user_id: int) -> list[str]:
+        async with async_session_factory() as session:
+            user = await session.get(User, user_id)
+            if user and user.tags_filter:
+                return user.tags_filter.split(",")
+            return []
+
+    @staticmethod
+    async def update_user_tags(user_id: int, tags: list[str] | None):
+        tags_str = ",".join(tags) if tags else None
+        async with async_session_factory() as session:
+            stmt = update(User).where(User.id == user_id).values(tags_filter=tags_str)
+            await session.execute(stmt)
+            await session.commit()
+
+    @staticmethod
     async def update_subscription_limit(user_id: int, limit: int):
-        """Обновляет лимит количества ключей (0 = безлимит)"""
         async with async_session_factory() as session:
             stmt = update(User).where(User.id == user_id).values(subscription_limit=limit)
             await session.execute(stmt)

@@ -20,20 +20,9 @@ def user_main_kb(is_admin: bool = False):
     return kb.as_markup()
 
 def sub_action_kb(url: str, deep_link: str = None):
-    """
-    Клавиатура действий с подпиской.
-    Если передан deep_link (например clash://), добавляем кнопку автоимпорта.
-    ПРИМЕЧАНИЕ: Telegram может не открывать нестандартные схемы (clash://) 
-    на некоторых устройствах, но стоит попробовать.
-    """
     kb = InlineKeyboardBuilder()
-    
-    # Кнопка автоимпорта (экспериментально)
-    # kb.button(text="🚀 Импорт в FlClash (Beta)", url=deep_link) # Часто не работает в TG
-    
     kb.button(text="⚙️ Настройки", callback_data="settings_main")
     kb.button(text="🔙 Главное меню", callback_data="home")
-    
     kb.adjust(1)
     return kb.as_markup()
 
@@ -43,10 +32,34 @@ def settings_main_kb(current_limit: int):
     limit_text = "♾️ Все" if current_limit == 0 else f"{current_limit} шт."
     
     kb.button(text="🌍 Выбор стран", callback_data="settings_countries")
+    kb.button(text="🏷 Выбор тегов (AI, Fast)", callback_data="settings_tags")
     kb.button(text=f"🔢 Лимит ключей: {limit_text}", callback_data="settings_limit")
     
     kb.button(text="🔙 В главное меню", callback_data="home")
     kb.adjust(1)
+    return kb.as_markup()
+
+def settings_tags_kb(selected_tags: list):
+    """
+    Клавиатура выбора тегов.
+    Tags: ['ai', 'fast', 'wl']
+    """
+    kb = InlineKeyboardBuilder()
+    
+    # AI
+    ai_status = "✅" if "ai" in selected_tags else "❌"
+    kb.button(text=f"{ai_status} [AI] (ChatGPT)", callback_data="toggle_tag_ai")
+    
+    # Fast
+    fast_status = "✅" if "fast" in selected_tags else "❌"
+    kb.button(text=f"{fast_status} [Fast] (<100ms)", callback_data="toggle_tag_fast")
+    
+    # WL
+    wl_status = "✅" if "wl" in selected_tags else "❌"
+    kb.button(text=f"{wl_status} [WL] (Reality)", callback_data="toggle_tag_wl")
+    
+    kb.adjust(1)
+    kb.button(text="🔙 Назад", callback_data="settings_main")
     return kb.as_markup()
 
 def settings_limit_kb(current: int):

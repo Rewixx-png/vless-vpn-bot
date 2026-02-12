@@ -1,15 +1,25 @@
 import logging
+import re
 
 logger = logging.getLogger("ClashGen")
 
 class ClashGenerator:
     @staticmethod
+    def is_valid_short_id(sid: str) -> bool:
+        """
+        Проверяет валидность Short ID для Reality.
+        Должен быть hex-строкой.
+        """
+        if not sid:
+            return True # Пустой sid допустим
+        # Проверка на Hex символы
+        return bool(re.match(r'^[0-9a-fA-F]+$', sid))
+
+    @staticmethod
     def generate_conf(configs: list) -> str:
         proxies = []
         name_counter = {}
         
-        logger.info(f"Generating Clash config for {len(configs)} configs")
-
         for cfg in configs:
             try:
                 base_name = cfg.get('name') or cfg.get('ps') or f"VLESS-{cfg['server']}"
@@ -30,7 +40,8 @@ class ClashGenerator:
                     "cipher": "auto",
                     "udp": True,
                     "tls": False,
-                    "network": cfg.get('type', 'tcp')
+                    "network": cfg.get('type', 'tcp'),
+                    "skip-cert-verify": True
                 }
 
                 if cfg.get('flow'):
@@ -40,20 +51,28 @@ class ClashGenerator:
                 
                 if security in ['tls', 'reality']:
                     proxy['tls'] = True
-                    proxy['servername'] = cfg.get('sni') or cfg.get('host', '')
+                    proxy['servername'] = cfg.get('sni') or cfg.get('host') or cfg['server']
                     proxy['client-fingerprint'] = cfg.get('fp', 'chrome')
                     
                     if security == 'reality':
+                        pbk = cfg.get('pbk', '')
+                        sid = cfg.get('sid', '')
+                        
+                        # ВАЖНО: Валидация short-id
+                        if not ClashGenerator.is_valid_short_id(sid):
+                            logger.warning(f"Skipping config {final_name}: Invalid short-id '{sid}'")
+                            continue # Пропускаем этот конфиг, чтобы не сломать весь файл
+
                         proxy['reality-opts'] = {
-                            "public-key": cfg.get('pbk', ''),
-                            "short-id": cfg.get('sid', '')
+                            "public-key": pbk,
+                            "short-id": sid
                         }
 
                 if proxy['network'] == 'ws':
                     ws_opts = {
                         "path": cfg.get('path', '/'),
                         "headers": {
-                            "Host": cfg.get('host') or cfg.get('sni', '')
+                            "Host": cfg.get('host') or cfg.get('sni') or cfg['server']
                         }
                     }
                     proxy['ws-opts'] = ws_opts
@@ -83,6 +102,7 @@ class ClashGenerator:
             yaml_lines.append(f"    udp: {str(p['udp']).lower()}")
             yaml_lines.append(f"    tls: {str(p['tls']).lower()}")
             yaml_lines.append(f"    network: {p['network']}")
+            yaml_lines.append(f"    skip-cert-verify: {str(p['skip-cert-verify']).lower()}")
             
             if 'flow' in p:
                 yaml_lines.append(f"    flow: {p['flow']}")
@@ -94,7 +114,7 @@ class ClashGenerator:
             if 'reality-opts' in p:
                 yaml_lines.append("    reality-opts:")
                 yaml_lines.append(f"      public-key: {p['reality-opts']['public-key']}")
-                yaml_lines.append(f"      short-id: {p['reality-opts']['short-id']}")
+                yaml_lines.append(f"      short-id: \"{p['reality-opts']['short-id']}\"") # short-id лучше в кавычки
                 
             if 'ws-opts' in p:
                 yaml_lines.append("    ws-opts:")
@@ -128,7 +148,6 @@ class ClashGenerator:
             for name in proxy_names:
                 yaml_lines.append(f"      - \"{ClashGenerator.escape_yaml_str(name)}\"")
 
-        logger.info(f"Generated YAML with {len(proxies)} proxies.")
         return "\n".join(yaml_lines)
 
     @staticmethod
