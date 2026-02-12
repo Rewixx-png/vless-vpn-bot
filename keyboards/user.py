@@ -16,12 +16,28 @@ def user_main_kb(is_admin: bool = False):
     if is_admin:
         kb.button(text="🛠 Админ Панель", callback_data="admin_home")
 
-    # Сетка
     kb.adjust(1, 1, 2, 2, 1) 
     return kb.as_markup()
 
+def sub_action_kb(url: str, deep_link: str = None):
+    """
+    Клавиатура действий с подпиской.
+    Если передан deep_link (например clash://), добавляем кнопку автоимпорта.
+    ПРИМЕЧАНИЕ: Telegram может не открывать нестандартные схемы (clash://) 
+    на некоторых устройствах, но стоит попробовать.
+    """
+    kb = InlineKeyboardBuilder()
+    
+    # Кнопка автоимпорта (экспериментально)
+    # kb.button(text="🚀 Импорт в FlClash (Beta)", url=deep_link) # Часто не работает в TG
+    
+    kb.button(text="⚙️ Настройки", callback_data="settings_main")
+    kb.button(text="🔙 Главное меню", callback_data="home")
+    
+    kb.adjust(1)
+    return kb.as_markup()
+
 def settings_main_kb(current_limit: int):
-    """Главное меню настроек"""
     kb = InlineKeyboardBuilder()
     
     limit_text = "♾️ Все" if current_limit == 0 else f"{current_limit} шт."
@@ -34,7 +50,6 @@ def settings_main_kb(current_limit: int):
     return kb.as_markup()
 
 def settings_limit_kb(current: int):
-    """Выбор количества ключей"""
     kb = InlineKeyboardBuilder()
     
     options = [10, 50, 100, 200, 0]
@@ -48,7 +63,7 @@ def settings_limit_kb(current: int):
         
     kb.button(text="✍️ Свой вариант", callback_data="set_limit_custom")
     
-    kb.adjust(2) # 2 колонки
+    kb.adjust(2)
     kb.button(text="🔙 Назад", callback_data="settings_main")
     return kb.as_markup()
 

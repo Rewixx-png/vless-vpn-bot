@@ -26,8 +26,19 @@ def regions_kb(regions: list, prefix: str):
     
     kb.adjust(3)
     
+    # Кнопка удаления всех конфигов (только в меню управления)
+    if "manage" in prefix:
+        kb.row(InlineKeyboardButton(text="🔥 Удалить ВСЕ ключи", callback_data="admin_delete_all"))
+    
     back_callback = "admin_home" if "manage" in prefix else "home"
     kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback))
+    return kb.as_markup()
+
+def confirm_delete_all_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔥 ДА, УДАЛИТЬ ВСЕ", callback_data="admin_delete_all_confirm")
+    kb.button(text="🔙 Нет, отмена", callback_data="admin_manage")
+    kb.adjust(1)
     return kb.as_markup()
 
 def subs_list_kb(subs: list, region: str):

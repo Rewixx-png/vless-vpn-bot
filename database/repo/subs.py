@@ -96,6 +96,13 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
+    async def delete_all_subs():
+        """Удаляет ВСЕ подписки из базы данных"""
+        async with async_session_factory() as session:
+            await session.execute(delete(Subscription))
+            await session.commit()
+
+    @staticmethod
     async def toggle_active(sub_id: int, current_state: bool):
         async with async_session_factory() as session:
             stmt = update(Subscription).where(Subscription.id == sub_id).values(is_active=not current_state)

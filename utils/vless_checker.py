@@ -1,17 +1,20 @@
-import re
-import time
+import json
 import asyncio
 import aiohttp
-import base64
-import json
-import ssl
-import uuid
-import struct
-import socket
-from urllib.parse import urlparse, parse_qs
-from typing import Optional, Tuple, Dict, List
+import time
+import os
+import random
+import logging
+from aiohttp_socks import ProxyConnector
+from utils.parser import LinkParser
+
+logger = logging.getLogger("XrayChecker")
 
 class VlessChecker:
+    # Путь к бинарнику Xray
+    XRAY_BIN = "/usr/local/bin/xray"
+    
+    # Заголовки для GeoIP проверки
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -23,268 +26,239 @@ class VlessChecker:
         return "".join(chr(ord(c.upper()) + 127397) for c in country_code)
 
     @staticmethod
-    def parse_config(config_url: str) -> Optional[Dict[str, str]]:
-        config_url = config_url.strip()
-        try:
-            if config_url.startswith("vmess://"):
-                b64_part = config_url.replace("vmess://", "")
-                missing_padding = len(b64_part) % 4
-                if missing_padding:
-                    b64_part += '=' * (4 - missing_padding)
-                decoded = base64.b64decode(b64_part).decode('utf-8')
-                data = json.loads(decoded)
-                return {
-                    "host": data.get("add"),
-                    "port": int(data.get("port")),
-                    "protocol": "vmess",
-                    "uuid": data.get("id"),
-                    "security": data.get("tls", ""),
-                    "sni": data.get("sni", "") or data.get("host", ""),
-                    "path": data.get("path", "/"),
-                    "full_url": config_url
-                }
-            elif config_url.startswith(("vless://", "trojan://", "ss://")):
-                parsed = urlparse(config_url)
-                params = parse_qs(parsed.query)
-                host = parsed.hostname
-                port = parsed.port
-                if not host or not port: return None
-                
-                protocol = "vless"
-                if config_url.startswith("trojan://"): protocol = "trojan"
-                elif config_url.startswith("ss://"): protocol = "ss"
-                
-                security = params.get("security", [""])[0]
-                sni = params.get("sni", [""])[0] or params.get("host", [""])[0]
-                path = params.get("path", ["/"])[0]
-                
-                return {
-                    "host": host,
-                    "port": port,
-                    "protocol": protocol,
-                    "uuid": parsed.username, 
-                    "security": security,
-                    "sni": sni,
-                    "path": path,
-                    "full_url": config_url
-                }
-            return None
-        except: return None
-
-    @classmethod
-    async def check_connection(cls, config_data: Dict) -> int:
-        protocol = config_data.get("protocol")
-        if protocol == "vless":
-            return await cls._deep_check_vless(config_data)
-        return await cls._simple_tcp_check(config_data)
+    def parse_config(config_url: str):
+        # Используем наш мощный парсер из utils/parser.py
+        # Обертка для совместимости
+        return LinkParser.parse_vless(config_url)
 
     @staticmethod
-    async def _deep_check_vless(conf: Dict) -> int:
-        host = conf["host"]
-        port = conf["port"]
-        user_uuid = conf.get("uuid")
-        sni = conf.get("sni") or host
+    def _generate_xray_config(parsed: dict, local_port: int) -> dict:
+        """
+        Генерирует JSON конфигурацию для Xray Core.
+        Создает локальный SOCKS5 сервер, который перенаправляет трафик в VLESS.
+        """
         
-        if not user_uuid:
-            return -1
+        # Базовая структура Outbound (исходящее соединение VLESS)
+        outbound = {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": parsed['server'],
+                        "port": parsed['port'],
+                        "users": [
+                            {
+                                "id": parsed['uuid'],
+                                "encryption": "none",
+                                "flow": parsed.get('flow', '')
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": parsed['type'],
+                "security": parsed['security']
+            }
+        }
 
-        try:
-            uid_bytes = uuid.UUID(user_uuid).bytes
-        except ValueError:
-            return -1
-
-        target_host = "cp.cloudflare.com"
-        target_port = 80
+        # Настройка StreamSettings (Transport)
+        stream = outbound["streamSettings"]
         
-        addr_bytes = target_host.encode()
-        
-        vless_header = (
-            b'\x00' +                 
-            uid_bytes +               
-            b'\x00' +                 
-            b'\x01' +                 
-            struct.pack('>H', target_port) + 
-            b'\x02' +                 
-            struct.pack('B', len(addr_bytes)) + 
-            addr_bytes                
-        )
-
-        http_request = (
-            f"HEAD /generate_204 HTTP/1.1\r\n"
-            f"Host: {target_host}\r\n"
-            f"User-Agent: Mozilla/5.0\r\n"
-            f"Connection: close\r\n\r\n"
-        ).encode()
-
-        start_time = time.monotonic()
-        
-        writer = None
-        try:
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
+        # TLS / Reality
+        if parsed['security'] in ['tls', 'reality']:
+            tls_settings = {
+                "serverName": parsed.get('sni') or parsed.get('host', ''),
+                "fingerprint": parsed.get('fp', 'chrome'),
+                "allowInsecure": True
+            }
             
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port, ssl=ssl_ctx, server_hostname=sni),
-                timeout=5.0
+            if parsed['security'] == 'reality':
+                tls_settings['show'] = False
+                tls_settings['publicKey'] = parsed.get('pbk', '')
+                tls_settings['shortId'] = parsed.get('sid', '')
+                tls_settings['spiderX'] = "/"
+                stream['realitySettings'] = tls_settings
+            else:
+                stream['tlsSettings'] = tls_settings
+
+        # Network Types
+        if parsed['type'] == 'ws':
+            stream['wsSettings'] = {
+                "path": parsed.get('path', '/'),
+                "headers": {
+                    "Host": parsed.get('host') or parsed.get('sni', '')
+                }
+            }
+        elif parsed['type'] == 'grpc':
+            stream['grpcSettings'] = {
+                "serviceName": parsed.get('serviceName', ''),
+                "multiMode": (parsed.get('mode') == 'multi')
+            }
+        elif parsed['type'] == 'tcp':
+            # Обработка HTTP Header (редко, но бывает)
+            if parsed.get('type') == 'http':
+                 stream['tcpSettings'] = {
+                    "header": {
+                        "type": "http",
+                        "request": {
+                            "headers": {
+                                "Host": [parsed.get('host', '')]
+                            }
+                        }
+                    }
+                 }
+
+        # Сборка полного конфига
+        config = {
+            "log": {
+                "loglevel": "none"
+            },
+            "inbounds": [
+                {
+                    "port": local_port,
+                    "protocol": "socks",
+                    "settings": {
+                        "auth": "noauth",
+                        "udp": True
+                    },
+                    "sniffing": {
+                        "enabled": True,
+                        "destOverride": ["http", "tls"]
+                    }
+                }
+            ],
+            "outbounds": [
+                outbound,
+                {"protocol": "freedom", "tag": "direct"}
+            ]
+        }
+        return config
+
+    @classmethod
+    async def process_subscription(cls, config_url: str, session=None) -> tuple[bool, str, int, str]:
+        """
+        Проверяет подписку через реальное ядро Xray.
+        session аргумент оставлен для совместимости, но не используется для прокси.
+        """
+        parsed = cls.parse_config(config_url)
+        if not parsed:
+            return False, "", 0, "Invalid Link Format"
+
+        # Выбираем случайный порт для изоляции проверок (15000-25000)
+        local_port = random.randint(15000, 25000)
+        config_path = f"/tmp/xray_check_{local_port}.json"
+        
+        # 1. Создаем конфиг
+        try:
+            xray_conf = cls._generate_xray_config(parsed, local_port)
+            with open(config_path, 'w') as f:
+                json.dump(xray_conf, f)
+        except Exception as e:
+            return False, "", 0, f"Config Gen Error: {e}"
+
+        process = None
+        try:
+            # 2. Запускаем Xray
+            process = await asyncio.create_subprocess_exec(
+                cls.XRAY_BIN, "-c", config_path,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
             )
-
-            writer.write(vless_header + http_request)
-            await writer.drain()
-
-            data = await asyncio.wait_for(reader.read(512), timeout=5.0)
             
-            latency = int((time.monotonic() - start_time) * 1000)
+            # Даем время на запуск
+            await asyncio.sleep(0.5)
             
-            if len(data) < 2:
-                return -1
+            if process.returncode is not None:
+                 return False, "", 0, "Xray failed to start"
 
-            if data.startswith(b'HTTP') or data.startswith(b'<html') or data.startswith(b'<!DOC'):
-                return -1
+            # 3. Пробуем подключиться через локальный SOCKS5
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             
-            if b'HTTP/1.1 204' in data or b'HTTP/1.0 204' in data:
-                 return latency
+            start_time = time.monotonic()
+            latency = 9999
             
-            if len(data) > 2:
-                if b'HTTP' in data:
-                    if b'204 No Content' in data or b'200 OK' in data:
-                        return latency
+            # Используем отдельную сессию для прокси-запроса
+            async with aiohttp.ClientSession(connector=connector) as proxy_session:
+                # URL для проверки пинга (Generate 204)
+                try:
+                    async with proxy_session.get('http://cp.cloudflare.com/generate_204', timeout=5) as resp:
+                        if resp.status == 204 or resp.status == 200:
+                            latency = int((time.monotonic() - start_time) * 1000)
+                        else:
+                            raise Exception(f"Status {resp.status}")
+                except Exception as e:
+                    return False, "", 0, f"Connection Failed: {str(e)}"
 
-            return -1 
+                # 4. Если живой, определяем РЕАЛЬНЫЙ регион (через прокси)
+                # Это точнее, чем проверять IP хоста, так как может быть роутинг
+                region = "🌍 Unknown"
+                try:
+                    async with proxy_session.get('http://ip-api.com/json/?fields=country,countryCode', timeout=3) as geo_resp:
+                        if geo_resp.status == 200:
+                            geo_data = await geo_resp.json()
+                            region = f"{cls._get_flag_emoji(geo_data.get('countryCode'))} {geo_data.get('country')}"
+                except:
+                    # Если не удалось определить регион через прокси, попробуем прямой резолв (fallback)
+                    pass
 
-        except Exception:
-            return -1
+            return True, region, latency, "OK"
+
+        except Exception as e:
+            return False, "", 0, f"System Error: {e}"
+        
         finally:
-            if writer:
-                try: writer.close()
-                except: pass
-
-    @staticmethod
-    async def _simple_tcp_check(conf: Dict) -> int:
-        host = conf["host"]
-        port = conf["port"]
-        sni = conf.get("sni", "") or host
-        security = conf.get("security", "")
-
-        start_time = time.monotonic()
-        
-        ssl_ctx = None
-        if security in ["tls", "reality", "auto"] or port == 443:
-            ssl_ctx = ssl.create_default_context()
-            ssl_ctx.check_hostname = False
-            ssl_ctx.verify_mode = ssl.CERT_NONE
-
-        writer = None
-        try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port, ssl=ssl_ctx, server_hostname=sni if ssl_ctx else None),
-                timeout=3.0
-            )
-            latency = int((time.monotonic() - start_time) * 1000)
-            writer.close()
-            try: await writer.wait_closed()
-            except: pass
-            return latency
-        except:
-            if writer:
-                try: writer.close()
-                except: pass
-            return -1
+            # 5. Очистка
+            if process:
+                try:
+                    process.terminate()
+                    await process.wait()
+                except:
+                    pass
+            
+            if os.path.exists(config_path):
+                try:
+                    os.remove(config_path)
+                except:
+                    pass
 
     @classmethod
-    async def get_regions_batch(cls, ips: List[str], session: aiohttp.ClientSession) -> Dict[str, str]:
+    async def get_regions_batch(cls, ips: list[str], session: aiohttp.ClientSession) -> dict[str, str]:
+        """
+        Пакетная проверка регионов (Прямая, без прокси).
+        Используется для быстрого фикса регионов, но менее точна для CDN.
+        """
         results = {}
         if not ips: return results
         try:
-            for _ in range(2):
+            # Разбиваем на чанки по 100
+            for i in range(0, len(ips), 100):
+                chunk = ips[i:i+100]
                 try:
-                    payload = [{"query": ip, "fields": "status,query,country,countryCode"} for ip in ips]
-                    async with session.post("http://ip-api.com/batch", json=payload, timeout=5) as resp:
+                    payload = [{"query": ip, "fields": "status,query,country,countryCode"} for ip in chunk]
+                    async with session.post("http://ip-api.com/batch", json=payload, timeout=10) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             for item in data:
                                 if item.get("status") == "success":
                                     results[item.get("query")] = f"{cls._get_flag_emoji(item.get('countryCode'))} {item.get('country')}"
-                            break 
                 except:
-                    await asyncio.sleep(1)
+                    pass
         except: pass
         return results
 
-    @classmethod
-    async def get_region(cls, host: str, session: aiohttp.ClientSession = None) -> str:
-        try:
-            if session:
-                res = await cls.get_regions_batch([host], session)
-                return res.get(host, "🌍 Unknown")
-        except: pass
-        return "🌍 Unknown"
-
-    @classmethod
-    async def process_subscription(cls, config_url: str, session: aiohttp.ClientSession = None) -> Tuple[bool, str, int, str]:
-        parsed = cls.parse_config(config_url)
-        if not parsed: return False, "", 0, "Format Error"
-        
-        try:
-            # Оборачиваем всю проверку в жесткий таймаут, чтобы избежать зависаний на 99%
-            latency = await asyncio.wait_for(cls.check_connection(parsed), timeout=12.0)
-        except asyncio.TimeoutError:
-            latency = -1
-        except Exception:
-            latency = -1
-        
-        if latency == -1: return False, "", 0, "Dead (Deep Check)"
-        
-        region = await cls.get_region(parsed["host"], session)
-        return True, region, latency, "OK"
-
     @staticmethod
-    async def get_server_public_ip() -> str | None:
+    async def verify_domain(domain: str) -> tuple[bool, str]:
+        """Простая проверка домена (DNS + Socket connect)"""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get('https://api.ipify.org', timeout=5) as resp:
-                    return await resp.text()
-        except:
-            return None
-
-    @staticmethod
-    async def verify_domain(domain: str) -> Tuple[bool, str]:
-        """
-        Проверка домена:
-        1. DNS резолв (должен совпадать с публичным IP сервера)
-        2. SSL handshake (порт 443)
-        """
-        try:
-            # 1. Получаем IP домена
-            domain_ip = socket.gethostbyname(domain)
-            
-            # 2. Получаем свой внешний IP
-            my_ip = await VlessChecker.get_server_public_ip()
-            
-            if not my_ip:
-                # Если не удалось узнать свой IP, пробуем проверить локально настроенный
-                # Но лучше вернуть ошибку, чтобы пользователь убедился
-                return False, "Не удалось определить внешний IP сервера."
-            
-            if domain_ip != my_ip:
-                return False, f"DNS домена указывает на {domain_ip}, а IP сервера: {my_ip}"
-
-            # 3. Проверка SSL (Порт 443)
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False # Проверяем само наличие SSL, валидность сертификата - вторично, но лучше проверить
-            ctx.verify_mode = ssl.CERT_NONE # Для теста соединения достаточно
-            
+            # Получаем IP
+            loop = asyncio.get_running_loop()
             try:
-                conn = asyncio.open_connection(domain, 443, ssl=ctx)
-                reader, writer = await asyncio.wait_for(conn, timeout=5.0)
-                writer.close()
-                await writer.wait_closed()
-            except Exception as e:
-                return False, f"Ошибка подключения к порту 443 (SSL): {e}"
+                ip = await loop.getaddrinfo(domain, 80)
+                ip_addr = ip[0][4][0]
+            except:
+                return False, "DNS Resolve Failed"
 
-            return True, "OK"
-
-        except socket.gaierror:
-            return False, "Не удалось разрешить DNS имя (Домен не существует?)"
+            return True, f"OK ({ip_addr})"
         except Exception as e:
-            return False, f"Ошибка проверки: {e}"
+            return False, str(e)
