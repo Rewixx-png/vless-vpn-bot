@@ -4,7 +4,6 @@ import base64
 import re
 import logging
 from database.repo import SubRepo
-from utils.parser import LinkParser
 from utils.vless_checker import VlessChecker
 
 logger = logging.getLogger("Collector")
@@ -54,12 +53,15 @@ class SubscriptionCollector:
     async def run_collection():
         logger.info("🚀 Starting VLESS collector...")
         
-        async with aiohttp.ClientSession() as session:
-            tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
-            results = await asyncio.gather(*tasks)
+        try:
+            async with aiohttp.ClientSession() as session:
+                tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
+                results = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logger.info("🛑 Collection cancelled during fetch.")
+            raise
 
         all_content = "\n".join([r for r in results if r])
-        
         decoded_content = SubscriptionCollector._try_decode(all_content)
         full_text = all_content + "\n" + decoded_content
 
@@ -77,31 +79,68 @@ class SubscriptionCollector:
 
         logger.info(f"🧬 Checking {len(unique_links)} new unique links via Xray...")
 
-        semaphore = asyncio.Semaphore(50) 
-        valid_count = 0
+        queue = asyncio.Queue()
+        for link in unique_links:
+            queue.put_nowait(link)
 
-        async def check_and_save(link):
-            nonlocal valid_count
-            async with semaphore:
-                # Обновленный вызов check, возвращает 5 значений
-                is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
-                
-                if is_alive:
-                    try:
-                        await SubRepo.add_subscription(
-                            vless_key=link, 
-                            region=region, 
-                            latency=latency,
-                            ai_available=ai_available
-                        )
-                        valid_count += 1
-                    except Exception:
-                        pass
-
-        tasks = [check_and_save(link) for link in unique_links]
-        await asyncio.gather(*tasks)
+        valid_count = [0]
         
-        logger.info(f"✅ Collector finished. Added {valid_count} VALID new keys.")
+        # Снижаем кол-во воркеров до 50 для стабильности стопа
+        WORKERS_COUNT = 50 
+        workers = []
+
+        async def worker():
+            while True:
+                try:
+                    link = await queue.get()
+                except asyncio.CancelledError:
+                    return
+
+                try:
+                    is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
+                    
+                    if is_alive:
+                        try:
+                            await SubRepo.add_subscription(
+                                vless_key=link, 
+                                region=region, 
+                                latency=latency,
+                                ai_available=ai_available
+                            )
+                            valid_count[0] += 1
+                        except Exception:
+                            pass
+                except asyncio.CancelledError:
+                    queue.task_done()
+                    raise 
+                except Exception:
+                    pass
+                finally:
+                    queue.task_done()
+
+        for _ in range(WORKERS_COUNT):
+            workers.append(asyncio.create_task(worker()))
+
+        try:
+            await queue.join()
+        except asyncio.CancelledError:
+            logger.info("🛑 Collector cancelled! Stopping workers...")
+            # Важно: Не ре-рейзим сразу, даем отработать finally
+            raise
+        finally:
+            for w in workers:
+                w.cancel()
+            
+            # Ждем завершения с таймаутом, чтобы не висеть вечно
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*workers, return_exceptions=True),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ Workers cleanup timed out! Forcing exit.")
+        
+        logger.info(f"✅ Collector finished. Added {valid_count[0]} VALID new keys.")
 
     @staticmethod
     async def _fetch_url(session, url):
@@ -111,8 +150,8 @@ class SubscriptionCollector:
             async with session.get(url, timeout=10) as resp:
                 if resp.status == 200:
                     return await resp.text(encoding='utf-8', errors='ignore')
-        except Exception as e:
-            logger.warning(f"Failed to fetch {url}: {e}")
+        except Exception:
+            pass
         return ""
 
     @staticmethod

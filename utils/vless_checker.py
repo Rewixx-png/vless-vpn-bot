@@ -18,11 +18,16 @@ class VlessChecker:
     }
 
     GEOIP_PROVIDERS = [
-        {"url": "http://ip-api.com/json/?fields=country,countryCode", "code_key": "countryCode", "name_key": None}, # name_key None = используем код
-        {"url": "http://ipwho.is/", "code_key": "country_code", "name_key": None},
+        {"url": "http://ip-api.com/json/?fields=country,countryCode", "code_key": "countryCode", "name_key": None},
+        {"url": "https://ipwho.is/", "code_key": "country_code", "name_key": None},
         {"url": "https://api.myip.com", "code_key": "cc", "name_key": None},
         {"url": "https://ipinfo.io/json", "code_key": "country", "name_key": None},
-        {"url": "https://ifconfig.co/json", "code_key": "country_iso", "name_key": None}
+        {"url": "https://ifconfig.co/json", "code_key": "country_iso", "name_key": None},
+        {"url": "https://freeipapi.com/api/json", "code_key": "countryCode", "name_key": None},
+        {"url": "https://api.ip.sb/geoip", "code_key": "country_code", "name_key": None},
+        {"url": "https://ip.guide/", "code_key": "country", "name_key": None, "nested": "location"}, 
+        {"url": "https://www.iplocate.io/api/lookup/", "code_key": "country_code", "name_key": None},
+        {"url": "https://ipapi.co/json/", "code_key": "country_code", "name_key": None} 
     ]
 
     @staticmethod
@@ -89,24 +94,27 @@ class VlessChecker:
 
         local_port = random.randint(10000, 60000)
         config_path = f"/tmp/xray_check_{local_port}.json"
-        
+        process = None
+
         try:
             xray_conf = cls._generate_xray_config(parsed, local_port)
             with open(config_path, 'w') as f:
                 json.dump(xray_conf, f)
-        except Exception as e:
-            return False, "", 0, False, f"Config Gen Error: {e}"
 
-        process = None
-        try:
+            # Запускаем процесс
             process = await asyncio.create_subprocess_exec(
                 cls.XRAY_BIN, "-c", config_path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL
             )
-            await asyncio.sleep(0.2)
-            if process.returncode is not None:
-                 return False, "", 0, False, "Xray failed to start"
+            
+            # Ждем немного инициализации
+            try:
+                await asyncio.wait_for(process.wait(), timeout=0.2)
+                # Если процесс завершился за 0.2 сек - значит ошибка запуска
+                return False, "", 0, False, "Xray failed to start"
+            except asyncio.TimeoutError:
+                pass # Процесс работает, всё ок
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             timeout = aiohttp.ClientTimeout(total=6, connect=3)
@@ -140,8 +148,13 @@ class VlessChecker:
                             async with proxy_session.get(provider["url"], timeout=2.5) as geo_resp:
                                 if geo_resp.status == 200:
                                     data = await geo_resp.json()
-                                    code = data.get(provider["code_key"])
-                                    # ИЗМЕНЕНИЕ: Формат региона теперь "🇩🇪 DE"
+                                    code = None
+                                    if provider.get("nested"):
+                                        nested = data.get(provider["nested"])
+                                        if nested: code = nested.get(provider["code_key"])
+                                    else:
+                                        code = data.get(provider["code_key"])
+                                        
                                     if code and len(code) == 2:
                                         region = f"{cls._get_flag_emoji(code)} {code.upper()}"
                                         break
@@ -149,15 +162,27 @@ class VlessChecker:
 
             return True, region, latency, ai_available, "OK"
 
+        except asyncio.CancelledError:
+            # При отмене задачи УБИВАЕМ процесс сразу для скорости
+            if process:
+                try: process.kill() 
+                except: pass
+            raise # Пробрасываем отмену дальше
+
         except Exception as e:
             return False, "", 0, False, f"System Error: {e}"
+
         finally:
+            # Очистка ресурсов
             if process:
                 try:
-                    process.terminate()
-                    try: await asyncio.wait_for(process.wait(), timeout=0.1)
-                    except: process.kill()
+                    if process.returncode is None:
+                        process.terminate()
+                        # Даем совсем мало времени на мягкое закрытие
+                        try: await asyncio.wait_for(process.wait(), timeout=0.05)
+                        except: process.kill()
                 except: pass
+            
             if os.path.exists(config_path):
                 try: os.remove(config_path)
                 except: pass
@@ -177,7 +202,6 @@ class VlessChecker:
                             for item in data:
                                 if item.get("status") == "success":
                                     code = item.get("countryCode")
-                                    # Формат региона в batch
                                     results[item.get("query")] = f"{cls._get_flag_emoji(code)} {code}"
                 except: pass
         except: pass

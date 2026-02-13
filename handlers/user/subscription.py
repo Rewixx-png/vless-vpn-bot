@@ -12,13 +12,12 @@ from config import config
 router = Router()
 
 @router.callback_query(F.data == "my_subscription")
-async def give_subscription_menu(callback: CallbackQuery):
+async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
     
-    cf_http_ports = [80, 8080, 2052, 2082, 2086, 2095]
     cf_https_ports = [443, 2053, 2083, 2087, 2096, 8443]
 
     protocol = "http"
@@ -71,36 +70,51 @@ async def give_subscription_menu(callback: CallbackQuery):
             "<i>Allow Insecure / Разрешить небезопасные соединения</i>"
         )
 
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message, 
         text, 
-        parse_mode="HTML", 
-        reply_markup=sub_action_kb(sub_url, flclash_deep_link)
+        sub_action_kb(sub_url, flclash_deep_link),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data == "settings_main")
 async def open_settings_main(callback: CallbackQuery, state: FSMContext):
+    # СОХРАНЯЕМ msg_id ПЕРЕД ОЧИСТКОЙ
+    data = await state.get_data()
+    last_msg_id = data.get("last_msg_id")
+
     await state.clear()
+
+    # ВОССТАНАВЛИВАЕМ msg_id
+    if last_msg_id:
+        await state.update_data(last_msg_id=last_msg_id)
+
     user = await UserRepo.get_user(callback.from_user.id)
     limit = user.subscription_limit if user else 0
     
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         "⚙️ <b>Настройки подписки</b>\n\n"
         "Здесь можно настроить фильтры, если приложение не справляется с большим списком серверов.",
-        parse_mode="HTML",
-        reply_markup=settings_main_kb(limit)
+        settings_main_kb(limit),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data == "settings_tags")
-async def open_settings_tags(callback: CallbackQuery):
+async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
     user_tags = await UserRepo.get_user_tags(callback.from_user.id)
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         "🏷 <b>Фильтр тегов</b>\n"
         "Выберите, какие ключи добавлять в подписку.\n\n"
         "✅ = Оставить только эти ключи\n"
         "❌ = Не фильтровать по этому тегу\n\n"
         "<i>Если выбрано несколько, будут показаны ключи, соответствующие ВСЕМ условиям сразу.</i>",
-        parse_mode="HTML",
-        reply_markup=settings_tags_kb(user_tags)
+        settings_tags_kb(user_tags),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data.startswith("toggle_tag_"))
@@ -119,16 +133,18 @@ async def toggle_tag(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=settings_tags_kb(current_tags))
 
 @router.callback_query(F.data == "settings_limit")
-async def open_settings_limit(callback: CallbackQuery):
+async def open_settings_limit(callback: CallbackQuery, state: FSMContext):
     user = await UserRepo.get_user(callback.from_user.id)
     limit = user.subscription_limit if user else 0
     
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         "🔢 <b>Лимит серверов</b>\n\n"
         "Бот может выдавать только N самых быстрых серверов.\n"
         "0 = Безлимит (все доступные).",
-        parse_mode="HTML",
-        reply_markup=settings_limit_kb(limit)
+        settings_limit_kb(limit),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data.startswith("set_limit_"))
@@ -136,11 +152,13 @@ async def set_limit_value(callback: CallbackQuery, state: FSMContext):
     val = callback.data.split("set_limit_")[1]
     
     if val == "custom":
-        await callback.message.edit_text(
+        await edit_or_answer(
+            callback.message,
             "✍️ <b>Введите число ключей:</b>\n"
             "(0 для сброса лимита)",
-            parse_mode="HTML",
-            reply_markup=back_to_home()
+            back_to_home(),
+            state,
+            media_url="video"
         )
         await state.set_state(UserStates.waiting_for_custom_limit)
         return
@@ -166,21 +184,24 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
             message, 
             f"✅ Лимит: <b>{limit}</b>",
             settings_main_kb(limit),
-            state
+            state,
+            media_url="video"
         )
 
     except ValueError:
-        await edit_or_answer(message, "⚠️ Введите число.", back_to_home(), state)
+        await edit_or_answer(message, "⚠️ Введите число.", back_to_home(), state, media_url="video")
 
 @router.callback_query(F.data == "settings_countries")
-async def open_settings_countries(callback: CallbackQuery):
+async def open_settings_countries(callback: CallbackQuery, state: FSMContext):
     all_regions = await SubRepo.get_regions()
     user_filter = await UserRepo.get_user_filter(callback.from_user.id)
 
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         "🌍 <b>Фильтр стран</b>\n(✅ = Включено)",
-        parse_mode="HTML",
-        reply_markup=settings_countries_kb(all_regions, user_filter)
+        settings_countries_kb(all_regions, user_filter),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data.startswith("toggle_country_"))

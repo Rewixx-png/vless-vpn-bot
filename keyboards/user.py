@@ -4,14 +4,19 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def user_main_kb(is_admin: bool = False):
     kb = InlineKeyboardBuilder()
     
+    # Primary Style (Green/Blueish look)
     kb.button(text="📥 Моя Подписка", callback_data="my_subscription")
+    kb.button(text="⚡️ Подключить VPN", callback_data="my_subscription")
+    
+    # Secondary
     kb.button(text="⚙️ Настройки", callback_data="settings_main")
     
+    # Info / Danger / Warning colors
     kb.button(text="📊 Статус сети", callback_data="public_stats")
     kb.button(text="📱 Приложения", callback_data="apps_menu")
     
     kb.button(text="ℹ️ Инструкция", callback_data="user_instruction") 
-    kb.button(text="💸 Поддержать", callback_data="donate_info")
+    kb.button(text="💜 Поддержать", callback_data="donate_info")
 
     if is_admin:
         kb.button(text="🛠 Админ Панель", callback_data="admin_home")
@@ -21,7 +26,7 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str, deep_link: str = None):
     kb = InlineKeyboardBuilder()
-    kb.button(text="⚙️ Настройки", callback_data="settings_main")
+    kb.button(text="⚙️ Настройки фильтров", callback_data="settings_main")
     kb.button(text="🔙 Главное меню", callback_data="home")
     kb.adjust(1)
     return kb.as_markup()
@@ -32,30 +37,23 @@ def settings_main_kb(current_limit: int):
     limit_text = "♾️ Все" if current_limit == 0 else f"{current_limit} шт."
     
     kb.button(text="🌍 Выбор стран", callback_data="settings_countries")
-    kb.button(text="🏷 Выбор тегов (AI, Fast)", callback_data="settings_tags")
-    kb.button(text=f"🔢 Лимит ключей: {limit_text}", callback_data="settings_limit")
+    kb.button(text="🏷 Теги (AI, Fast)", callback_data="settings_tags")
+    kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
     
     kb.button(text="🔙 В главное меню", callback_data="home")
     kb.adjust(1)
     return kb.as_markup()
 
 def settings_tags_kb(selected_tags: list):
-    """
-    Клавиатура выбора тегов.
-    Tags: ['ai', 'fast', 'wl']
-    """
     kb = InlineKeyboardBuilder()
     
-    # AI
-    ai_status = "✅" if "ai" in selected_tags else "❌"
+    ai_status = "🟢" if "ai" in selected_tags else "🔴"
     kb.button(text=f"{ai_status} [AI] (ChatGPT)", callback_data="toggle_tag_ai")
     
-    # Fast
-    fast_status = "✅" if "fast" in selected_tags else "❌"
+    fast_status = "🟢" if "fast" in selected_tags else "🔴"
     kb.button(text=f"{fast_status} [Fast] (<100ms)", callback_data="toggle_tag_fast")
     
-    # WL
-    wl_status = "✅" if "wl" in selected_tags else "❌"
+    wl_status = "🟢" if "wl" in selected_tags else "🔴"
     kb.button(text=f"{wl_status} [WL] (Reality)", callback_data="toggle_tag_wl")
     
     kb.adjust(1)
@@ -84,12 +82,8 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None):
     kb = InlineKeyboardBuilder()
 
     for reg in all_regions:
-        if selected_regions is None:
-            is_selected = True
-        else:
-            is_selected = reg in selected_regions
-
-        status = "✅" if is_selected else "❌"
+        is_selected = True if selected_regions is None else reg in selected_regions
+        status = "🟢" if is_selected else "🔴"
         text = f"{status} {reg}"
         kb.button(text=text, callback_data=f"toggle_country_{reg}")
 
@@ -118,7 +112,7 @@ def apps_os_kb():
 def apps_links_kb(apps_list: list):
     kb = InlineKeyboardBuilder()
     for app in apps_list:
-        kb.button(text=app["name"], url=app["url"])
+        kb.button(text=f"⬇️ {app['name']}", url=app["url"])
     kb.adjust(1)
     kb.button(text="🔙 К выбору ОС", callback_data="apps_menu")
     return kb.as_markup()
@@ -134,7 +128,7 @@ def crypto_amount_kb():
     kb = InlineKeyboardBuilder()
     amounts = [1, 3, 5, 10]
     for amt in amounts:
-        kb.button(text=f"{amt} USDT", callback_data=f"pay_create_{amt}")
+        kb.button(text=f"💎 {amt} USDT", callback_data=f"pay_create_{amt}")
     kb.button(text="✍️ Своя сумма", callback_data="pay_custom")
     kb.adjust(2)
     kb.button(text="🔙 Назад", callback_data="donate_info")

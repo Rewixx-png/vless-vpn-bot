@@ -1,12 +1,14 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 from database.repo import StatsRepo
 from keyboards.user import back_to_home
+from handlers.user.start import edit_or_answer
 
 router = Router()
 
 @router.callback_query(F.data == "public_stats")
-async def show_public_network_stats(callback: CallbackQuery):
+async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
     """Отображение подробной статистики для пользователей"""
     stats = await StatsRepo.get_network_stats()
     
@@ -19,4 +21,4 @@ async def show_public_network_stats(callback: CallbackQuery):
         f"<i>Эти серверы доступны прямо сейчас в вашей подписке.</i>"
     )
     
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_home())
+    await edit_or_answer(callback.message, text, back_to_home(), state, media_url="video")

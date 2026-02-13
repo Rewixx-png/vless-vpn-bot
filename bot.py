@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from aiogram import Bot, Dispatcher
 from config import config
 from database.core import init_db
@@ -8,8 +9,8 @@ from handlers.user.router import user_router
 from utils.payment import payment_client
 from utils.background import BackgroundTasks
 from utils.sub_server import SubscriptionServer
+from utils.video import VideoManager
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -19,25 +20,22 @@ logger = logging.getLogger(__name__)
 async def main():
     logger.info("Starting bot initialization...")
 
-    # Инициализация БД
     await init_db()
     logger.info("Database initialized.")
 
-    # Инициализация бота и диспетчера
+    # Подготовка видео (скачивание + ffmpeg)
+    await VideoManager.prepare()
+
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
 
-    # Регистрация агрегированных роутеров
     dp.include_router(user_router)
     dp.include_router(admin_router)
 
-    # Запуск фоновых задач (Планировщик)
-    asyncio.create_task(BackgroundTasks.start_scheduler())
+    await BackgroundTasks.start_scheduler()
     
-    # Запуск сервера подписки (HTTP)
-    asyncio.create_task(SubscriptionServer.start())
+    server_task = asyncio.create_task(SubscriptionServer.start())
 
-    # Удаление вебхука и запуск пуллинга
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot started polling.")
 
@@ -46,11 +44,26 @@ async def main():
     except Exception as e:
         logger.error(f"Error occurred: {e}")
     finally:
+        logger.info("🛑 Shutting down...")
+        
+        await BackgroundTasks.stop()
+        
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
+
         await bot.session.close()
         await payment_client.close()
+        
+        logger.info("👋 Bot stopped gracefully.")
 
 if __name__ == "__main__":
     try:
+        if sys.platform == 'win32':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user.")
+        pass

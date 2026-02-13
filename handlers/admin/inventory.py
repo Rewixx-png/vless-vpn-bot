@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from config import config
 from database.repo import SubRepo
 from utils.vless_checker import VlessChecker
-from keyboards.admin import back_to_admin, regions_kb, subs_list_kb, sub_control_kb, confirm_delete_all_kb
+from keyboards.admin import back_to_admin, regions_kb, subs_list_kb, sub_control_kb, confirm_delete_all_kb, confirm_delete_unknown_kb
 from handlers.admin.states import AdminStates
 
 router = Router()
@@ -131,7 +131,7 @@ async def recheck_all_subs(callback: CallbackQuery):
 
             try:
                 # ВНИМАНИЕ: session не нужен для нового чекера, передаем None
-                success, region, latency, err = await VlessChecker.process_subscription(sub.vless_key)
+                success, region, latency, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
 
                 if success:
                     stats["active_now"] += 1
@@ -139,7 +139,7 @@ async def recheck_all_subs(callback: CallbackQuery):
                         stats["revived"] += 1
                     
                     # Обновляем статус и, возможно, регион (так как Xray чекер точнее определяет регион)
-                    await SubRepo.update_sub_status(sub.id, is_active=True, latency=latency)
+                    await SubRepo.update_sub_status(sub.id, is_active=True, latency=latency, ai_available=ai_avail)
                     if region and "Unknown" not in region:
                         await SubRepo.update_sub_region(sub.id, region)
                 else:
@@ -242,11 +242,11 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
             try:
                 # Xray проверка
-                success, region, latency, err = await VlessChecker.process_subscription(link)
+                success, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
 
                 if success:
                     try:
-                        await SubRepo.add_subscription(vless_key=link, region=region, latency=latency)
+                        await SubRepo.add_subscription(vless_key=link, region=region, latency=latency, ai_available=ai_avail)
                         stats["added"] += 1
                         report.append(f"✅ {region} ({latency}ms)")
                     except IntegrityError:
@@ -294,6 +294,8 @@ async def manage_regions(callback: CallbackQuery):
     regions = await SubRepo.get_regions()
     if not regions:
         await callback.answer("База пуста.", show_alert=True)
+        # Все равно показываем меню, чтобы можно было удалить unknown если есть
+        await callback.message.edit_text("📂 База пуста, но вы можете проверить управление:", reply_markup=regions_kb([], "manage_region"))
         return
     await callback.message.edit_text("📂 Выберите регион для редактирования:", reply_markup=regions_kb(regions, "manage_region"))
 
@@ -356,3 +358,24 @@ async def execute_delete_all(callback: CallbackQuery):
     await SubRepo.delete_all_subs()
     await callback.answer("🗑 Все ключи успешно удалены!", show_alert=True)
     await callback.message.edit_text("✅ База данных очищена.", reply_markup=back_to_admin())
+
+@router.callback_query(F.data == "admin_delete_unknown")
+async def ask_delete_unknown(callback: CallbackQuery):
+    count = len(await SubRepo.get_unknown_regions_subs())
+    if count == 0:
+         await callback.answer("Нет ключей с Unknown регионом!", show_alert=True)
+         return
+         
+    await callback.message.edit_text(
+        f"⚠️ <b>Удаление Unknown</b>\n\n"
+        f"Найдено ключей: <b>{count}</b>\n"
+        "Вы хотите удалить все конфигурации с неопределенным регионом?",
+        parse_mode="HTML",
+        reply_markup=confirm_delete_unknown_kb()
+    )
+
+@router.callback_query(F.data == "admin_delete_unknown_confirm")
+async def execute_delete_unknown(callback: CallbackQuery):
+    await SubRepo.delete_unknown_subs()
+    await callback.answer("🗑 Unknown ключи удалены!", show_alert=True)
+    await callback.message.edit_text("✅ База очищена от Unknown регионов.", reply_markup=back_to_admin())

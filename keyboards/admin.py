@@ -26,8 +26,8 @@ def regions_kb(regions: list, prefix: str):
     
     kb.adjust(3)
     
-    # Кнопка удаления всех конфигов (только в меню управления)
     if "manage" in prefix:
+        kb.row(InlineKeyboardButton(text="🗑 Удалить Unknown", callback_data="admin_delete_unknown"))
         kb.row(InlineKeyboardButton(text="🔥 Удалить ВСЕ ключи", callback_data="admin_delete_all"))
     
     back_callback = "admin_home" if "manage" in prefix else "home"
@@ -37,6 +37,13 @@ def regions_kb(regions: list, prefix: str):
 def confirm_delete_all_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🔥 ДА, УДАЛИТЬ ВСЕ", callback_data="admin_delete_all_confirm")
+    kb.button(text="🔙 Нет, отмена", callback_data="admin_manage")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def confirm_delete_unknown_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 ДА, УДАЛИТЬ UNKNOWN", callback_data="admin_delete_unknown_confirm")
     kb.button(text="🔙 Нет, отмена", callback_data="admin_manage")
     kb.adjust(1)
     return kb.as_markup()
@@ -62,8 +69,6 @@ def sub_control_kb(sub_id: int, is_active: bool, region: str):
 
 def domain_error_kb(domain: str):
     kb = InlineKeyboardBuilder()
-    # Передаем домен в callback data (обрезаем если слишком длинный, но для обычных доменов хватит)
-    # Макс длина callback_data = 64 байта.
     safe_domain = domain[:40] 
     kb.button(text="⚠️ Всё равно сохранить", callback_data=f"force_save_domain:{safe_domain}")
     kb.button(text="🔙 Отмена", callback_data="admin_domain")

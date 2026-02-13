@@ -1,10 +1,11 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InputMediaVideo
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from config import config
 from database.repo import UserRepo, StatsRepo
 from keyboards.user import user_main_kb, back_to_home
+from utils.video import VideoManager
 
 router = Router()
 
@@ -14,26 +15,65 @@ async def clean_start(message: Message):
     except Exception:
         pass
 
-async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None):
+async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
+    # Параметр media_url оставлен для совместимости, но используем VideoManager
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
+    
+    formatted_text = f"<blockquote>{text}</blockquote>"
+    video_file = VideoManager.get_file()
 
     if last_msg_id:
         try:
-            await message.bot.edit_message_text(
-                text=text,
-                chat_id=chat_id,
-                message_id=last_msg_id,
-                reply_markup=reply_markup,
-                parse_mode="HTML",
-                disable_web_page_preview=True
-            )
+            if video_file:
+                media = InputMediaVideo(
+                    media=video_file,
+                    caption=formatted_text,
+                    parse_mode="HTML"
+                )
+                edited_msg = await message.bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=last_msg_id,
+                    media=media,
+                    reply_markup=reply_markup
+                )
+                # Если видео было загружено как файл, сохраняем file_id для кеширования
+                if edited_msg.video and not isinstance(video_file, str):
+                    VideoManager.set_file_id(edited_msg.video.file_id)
+            else:
+                # Если видео нет (ошибка загрузки), просто меняем текст
+                await message.bot.edit_message_caption(
+                    chat_id=chat_id,
+                    message_id=last_msg_id,
+                    caption=formatted_text,
+                    reply_markup=reply_markup,
+                    parse_mode="HTML"
+                )
             return 
         except Exception:
-            pass
+            try:
+                await message.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+            except:
+                pass
 
-    sent_msg = await message.answer(text, reply_markup=reply_markup, parse_mode="HTML", disable_web_page_preview=True)
+    if video_file:
+        sent_msg = await message.answer_video(
+            video=video_file,
+            caption=formatted_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        # Кешируем file_id
+        if sent_msg.video and not isinstance(video_file, str):
+            VideoManager.set_file_id(sent_msg.video.file_id)
+    else:
+        sent_msg = await message.answer(
+            formatted_text, 
+            reply_markup=reply_markup, 
+            parse_mode="HTML", 
+            disable_web_page_preview=True
+        )
 
     if state:
         await state.update_data(last_msg_id=sent_msg.message_id)
@@ -48,36 +88,40 @@ async def cmd_start(message: Message, state: FSMContext):
 
     text = (
         f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
-        f"🌐 <b>VLESS VPN Bot</b> — это свободный интернет без ограничений.\n"
-        f"Мы используем современные протоколы VLESS/Reality, которые невозможно заблокировать.\n\n"
+        f"🌐 <b>VLESS VPN Bot</b> — свобода без границ.\n"
+        f"🚀 <b>Скорость и Анонимность</b> в один клик.\n\n"
         f"📊 <b>Статус сети:</b>\n"
-        f"├ 🟢 Серверов онлайн: <b>{stats['active']}</b>\n"
-        f"└ 🌍 Доступных стран: <b>{stats['regions']}</b>\n\n"
-        f"👇 <b>Начни пользоваться прямо сейчас:</b>"
+        f"🟢 Серверов онлайн: <b>{stats['active']}</b>\n"
+        f"🌍 Доступных стран: <b>{stats['regions']}</b>"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
-    await edit_or_answer(message, text, user_main_kb(is_admin), state)
+    await edit_or_answer(message, text, user_main_kb(is_admin), state, media_url="force_video")
 
 @router.callback_query(F.data == "user_mode")
 @router.callback_query(F.data == "home")
 async def go_home_user(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await state.update_data(last_msg_id=callback.message.message_id)
+    data = await state.get_data()
+    last_msg_id = data.get("last_msg_id")
 
+    await state.clear()
+    
+    if last_msg_id:
+        await state.update_data(last_msg_id=last_msg_id)
+    
     stats = await StatsRepo.get_public_stats()
     text = (
         f"👋 <b>Главное меню</b>\n\n"
         f"🌐 Доступно серверов: <b>{stats['active']}</b>\n"
-        f"🌍 Стран: <b>{stats['regions']}</b>"
+        f"🌍 Стран: <b>{stats['regions']}</b>\n\n"
+        f"👇 <i>Выберите действие ниже:</i>"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=user_main_kb(is_admin))
+    await edit_or_answer(callback.message, text, user_main_kb(is_admin), state, media_url="force_video")
 
 @router.callback_query(F.data == "user_instruction")
 async def show_instruction(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(last_msg_id=callback.message.message_id)
     text = (
         "📚 <b>Быстрый старт</b>\n\n"
         "1️⃣ <b>Скачайте приложение</b> для вашего устройства (кнопка «📱 Приложения»).\n\n"
@@ -85,4 +129,4 @@ async def show_instruction(callback: CallbackQuery, state: FSMContext):
         "3️⃣ <b>Скопируйте ключ</b> (он начинается на <code>vless://</code>).\n\n"
         "4️⃣ <b>Откройте приложение</b> — оно само предложит добавить ключ из буфера обмена (или нажмите кнопку «+»)."
     )
-    await callback.message.edit_text(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=back_to_home())
+    await edit_or_answer(callback.message, text, back_to_home(), state, media_url="force_video")

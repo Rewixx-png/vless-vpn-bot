@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from keyboards.user import apps_os_kb, apps_links_kb
+from handlers.user.start import edit_or_answer
 
 router = Router()
 
@@ -36,12 +37,13 @@ APPS_DATA = {
 
 @router.callback_query(F.data == "apps_menu")
 async def show_apps_os_selection(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(last_msg_id=callback.message.message_id)
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         "📱 <b>Выберите ваше устройство:</b>\n\n"
         "Мы подобрали лучшие клиенты с поддержкой X-Ray (VLESS/Reality).",
-        parse_mode="HTML",
-        reply_markup=apps_os_kb()
+        apps_os_kb(),
+        state,
+        media_url="video"
     )
 
 @router.callback_query(F.data.startswith("apps_os_"))
@@ -59,9 +61,11 @@ async def show_apps_list(callback: CallbackQuery, state: FSMContext):
     
     os_title = os_names.get(os_key, os_key.title())
 
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         f"📂 <b>Приложения для {os_title}</b>\n\n"
         f"Выберите клиент для скачивания (рекомендуем верхний):",
-        parse_mode="HTML",
-        reply_markup=apps_links_kb(apps)
+        apps_links_kb(apps),
+        state,
+        media_url="video"
     )

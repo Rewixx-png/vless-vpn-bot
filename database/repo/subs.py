@@ -14,7 +14,10 @@ class SubRepo:
         async with async_session_factory() as session:
             result = await session.execute(
                 select(Subscription)
-                .where(Subscription.region.like("%Unknown%"))
+                .where(
+                    (Subscription.region.like("%Unknown%")) | 
+                    (Subscription.region.like("%UNK%"))
+                )
             )
             return result.scalars().all()
 
@@ -41,38 +44,28 @@ class SubRepo:
         tags: list[str] | None = None,
         limit: int = 0
     ) -> list[Subscription]:
-        """
-        Умная выборка с фильтрацией по регионам И тегам.
-        Tags: ['ai', 'fast', 'wl']
-        """
         async with async_session_factory() as session:
             stmt = (
                 select(Subscription)
                 .where(Subscription.is_active == True)
             )
 
-            # 1. Фильтр стран
             if regions:
                 stmt = stmt.where(Subscription.region.in_(regions))
             
-            # 2. Фильтр тегов (AND logic)
             if tags:
                 if 'ai' in tags:
                     stmt = stmt.where(Subscription.ai_available == True)
                 
                 if 'fast' in tags:
-                    # Fast = latency < 100ms
                     stmt = stmt.where(Subscription.latency_ms < 100)
                 
                 if 'wl' in tags:
-                    # WhiteList = Reality/Vision. Проверяем по строке (SQL LIKE)
-                    # Это немного медленно, но работает
                     stmt = stmt.where(
                         (Subscription.vless_key.like("%security=reality%")) | 
                         (Subscription.vless_key.like("%flow=xtls-rprx-vision%"))
                     )
 
-            # Сортировка
             stmt = stmt.order_by(Subscription.latency_ms.asc())
 
             if limit > 0:
@@ -113,6 +106,16 @@ class SubRepo:
     async def delete_all_subs():
         async with async_session_factory() as session:
             await session.execute(delete(Subscription))
+            await session.commit()
+    
+    @staticmethod
+    async def delete_unknown_subs():
+        async with async_session_factory() as session:
+            stmt = delete(Subscription).where(
+                (Subscription.region.like("%Unknown%")) | 
+                (Subscription.region.like("%UNK%"))
+            )
+            await session.execute(stmt)
             await session.commit()
 
     @staticmethod

@@ -11,6 +11,8 @@ class LinkParser:
                 return None
                 
             full_link = link
+            # Убираем пробелы и переносы
+            link = link.strip()
             rest = link[8:]
             
             remarks = "VLESS Config"
@@ -21,28 +23,31 @@ class LinkParser:
             params_str = ""
             if "?" in rest:
                 rest, params_str = rest.split("?", 1)
-                
+            
+            # Если после удаления параметров остались слеши в конце (например 443/), убираем их
+            rest = rest.rstrip("/")
+
             if "@" in rest:
                 userinfo, host_port = rest.split("@", 1)
             else:
                 return None
             
-            # ИСПРАВЛЕНИЕ: Используем rsplit для корректного отделения порта
             if ":" in host_port:
                 server, port_str = host_port.rsplit(":", 1)
                 
-                # Обработка IPv6 в скобках [::1]
+                # IPv6 fix
                 if server.startswith("[") and server.endswith("]"):
                     server = server[1:-1]
                 
+                # Дополнительная очистка порта от мусора, если он просочился
+                port_str = port_str.split("/")[0].split("?")[0].split("#")[0]
+
                 try:
                     port = int(port_str)
                 except ValueError:
-                    logger.warning(f"Invalid port: {port_str} in link {link[:30]}...")
+                    # Не логируем warning для очевидно битых ссылок, чтобы не спамить в консоль при shutdown
                     return None
             else:
-                # Нет порта - некорректная ссылка VLESS
-                logger.warning(f"No port found in link: {link[:30]}...")
                 return None
                 
             params = parse_qs(params_str)
@@ -71,6 +76,6 @@ class LinkParser:
                 "original": full_link
             }
             return config
-        except Exception as e:
-            logger.error(f"Parser Error processing link: {link[:50]}... Exception: {e}")
+        except Exception:
+            # Silent fail to avoid log spam during scraping
             return None
