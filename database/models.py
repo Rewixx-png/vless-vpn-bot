@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, String, Boolean, Integer, DateTime, Text
+from sqlalchemy import BigInteger, String, Boolean, Integer, DateTime, Text, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 import datetime
@@ -13,10 +13,21 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=True)
     
     country_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
-    # Новое поле: фильтр тегов (через запятую: "ai,fast,wl")
     tags_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     
     subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+class UserGroup(Base):
+    __tablename__ = "user_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    country_filter: Mapped[str] = mapped_column(Text, nullable=True) # "DE,US,FI"
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

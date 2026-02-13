@@ -4,9 +4,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def user_main_kb(is_admin: bool = False):
     kb = InlineKeyboardBuilder()
     
-    # Primary Style (Green/Blueish look)
+    # Primary Style
     kb.button(text="📥 Моя Подписка", callback_data="my_subscription")
-    kb.button(text="⚡️ Подключить VPN", callback_data="my_subscription")
+    kb.button(text="📂 Мои Группы", callback_data="groups_list")
     
     # Secondary
     kb.button(text="⚙️ Настройки", callback_data="settings_main")
@@ -21,7 +21,7 @@ def user_main_kb(is_admin: bool = False):
     if is_admin:
         kb.button(text="🛠 Админ Панель", callback_data="admin_home")
 
-    kb.adjust(1, 1, 2, 2, 1) 
+    kb.adjust(1, 1, 1, 2, 2, 1) 
     return kb.as_markup()
 
 def sub_action_kb(url: str, deep_link: str = None):
@@ -36,7 +36,7 @@ def settings_main_kb(current_limit: int):
     
     limit_text = "♾️ Все" if current_limit == 0 else f"{current_limit} шт."
     
-    kb.button(text="🌍 Выбор стран", callback_data="settings_countries")
+    kb.button(text="🌍 Выбор стран (Общий)", callback_data="settings_countries")
     kb.button(text="🏷 Теги (AI, Fast)", callback_data="settings_tags")
     kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
     
@@ -78,24 +78,47 @@ def settings_limit_kb(current: int):
     kb.button(text="🔙 Назад", callback_data="settings_main")
     return kb.as_markup()
 
-def settings_countries_kb(all_regions: list, selected_regions: list | None):
+def settings_countries_kb(all_regions: list, selected_regions: list | None, group_id: int = None):
     kb = InlineKeyboardBuilder()
+
+    prefix = "toggle_country" if group_id is None else f"g_toggle_country_{group_id}"
 
     for reg in all_regions:
         is_selected = True if selected_regions is None else reg in selected_regions
         status = "🟢" if is_selected else "🔴"
         text = f"{status} {reg}"
-        kb.button(text=text, callback_data=f"toggle_country_{reg}")
+        kb.button(text=text, callback_data=f"{prefix}_{reg}")
 
     kb.adjust(3)
 
-    if selected_regions is None:
-        kb.row(InlineKeyboardButton(text="🧹 Снять все", callback_data="set_all_off"))
+    if group_id is None:
+        if selected_regions is None:
+            kb.row(InlineKeyboardButton(text="🧹 Снять все", callback_data="set_all_off"))
+        else:
+            kb.row(InlineKeyboardButton(text="✅ Выбрать все", callback_data="set_all_on"))
+        kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="settings_main"))
     else:
-        kb.row(InlineKeyboardButton(text="✅ Выбрать все", callback_data="set_all_on"))
+        # Для групп кнопки управления
+        kb.row(InlineKeyboardButton(text="💾 Сохранить и выйти", callback_data="groups_list"))
 
-    kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="settings_main"))
+    return kb.as_markup()
 
+def groups_list_kb(groups: list):
+    kb = InlineKeyboardBuilder()
+    for g in groups:
+        kb.button(text=f"📂 {g.name}", callback_data=f"group_view_{g.id}")
+    
+    kb.button(text="➕ Создать группу", callback_data="group_create")
+    kb.button(text="🔙 Назад", callback_data="home")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def group_view_kb(group_id: int, url: str):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🌍 Изменить страны", callback_data=f"group_edit_countries_{group_id}")
+    kb.button(text="🗑 Удалить группу", callback_data=f"group_delete_{group_id}")
+    kb.button(text="🔙 К списку групп", callback_data="groups_list")
+    kb.adjust(1)
     return kb.as_markup()
 
 def apps_os_kb():

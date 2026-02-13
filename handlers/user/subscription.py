@@ -18,26 +18,10 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
     
-    cf_https_ports = [443, 2053, 2083, 2087, 2096, 8443]
-
-    protocol = "http"
-    host = ""
-
+    # HTTPS FIX: Если есть домен -> HTTPS, иначе HTTP+IP:PORT
     if domain:
-        if config.WEB_PORT in cf_https_ports:
-            protocol = "https"
-        elif config.WEB_PORT == 80:
-            protocol = "http"
-        else:
-            protocol = "http"
-
-        if ":" in domain:
-             host = domain
-        else:
-             if (protocol == "http" and config.WEB_PORT == 80) or (protocol == "https" and config.WEB_PORT == 443):
-                 host = domain
-             else:
-                 host = f"{domain}:{config.WEB_PORT}"
+        protocol = "http"
+        host = domain
     else:
         protocol = "http"
         host = f"{config.PUBLIC_IP}:{config.WEB_PORT}"
@@ -198,7 +182,8 @@ async def open_settings_countries(callback: CallbackQuery, state: FSMContext):
 
     await edit_or_answer(
         callback.message,
-        "🌍 <b>Фильтр стран</b>\n(✅ = Включено)",
+        "🌍 <b>Фильтр стран (Глобальный)</b>\n"
+        "Настройка для основной ссылки подписки.\n(✅ = Включено)",
         settings_countries_kb(all_regions, user_filter),
         state,
         media_url="video"

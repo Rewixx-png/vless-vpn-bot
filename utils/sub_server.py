@@ -3,7 +3,7 @@ import logging
 import urllib.parse
 import aiohttp_cors
 from aiohttp import web
-from database.repo import SubRepo, UserRepo
+from database.repo import SubRepo, UserRepo, SystemRepo, GroupRepo
 from config import config
 from utils.parser import LinkParser
 from utils.clash import ClashGenerator
@@ -29,26 +29,62 @@ class SubscriptionServer:
         user_agent = request.headers.get('User-Agent', 'Unknown')
         
         try:
-            user_id_str = request.query.get('id')
+            user_id_raw = request.query.get('id')
             is_clash = any(x in user_agent.lower() for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
 
             subs = []
-            if user_id_str and user_id_str.isdigit():
-                user = await UserRepo.get_user(int(user_id_str))
+            
+            # Логика определения фильтров (Глобальные или Групповые)
+            if user_id_raw:
+                user_id = 0
+                group_name = None
+                
+                # Проверяем формат ID/Group
+                if "/" in user_id_raw:
+                    try:
+                        uid_str, g_name = user_id_raw.split("/", 1)
+                        user_id = int(uid_str)
+                        group_name = urllib.parse.unquote(g_name) # Декодируем %20 и т.д.
+                    except ValueError:
+                        pass
+                elif user_id_raw.isdigit():
+                    user_id = int(user_id_raw)
+
+                user = await UserRepo.get_user(user_id)
                 if user:
-                    user_filter = user.country_filter.split(",") if user.country_filter else None
-                    # Получаем теги пользователя
+                    countries_filter = None
+                    
+                    # Если запрошена группа
+                    if group_name:
+                        group = await GroupRepo.get_group_by_name(user_id, group_name)
+                        if group:
+                            # Берем фильтр из группы
+                            if group.country_filter:
+                                countries_filter = group.country_filter.split(",")
+                        else:
+                            # Группа не найдена - отдаем пустой список или глобальный?
+                            # Лучше ничего не отдавать или ошибку, чтобы юзер понял
+                            pass 
+                    else:
+                        # Глобальный фильтр пользователя
+                        if user.country_filter:
+                            countries_filter = user.country_filter.split(",")
+
+                    # Теги всегда берем из глобальных настроек юзера (пока что)
                     user_tags = user.tags_filter.split(",") if user.tags_filter else None
                     
                     subs = await SubRepo.get_smart_keys(
-                        regions=user_filter, 
+                        regions=countries_filter, 
                         tags=user_tags,
                         limit=user.subscription_limit
                     )
                 else:
-                    subs = await SubRepo.get_smart_keys(regions=None, limit=0)
+                    # Юзер не найден в БД -> отдаем все (публичный режим) или ничего
+                    # Для безопасности лучше отдавать все, но с лимитом
+                    subs = await SubRepo.get_smart_keys(regions=None, limit=10)
             else:
-                subs = await SubRepo.get_smart_keys(regions=None, limit=0)
+                # Нет ID -> Публичный режим
+                subs = await SubRepo.get_smart_keys(regions=None, limit=10)
 
             if not subs:
                 return web.Response(text="", status=200)
@@ -62,10 +98,9 @@ class SubscriptionServer:
                 else: region_counters[region_name] += 1
                 count = region_counters[region_name]
                 
-                # Имя уже короткое из базы (🇩🇪 DE)
+                # Формируем имя
                 final_name = f"➤ {region_name} {count}"
                 
-                # Тег [Fast] если пинг < 100
                 if sub.latency_ms < 100:
                     final_name += " [Fast]"
                 
