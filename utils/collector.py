@@ -9,6 +9,11 @@ from utils.vless_checker import VlessChecker
 logger = logging.getLogger("Collector")
 
 SUBSCRIPTION_SOURCES = [
+    "https://github.com/ebrasha/free-v2ray-public-list/blob/main/vless_configs.txt",
+    "https://github.com/iboxz/free-v2ray-collector/blob/main/main/vless.txt",
+    "https://github.com/F0rc3Run/F0rc3Run/blob/main/splitted-by-protocol/vless.txt",
+    "https://github.com/sevcator/5ubscrpt10n/blob/main/protocols/vl.txt",
+    "https://github.com/ALIILAPRO/v2rayNG-Config/blob/main/server.txt",
     "https://github.com/igareck/vpn-configs-for-russia/blob/main/WHITE-SNI-RU-all.txt",
     "https://github.com/sakha1370/OpenRay/raw/refs/heads/main/output/all_valid_proxies.txt",
     "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",

@@ -39,3 +39,5 @@ ENV/
 *.log
 *.sqlite
 *.db
+*.mp4
+storage/
