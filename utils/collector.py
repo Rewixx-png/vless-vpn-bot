@@ -45,10 +45,27 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/Mosifree/-FREE2CONFIG/refs/heads/main/Reality",
     "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-    
-"https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no1.txt ",
-
-"https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Cable.txt"
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Cable.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no1.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no2.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no3.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no4.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no5.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no6.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no7.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no8.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no9.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no10.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no11.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no12.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no13.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no14.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no15.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no16.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no17.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no18.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no19.txt",
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no20.txt"
 ]
 
 class SubscriptionCollector:
@@ -60,7 +77,6 @@ class SubscriptionCollector:
             async with aiohttp.ClientSession() as session:
                 tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
-                # Фильтруем успешные результаты
                 results = [r for r in results if isinstance(r, str) and r]
         except asyncio.CancelledError:
             logger.info("🛑 Collection cancelled during fetch.")
@@ -114,7 +130,6 @@ class SubscriptionCollector:
                         except Exception:
                             pass
                 except asyncio.CancelledError:
-                    # Важно: помечаем задачу как выполненную перед выходом
                     queue.task_done()
                     return
                 except Exception:
@@ -122,7 +137,6 @@ class SubscriptionCollector:
                 finally:
                     queue.task_done()
 
-        # Запуск воркеров
         for _ in range(WORKERS_COUNT):
             workers.append(asyncio.create_task(worker()))
 
@@ -130,14 +144,10 @@ class SubscriptionCollector:
             await queue.join()
         except asyncio.CancelledError:
             logger.info("🛑 Collector waiting interrupted!")
-            # Не рейзим ошибку дальше, чтобы корректно завершить воркеры в finally
         finally:
-            # Отменяем всех воркеров
             for w in workers:
                 w.cancel()
             
-            # Ждем их завершения, игнорируя ошибки
-            # Увеличенный таймаут для гарантии закрытия процессов
             await asyncio.gather(*workers, return_exceptions=True)
             
             logger.info(f"✅ Collector stopped. Added {valid_count[0]} VALID new keys.")
