@@ -11,7 +11,7 @@ def check_ffmpeg():
 
 def fix_video_aspect_ratio(input_path: str, output_path: str):
     """
-    Преобразует видео в 16:9 (1280x720) с добавлением черных полос (padding).
+    Преобразует видео в 16:9 (1280x720) с заполнением экрана (CROP).
     Включает фиксы для Telegram: yuv420p, movflags faststart.
     """
     if not check_ffmpeg():
@@ -20,10 +20,11 @@ def fix_video_aspect_ratio(input_path: str, output_path: str):
 
     print(f"🔄 Обработка видео: {input_path} -> {output_path}")
     
+    # Используем scale=...:increase + crop для заполнения экрана без черных полос
     cmd = [
         "ffmpeg",
         "-i", input_path,
-        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+        "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
         "-c:v", "libx264",
         "-profile:v", "main",
         "-level", "3.1",
@@ -39,7 +40,7 @@ def fix_video_aspect_ratio(input_path: str, output_path: str):
     
     try:
         subprocess.run(cmd, check=True)
-        print("✅ Готово! Видео оптимизировано для Telegram (16:9, H.264 Main 3.1, YUV420P).")
+        print("✅ Готово! Видео оптимизировано для Telegram (16:9 Full Screen, H.264 Main 3.1).")
     except subprocess.CalledProcessError as e:
         print(f"❌ Ошибка при конвертации: {e}")
 

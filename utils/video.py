@@ -36,18 +36,14 @@ class VideoManager:
             logger.error(f"❌ Download error: {e}")
             return
 
-        logger.info("🔄 Running FFmpeg to fix aspect ratio (16:9)...")
+        logger.info("🔄 Running FFmpeg to fix aspect ratio (16:9 Crop/Fill)...")
         try:
-            # Исправленная команда для 100% совместимости с Telegram
-            # -pix_fmt yuv420p: Обязательно для поддержки всех плееров (иначе видео черное/зеленое)
-            # -movflags +faststart: Чтобы видео начинало играть сразу, не дожидаясь полной загрузки (превью)
-            # -profile:v main -level 3.1: Максимальная совместимость
-            # scale + pad: Масштабируем в 1280x720, сохраняя пропорции, остальное заливаем черным
-            
+            # Изменено: force_original_aspect_ratio=increase + crop
+            # Это растягивает видео на весь экран 1280x720, обрезая лишнее, вместо добавления черных полос
             cmd = [
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
-                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
                 "-c:v", "libx264",
                 "-profile:v", "main",
                 "-level", "3.1",
