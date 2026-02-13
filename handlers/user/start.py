@@ -21,10 +21,13 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
     
-    formatted_text = f"<blockquote>{text}</blockquote>"
+    if not text.strip().startswith("<blockquote>"):
+        formatted_text = f"<blockquote>{text}</blockquote>"
+    else:
+        formatted_text = text
+
     video_file = VideoManager.get_file()
 
-    # Попытка редактирования
     if last_msg_id:
         try:
             if video_file:
@@ -34,7 +37,6 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                     parse_mode="HTML"
                 )
                 try:
-                    # Пытаемся редактировать медиа
                     edited_msg = await message.bot.edit_message_media(
                         chat_id=chat_id,
                         message_id=last_msg_id,
@@ -45,15 +47,11 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     return
                 except TelegramBadRequest as e:
-                    # Если ошибка "message is not modified" - игнорируем
                     if "message is not modified" in str(e):
                         return
-                    # Если ошибка "there is no media in the message to edit" - значит старое сообщение было текстовым
-                    # Нужно удалить его и отправить новое видео
                     raise e 
 
             else:
-                # Если видео нет (ошибка файла), редактируем текст
                 await message.bot.edit_message_caption(
                     chat_id=chat_id,
                     message_id=last_msg_id,
@@ -63,20 +61,18 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                 )
                 return
         except Exception:
-            # Если редактирование не удалось (например, смена типа сообщения Text -> Video),
-            # удаляем старое сообщение и отправляем новое
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
             except:
                 pass
 
-    # Отправка нового сообщения (если редактирование не сработало или это первый старт)
     if video_file:
         sent_msg = await message.answer_video(
             video=video_file,
             caption=formatted_text,
             reply_markup=reply_markup,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            supports_streaming=True
         )
         if sent_msg.video and not isinstance(video_file, str):
             VideoManager.set_file_id(sent_msg.video.file_id)
@@ -105,7 +101,8 @@ async def cmd_start(message: Message, state: FSMContext):
         f"🚀 <b>Скорость и Анонимность</b> в один клик.\n\n"
         f"📊 <b>Статус сети:</b>\n"
         f"🟢 Серверов онлайн: <b>{stats['active']}</b>\n"
-        f"🌍 Доступных стран: <b>{stats['regions']}</b>"
+        f"🌍 Доступных стран: <b>{stats['regions']}</b>\n\n"
+        f"👨‍💻 <b>Dev:</b> @RewiX_X"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -127,7 +124,8 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
         f"👋 <b>Главное меню</b>\n\n"
         f"🌐 Доступно серверов: <b>{stats['active']}</b>\n"
         f"🌍 Стран: <b>{stats['regions']}</b>\n\n"
-        f"👇 <i>Выберите действие ниже:</i>"
+        f"👇 <i>Выберите действие ниже:</i>\n\n"
+        f"👨‍💻 <b>Dev:</b> @RewiX_X"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS

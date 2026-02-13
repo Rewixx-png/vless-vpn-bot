@@ -7,3 +7,6 @@ aiohttp-cors==0.7.0
 python-dotenv==1.0.0
 aiocryptopay==0.4.2
 aiohttp-socks==0.8.4
+celery==5.3.6
+redis==5.0.1
+eventlet==0.33.3

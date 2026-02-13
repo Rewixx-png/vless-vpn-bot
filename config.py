@@ -8,13 +8,14 @@ class Settings(BaseSettings):
     DB_URL: str
     CRYPTO_BOT_TOKEN: SecretStr
     
+    # URL подключения к Redis (для Celery)
+    # Если Redis на другом сервере или с паролем, измените этот параметр
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # Публичный IP сервера
     PUBLIC_IP: str = "108.165.164.160"
     
     # Порт веб-сервера подписок
-    # ВАЖНО: Используйте 2082 для Cloudflare (HTTP), так как 2096 требует SSL (HTTPS)
-    # Порты Cloudflare HTTP: 80, 8080, 2052, 2082, 2095
-    # Порты Cloudflare HTTPS: 443, 2053, 2083, 2096
     WEB_PORT: int = 2082
     
     # Если вы хотите принудительно использовать HTTPS ссылки при работе через HTTP порт (за Cloudflare)
