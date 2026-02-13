@@ -56,12 +56,14 @@ class SubscriptionCollector:
         try:
             async with aiohttp.ClientSession() as session:
                 tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
-                results = await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Фильтруем успешные результаты
+                results = [r for r in results if isinstance(r, str) and r]
         except asyncio.CancelledError:
             logger.info("🛑 Collection cancelled during fetch.")
-            raise
+            return
 
-        all_content = "\n".join([r for r in results if r])
+        all_content = "\n".join(results)
         decoded_content = SubscriptionCollector._try_decode(all_content)
         full_text = all_content + "\n" + decoded_content
 
@@ -84,8 +86,6 @@ class SubscriptionCollector:
             queue.put_nowait(link)
 
         valid_count = [0]
-        
-        # Снижаем кол-во воркеров до 50 для стабильности стопа
         WORKERS_COUNT = 50 
         workers = []
 
@@ -111,36 +111,33 @@ class SubscriptionCollector:
                         except Exception:
                             pass
                 except asyncio.CancelledError:
+                    # Важно: помечаем задачу как выполненную перед выходом
                     queue.task_done()
-                    raise 
+                    return
                 except Exception:
                     pass
                 finally:
                     queue.task_done()
 
+        # Запуск воркеров
         for _ in range(WORKERS_COUNT):
             workers.append(asyncio.create_task(worker()))
 
         try:
             await queue.join()
         except asyncio.CancelledError:
-            logger.info("🛑 Collector cancelled! Stopping workers...")
-            # Важно: Не ре-рейзим сразу, даем отработать finally
-            raise
+            logger.info("🛑 Collector waiting interrupted!")
+            # Не рейзим ошибку дальше, чтобы корректно завершить воркеры в finally
         finally:
+            # Отменяем всех воркеров
             for w in workers:
                 w.cancel()
             
-            # Ждем завершения с таймаутом, чтобы не висеть вечно
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*workers, return_exceptions=True),
-                    timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("⚠️ Workers cleanup timed out! Forcing exit.")
-        
-        logger.info(f"✅ Collector finished. Added {valid_count[0]} VALID new keys.")
+            # Ждем их завершения, игнорируя ошибки
+            # Увеличенный таймаут для гарантии закрытия процессов
+            await asyncio.gather(*workers, return_exceptions=True)
+            
+            logger.info(f"✅ Collector stopped. Added {valid_count[0]} VALID new keys.")
 
     @staticmethod
     async def _fetch_url(session, url):

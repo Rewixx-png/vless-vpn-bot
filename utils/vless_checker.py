@@ -163,25 +163,34 @@ class VlessChecker:
             return True, region, latency, ai_available, "OK"
 
         except asyncio.CancelledError:
-            # При отмене задачи УБИВАЕМ процесс сразу для скорости
+            # ПРИНУДИТЕЛЬНОЕ УБИЙСТВО ПРИ ОТМЕНЕ
             if process:
-                try: process.kill() 
-                except: pass
-            raise # Пробрасываем отмену дальше
+                try:
+                    process.kill()
+                    # КРИТИЧНО: Ждем завершения, чтобы не было зомби
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
+                except Exception:
+                    pass
+            raise 
 
         except Exception as e:
             return False, "", 0, False, f"System Error: {e}"
 
         finally:
-            # Очистка ресурсов
-            if process:
+            # Штатная очистка ресурсов
+            if process and process.returncode is None:
                 try:
-                    if process.returncode is None:
-                        process.terminate()
-                        # Даем совсем мало времени на мягкое закрытие
-                        try: await asyncio.wait_for(process.wait(), timeout=0.05)
-                        except: process.kill()
-                except: pass
+                    process.terminate()
+                    # Даем чуть-чуть времени на shutdown, иначе KILL
+                    try: 
+                        await asyncio.wait_for(process.wait(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                except: 
+                    pass
             
             if os.path.exists(config_path):
                 try: os.remove(config_path)

@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 import aiohttp
-import subprocess
 from aiogram.types import FSInputFile
 
 logger = logging.getLogger("VideoManager")
@@ -39,13 +38,25 @@ class VideoManager:
 
         logger.info("🔄 Running FFmpeg to fix aspect ratio (16:9)...")
         try:
-            # Масштабируем в 1280x720 с черными полосами (padding)
+            # Исправленная команда для 100% совместимости с Telegram
+            # -pix_fmt yuv420p: Обязательно для поддержки всех плееров (иначе видео черное/зеленое)
+            # -movflags +faststart: Чтобы видео начинало играть сразу, не дожидаясь полной загрузки (превью)
+            # -profile:v main -level 3.1: Максимальная совместимость
+            # scale + pad: Масштабируем в 1280x720, сохраняя пропорции, остальное заливаем черным
+            
             cmd = [
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
                 "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-c:a", "copy",
+                "-c:v", "libx264",
+                "-profile:v", "main",
+                "-level", "3.1",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-preset", "medium",
+                "-crf", "23",
+                "-c:a", "aac", 
+                "-b:a", "128k",
                 "-y",
                 cls.PROCESSED_PATH
             ]

@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InputMediaVideo
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from config import config
 from database.repo import UserRepo, StatsRepo
 from keyboards.user import user_main_kb, back_to_home
@@ -16,7 +17,6 @@ async def clean_start(message: Message):
         pass
 
 async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
-    # Параметр media_url оставлен для совместимости, но используем VideoManager
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
@@ -24,6 +24,7 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     formatted_text = f"<blockquote>{text}</blockquote>"
     video_file = VideoManager.get_file()
 
+    # Попытка редактирования
     if last_msg_id:
         try:
             if video_file:
@@ -32,17 +33,27 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                     caption=formatted_text,
                     parse_mode="HTML"
                 )
-                edited_msg = await message.bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=last_msg_id,
-                    media=media,
-                    reply_markup=reply_markup
-                )
-                # Если видео было загружено как файл, сохраняем file_id для кеширования
-                if edited_msg.video and not isinstance(video_file, str):
-                    VideoManager.set_file_id(edited_msg.video.file_id)
+                try:
+                    # Пытаемся редактировать медиа
+                    edited_msg = await message.bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        media=media,
+                        reply_markup=reply_markup
+                    )
+                    if edited_msg.video and not isinstance(video_file, str):
+                        VideoManager.set_file_id(edited_msg.video.file_id)
+                    return
+                except TelegramBadRequest as e:
+                    # Если ошибка "message is not modified" - игнорируем
+                    if "message is not modified" in str(e):
+                        return
+                    # Если ошибка "there is no media in the message to edit" - значит старое сообщение было текстовым
+                    # Нужно удалить его и отправить новое видео
+                    raise e 
+
             else:
-                # Если видео нет (ошибка загрузки), просто меняем текст
+                # Если видео нет (ошибка файла), редактируем текст
                 await message.bot.edit_message_caption(
                     chat_id=chat_id,
                     message_id=last_msg_id,
@@ -50,13 +61,16 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                     reply_markup=reply_markup,
                     parse_mode="HTML"
                 )
-            return 
+                return
         except Exception:
+            # Если редактирование не удалось (например, смена типа сообщения Text -> Video),
+            # удаляем старое сообщение и отправляем новое
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
             except:
                 pass
 
+    # Отправка нового сообщения (если редактирование не сработало или это первый старт)
     if video_file:
         sent_msg = await message.answer_video(
             video=video_file,
@@ -64,7 +78,6 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
-        # Кешируем file_id
         if sent_msg.video and not isinstance(video_file, str):
             VideoManager.set_file_id(sent_msg.video.file_id)
     else:
@@ -96,7 +109,7 @@ async def cmd_start(message: Message, state: FSMContext):
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
-    await edit_or_answer(message, text, user_main_kb(is_admin), state, media_url="force_video")
+    await edit_or_answer(message, text, user_main_kb(is_admin), state)
 
 @router.callback_query(F.data == "user_mode")
 @router.callback_query(F.data == "home")
@@ -118,7 +131,7 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS
-    await edit_or_answer(callback.message, text, user_main_kb(is_admin), state, media_url="force_video")
+    await edit_or_answer(callback.message, text, user_main_kb(is_admin), state)
 
 @router.callback_query(F.data == "user_instruction")
 async def show_instruction(callback: CallbackQuery, state: FSMContext):
@@ -129,4 +142,4 @@ async def show_instruction(callback: CallbackQuery, state: FSMContext):
         "3️⃣ <b>Скопируйте ключ</b> (он начинается на <code>vless://</code>).\n\n"
         "4️⃣ <b>Откройте приложение</b> — оно само предложит добавить ключ из буфера обмена (или нажмите кнопку «+»)."
     )
-    await edit_or_answer(callback.message, text, back_to_home(), state, media_url="force_video")
+    await edit_or_answer(callback.message, text, back_to_home(), state)

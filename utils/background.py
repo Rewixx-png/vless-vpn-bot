@@ -27,14 +27,15 @@ class BackgroundTasks:
             if not task.done():
                 task.cancel()
         
-        # Ждем завершения с таймаутом 5 секунд
+        # Ждем завершения с таймаутом 15 секунд (было 5)
+        # Это даст время убить все subprocesses в VlessChecker
         try:
             await asyncio.wait_for(
                 asyncio.gather(*cls._tasks, return_exceptions=True),
-                timeout=5.0
+                timeout=15.0
             )
         except asyncio.TimeoutError:
-             logger.warning("⚠️ Background tasks stop timed out! Some tasks might still be running.")
+             logger.warning("⚠️ Background tasks stop timed out! Some tasks might still be running (zombies possible).")
         
         cls._tasks.clear()
         logger.info("✅ Background tasks stopped.")
@@ -124,7 +125,8 @@ class BackgroundTasks:
                              await SubRepo.update_sub_region(sub.id, region)
 
                 except asyncio.CancelledError:
-                    raise
+                    queue.task_done()
+                    return # Сразу выходим
                 except Exception:
                     pass 
                 finally:
@@ -136,13 +138,15 @@ class BackgroundTasks:
         try:
             await queue.join()
         except asyncio.CancelledError:
+            # При отмене, сначала отменяем воркеров
             for w in workers: w.cancel()
-            raise
+            # Ждем их завершения, чтобы процессы убились
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise # Пробрасываем отмену выше, в checker_loop
         finally:
-            for w in workers: w.cancel()
-            try:
-                await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), timeout=3.0)
-            except asyncio.TimeoutError:
-                pass
+            # На случай если отмены не было, но мы вышли по другой причине
+            for w in workers: 
+                if not w.done(): w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
 
         logger.info(f"📊 Report: Checked {stats['total']} | Revived: {stats['revived']} | Died: {stats['died']}")
