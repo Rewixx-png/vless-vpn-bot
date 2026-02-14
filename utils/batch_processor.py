@@ -120,15 +120,26 @@ class BatchProcessor:
             async def progress_updater():
                 while not self._cancelled:
                     try:
-                        on_progress(
-                            stats["completed"], 
-                            len(items), 
-                            stats["success"], 
-                            stats["failed"]
-                        )
+                        # Check if on_progress is async
+                        if asyncio.iscoroutinefunction(on_progress):
+                            await on_progress(
+                                stats["completed"], 
+                                len(items), 
+                                stats["success"], 
+                                stats["failed"]
+                            )
+                        else:
+                            on_progress(
+                                stats["completed"], 
+                                len(items), 
+                                stats["success"], 
+                                stats["failed"]
+                            )
                         await asyncio.sleep(self.progress_interval)
                     except asyncio.CancelledError:
                         break
+                    except Exception as e:
+                        logger.debug(f"Progress callback error: {e}")
             
             progress_task = asyncio.create_task(progress_updater())
         

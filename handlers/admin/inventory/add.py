@@ -89,7 +89,11 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     # Start processing
     msg = await message.answer(
-        f"<blockquote>⏳ Xray Check: {len(links)} links...</blockquote>",
+        f"<blockquote>🔍 <b>Начинаю проверку VLESS-серверов</b>\n\n"
+        f"📋 Найдено ссылок: <b>{len(links)}</b>\n"
+        f"⚡ Воркеров для проверки: <b>15</b>\n"
+        f"⏱️ Лимит: <b>50 проверок/сек</b>\n\n"
+        f"⏳ Запускаю тесты через реальное ядро Xray...</blockquote>",
         parse_mode="HTML"
     )
 
@@ -101,6 +105,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     )
 
     results_log = []
+    start_time = asyncio.get_event_loop().time()
 
     async def process_link(link: str):
         """Process single link"""
@@ -117,26 +122,36 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
                 if added:
                     results_log.append(f"✅ {region} ({latency}ms)")
-                    return {"status": "added", "region": region, "latency": latency}
+                    return (True, {"status": "added", "region": region, "latency": latency})
                 else:
                     results_log.append(f"⚠️ Limit/Unknown: {region}")
-                    return {"status": "limited", "region": region}
+                    return (True, {"status": "limited", "region": region})
             else:
                 results_log.append(f"❌ {err}")
-                return {"status": "failed", "error": err}
+                return (False, {"status": "failed", "error": err})
                 
         except Exception as e:
             results_log.append(f"❌ Error: {str(e)[:50]}")
-            return {"status": "error", "error": str(e)}
+            return (False, {"status": "error", "error": str(e)})
 
     # Progress callback
     async def on_progress(completed: int, total: int, success: int, failed: int):
+        elapsed = asyncio.get_event_loop().time() - start_time
         percent = int((completed / total) * 100)
-        await safe_edit_message(
-            msg,
-            f"<blockquote>🔄 Импорт и проверка: {completed}/{total} ({percent}%)\n"
-            f"✅ Добавлено/Заменено: {success}\n"
-            f"❌ Отклонено: {failed}</blockquote>"
+        speed = int(completed / elapsed * 60) if elapsed > 0 else 0
+        remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
+        
+        await msg.edit_text(
+            f"<blockquote>⚡ <b>Проверка VLESS-серверов</b>\n\n"
+            f"📊 <b>{completed} / {total}</b> | <b>{percent}%</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Добавлено: <b>{success}</b>\n"
+            f"❌ Отклонено: <b>{failed}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🔄 Проверяю...</blockquote>",
+            parse_mode="HTML"
         )
 
     # Process batch
@@ -152,15 +167,19 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     # Final message
     final_text = (
-        f"<blockquote>🏁 <b>Импорт завершен</b>\n\n"
-        f"✅ Добавлено: <b>{added_count}</b>\n"
-        f"❌ Отклонено: <b>{failed_count}</b>\n"
-        f"ℹ️ <i>Unknown регионы и лимит >100 отфильтрованы.</i>\n\n"
-        f"<i>Последние добавленные:</i>\n" + "\n".join(results_log[-10:]) + "</blockquote>"
+        f"<blockquote>🏁 <b>Импорт VLESS-серверов завершён!</b>\n\n"
+        f"📊 <b>Итоговый отчёт:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"✅ Успешно добавлено: <b>{added_count}</b>\n"
+        f"❌ Отклонено/Недействительно: <b>{failed_count}</b>\n"
+        f"📋 Всего обработано: <b>{len(links)}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"ℹ️ <i>Отклонены: Unknown регионы, лимит >100, дубликаты.</i>\n\n"
+        f"<b>🔝 Последние добавленные серверы:</b>\n" + "\n".join(results_log[-10:]) + "</blockquote>"
     )
     
     if len(final_text) > 4000:
         final_text = final_text[:4000] + "..." + "</blockquote>"
     
-    await safe_edit_message(msg, final_text, reply_markup=back_to_admin())
+    await msg.edit_text(final_text, reply_markup=back_to_admin())
     await state.clear()
