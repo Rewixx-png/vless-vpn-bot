@@ -1,6 +1,10 @@
 import base64
 import logging
+import time
 import urllib.parse
+from typing import Optional
+
+import aiohttp
 import aiohttp_cors
 from aiohttp import web
 from database.repo import SubRepo, UserRepo, SystemRepo, GroupRepo
@@ -11,6 +15,26 @@ from utils.clash import ClashGenerator
 logger = logging.getLogger("SubServer")
 
 class SubscriptionServer:
+    _external_cache = {"ts": 0.0, "links": []}
+    @staticmethod
+    def _format_name(region_name: str, count: int, latency_ms: Optional[int], ai_available: bool, whitelist: bool) -> str:
+        parts = [region_name, f"{count:02d}"]
+
+        if latency_ms is not None and latency_ms > 0:
+            parts.append(f"{latency_ms}ms")
+
+        tags = []
+        if latency_ms is not None and latency_ms < 100:
+            tags.append("Fast")
+        if ai_available:
+            tags.append("AI")
+        if whitelist:
+            tags.append("WL")
+
+        if tags:
+            parts.append("|".join(tags))
+
+        return " • ".join(parts)
     @staticmethod
     def _rename_vless(link: str, new_name: str) -> str:
         if "#" in link:
@@ -21,6 +45,67 @@ class SubscriptionServer:
     @staticmethod
     def _is_whitelist_config(link: str) -> bool:
         return "security=reality" in link or "flow=xtls-rprx-vision" in link
+
+    @staticmethod
+    def _extract_links(text: str) -> list[str]:
+        links = []
+        if not text:
+            return links
+
+        for line in text.splitlines():
+            item = line.strip()
+            if not item:
+                continue
+            if item.startswith(("vless://", "vmess://", "trojan://", "ss://", "ssr://", "hysteria2://", "hy2://", "tuic://")):
+                links.append(item)
+        return links
+
+    @staticmethod
+    def _decode_subscription_text(raw_text: str) -> str:
+        if not raw_text:
+            return ""
+        if "://" in raw_text:
+            return raw_text
+
+        try:
+            decoded = base64.b64decode(raw_text.strip() + "===", validate=False)
+            text = decoded.decode("utf-8", errors="ignore")
+            if "://" in text:
+                return text
+        except Exception:
+            return ""
+
+        return ""
+
+    @classmethod
+    async def _get_external_links(cls) -> list[str]:
+        now = time.time()
+        if now - cls._external_cache["ts"] < 300:
+            return cls._external_cache["links"]
+
+        external_url = await SystemRepo.get_config("external_sub_url")
+        if not external_url:
+            external_url = getattr(config, "EXTERNAL_SUB_URL", None)
+
+        if not external_url:
+            return []
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(external_url) as resp:
+                    if resp.status != 200:
+                        return []
+                    raw_text = await resp.text()
+
+            text = cls._decode_subscription_text(raw_text)
+            links = cls._extract_links(text)
+
+            cls._external_cache = {"ts": now, "links": links}
+            return links
+        except Exception as e:
+            logger.warning(f"External subscription fetch failed: {e}")
+            return []
 
     @staticmethod
     async def handle_subscription(request):
@@ -91,28 +176,33 @@ class SubscriptionServer:
             region_counters = {}
 
             for sub in subs:
-                region_name = sub.region if sub.region else "Unknown"
+                region_name = sub.region if sub.region else "🌍 UNK"
                 if region_name not in region_counters: region_counters[region_name] = 1
                 else: region_counters[region_name] += 1
                 count = region_counters[region_name]
-                
-                final_name = f"➤ {region_name} {count}"
-                
-                if sub.latency_ms < 100:
-                    final_name += " [Fast]"
-                
-                if sub.ai_available:
-                    final_name += " [AI]"
-                
-                if SubscriptionServer._is_whitelist_config(sub.vless_key):
-                    final_name += " [WL]"
 
-                new_link = SubscriptionServer._rename_vless(sub.vless_key, final_name)
+                is_wl = SubscriptionServer._is_whitelist_config(sub.vless_key)
+                final_name = SubscriptionServer._format_name(
+                    region_name=region_name,
+                    count=count,
+                    latency_ms=sub.latency_ms,
+                    ai_available=sub.ai_available,
+                    whitelist=is_wl
+                )
+
+                base_link = (sub.vless_key or "").strip()
+                new_link = SubscriptionServer._rename_vless(base_link, final_name)
                 renamed_links.append(new_link)
+
+            # Filter out malformed links to avoid client import failures
+            renamed_links = [k for k in renamed_links if k.startswith("vless://")]
+
+            external_links = await SubscriptionServer._get_external_links()
+            combined_links = renamed_links + external_links
 
             if format_param in ["clash", "yaml", "clash-meta"] or is_clash:
                 parsed_configs = []
-                for k in renamed_links:
+                for k in combined_links:
                     cfg = LinkParser.parse_vless(k)
                     if cfg: parsed_configs.append(cfg)
 
@@ -121,17 +211,17 @@ class SubscriptionServer:
                 content_type = "text/yaml; charset=utf-8"
             elif format_param in ["raw", "plain", "v2raytun"] or is_v2raytun:
                 # Raw list for clients that do NOT accept base64
-                response_text = "\n".join(renamed_links)
+                response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
             elif format_param in ["base64", "b64"]:
-                text_data = "\n".join(renamed_links)
+                text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
                 filename = "config.txt"
                 content_type = "text/plain; charset=utf-8"
             else:
                 # Standard base64 encoded subscription for most v2ray clients
-                text_data = "\n".join(renamed_links)
+                text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
                 filename = "config.txt"
                 content_type = "text/plain; charset=utf-8"

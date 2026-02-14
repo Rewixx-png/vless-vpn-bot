@@ -148,6 +148,10 @@ class ClashGenerator:
             for name in proxy_names:
                 yaml_lines.append(f"      - \"{ClashGenerator.escape_yaml_str(name)}\"")
 
+            yaml_lines.append("")
+            yaml_lines.append("rules:")
+            yaml_lines.append("  - MATCH, \"🌍 Proxy\"")
+
         return "\n".join(yaml_lines)
 
     @staticmethod

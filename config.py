@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Если вы хотите принудительно использовать HTTPS ссылки при работе через HTTP порт (за Cloudflare)
     public_domain: str | None = None
 
+    # Дополнительная подписка, которая будет подмешана к выдаче
+    EXTERNAL_SUB_URL: str | None = None
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
