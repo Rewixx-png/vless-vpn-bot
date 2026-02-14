@@ -24,7 +24,6 @@ class VideoManager:
         if os.path.exists(cls.PROCESSED_PATH):
             return
 
-        # 1. Скачивание исходника
         if not os.path.exists(cls.RAW_PATH):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -39,7 +38,6 @@ class VideoManager:
                 logger.error(f"❌ Download error: {e}")
                 return
 
-        # 2. Генерация плавности (Motion Interpolation)
         try:
             cmd = [
                 "ffmpeg",
@@ -59,7 +57,6 @@ class VideoManager:
                 stderr=asyncio.subprocess.DEVNULL
             )
             
-            # Ждем завершения
             await process.wait()
             
             if process.returncode == 0:

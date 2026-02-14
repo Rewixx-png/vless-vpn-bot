@@ -82,7 +82,6 @@ class SubscriptionCollector:
         if not unique_links:
             return
             
-        # TURBO MAXIMUM: 3500 за раз.
         if len(unique_links) > 3500:
             unique_links = unique_links[:3500]
 
@@ -92,8 +91,6 @@ class SubscriptionCollector:
 
         valid_count = [0]
         
-        # TURBO MAXIMUM: 100 воркеров
-        # Они очень легкие, это просто генераторы HTTP запросов к сервису.
         WORKERS_COUNT = 100
         workers = []
 

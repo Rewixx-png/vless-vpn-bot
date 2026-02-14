@@ -24,7 +24,6 @@ class LinkParser:
             if "?" in rest:
                 rest, params_str = rest.split("?", 1)
             
-            # Если после удаления параметров остались слеши в конце (например 443/), убираем их
             rest = rest.rstrip("/")
 
             if "@" in rest:
@@ -39,13 +38,11 @@ class LinkParser:
                 if server.startswith("[") and server.endswith("]"):
                     server = server[1:-1]
                 
-                # Дополнительная очистка порта от мусора, если он просочился
                 port_str = port_str.split("/")[0].split("?")[0].split("#")[0]
 
                 try:
                     port = int(port_str)
                 except ValueError:
-                    # Не логируем warning для очевидно битых ссылок, чтобы не спамить в консоль при shutdown
                     return None
             else:
                 return None
@@ -77,5 +74,4 @@ class LinkParser:
             }
             return config
         except Exception:
-            # Silent fail to avoid log spam during scraping
             return None

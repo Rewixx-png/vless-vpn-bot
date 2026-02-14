@@ -150,7 +150,6 @@ class SubscriptionServer:
                         if group:
                             if group.country_filter:
                                 if group.country_filter == "__EMPTY__":
-                                    # Если группа пустая, ставим фильтр, который ничего не найдет
                                     countries_filter = ["__NONE__"]
                                 else:
                                     countries_filter = group.country_filter.split(",")
@@ -199,7 +198,6 @@ class SubscriptionServer:
                 new_link = SubscriptionServer._rename_vless(base_link, final_name)
                 renamed_links.append(new_link)
 
-            # Filter out malformed links to avoid client import failures
             renamed_links = [k for k in renamed_links if k.startswith("vless://")]
 
             supported_schemes = {"vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "hy2", "tuic"}
@@ -229,7 +227,6 @@ class SubscriptionServer:
                 filename = "config.yaml"
                 content_type = "text/yaml; charset=utf-8"
             elif format_param in ["raw", "plain", "v2raytun"] or is_v2raytun:
-                # Raw list for clients that do NOT accept base64
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
@@ -239,7 +236,6 @@ class SubscriptionServer:
                 filename = "config.txt"
                 content_type = "text/plain; charset=utf-8"
             else:
-                # Standard base64 encoded subscription for most v2ray clients
                 text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
                 filename = "config.txt"

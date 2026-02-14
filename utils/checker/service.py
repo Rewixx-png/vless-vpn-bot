@@ -23,7 +23,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CheckerService")
 
-# TURBO MAXIMUM: Поднимаем до 50
 MAX_CONCURRENT_CHECKS = 50
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
@@ -45,8 +44,6 @@ async def check_handler(request):
                 })
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
-            # Таймаут: 3 сек на подключение, 5 сек всего.
-            # Если прокси тупит дольше 3 секунд на хендшейке - он нам не нужен.
             timeout = aiohttp.ClientTimeout(total=6.0, connect=3.0)
             
             result = {
@@ -61,8 +58,6 @@ async def check_handler(request):
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout) as proxy_session:
                     start_time = time.monotonic()
                     
-                    # STEP 1: HTTP Check (Fast Ping)
-                    # Отсеивает тех, кто вообще не отвечает
                     http_ok = False
                     try:
                         async with proxy_session.get('http://cp.cloudflare.com/generate_204', allow_redirects=False) as resp:
@@ -74,11 +69,8 @@ async def check_handler(request):
                     if not http_ok:
                         raise Exception("HTTP Ping Failed")
 
-                    # STEP 2: HTTPS Check (Deep SSL Check) - ОБЯЗАТЕЛЬНО
-                    # Отсеивает тех, кто не умеет в шифрование или перехватывает трафик
                     https_ok = False
                     try:
-                        # Используем gstatic, он надежен как скала
                         async with proxy_session.get('https://www.gstatic.com/generate_204', allow_redirects=False) as resp:
                             if resp.status == 204:
                                 # Замеряем пинг только по успешному HTTPS
@@ -92,9 +84,7 @@ async def check_handler(request):
                     if https_ok:
                         result["success"] = True
                         
-                        # Дополнительные проверки (AI, Geo) только для живых HTTPS прокси
                         if result["latency"] < 2000:
-                            # AI Check
                             try:
                                 ai_timeout = aiohttp.ClientTimeout(total=2.0)
                                 openai_ok = False
@@ -112,7 +102,6 @@ async def check_handler(request):
                                     result["ai"] = True
                             except: pass
 
-                            # Geo Check
                             result["region"] = await GeoIP.identify_region(proxy_session)
 
             except Exception as e:

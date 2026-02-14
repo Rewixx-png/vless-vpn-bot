@@ -6,13 +6,8 @@ logger = logging.getLogger("ClashGen")
 class ClashGenerator:
     @staticmethod
     def is_valid_short_id(sid: str) -> bool:
-        """
-        Проверяет валидность Short ID для Reality.
-        Должен быть hex-строкой.
-        """
         if not sid:
-            return True # Пустой sid допустим
-        # Проверка на Hex символы
+            return True
         return bool(re.match(r'^[0-9a-fA-F]+$', sid))
 
     @staticmethod
@@ -58,10 +53,9 @@ class ClashGenerator:
                         pbk = cfg.get('pbk', '')
                         sid = cfg.get('sid', '')
                         
-                        # ВАЖНО: Валидация short-id
                         if not ClashGenerator.is_valid_short_id(sid):
                             logger.warning(f"Skipping config {final_name}: Invalid short-id '{sid}'")
-                            continue # Пропускаем этот конфиг, чтобы не сломать весь файл
+                            continue
 
                         proxy['reality-opts'] = {
                             "public-key": pbk,

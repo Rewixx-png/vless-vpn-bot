@@ -4,7 +4,6 @@ import sys
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
-# 1. Сразу настраиваем базовое логирование на WARNING
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -20,7 +19,6 @@ from utils.background import BackgroundTasks
 from utils.sub_server import SubscriptionServer
 from utils.video import VideoManager
 
-# 2. Жестко глушим "болтливые" логгеры
 loggers_to_silence = [
     "aiogram", 
     "aiogram.event", 
@@ -60,13 +58,11 @@ class TelegramLogHandler(logging.Handler):
 async def main():
     await init_db()
 
-    # Подготовка видео (без логов)
     await VideoManager.prepare()
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
 
-    # Отправка всех ошибок в ЛС владельцу
     tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
     tg_handler.setFormatter(logging.Formatter("%(name)s - %(levelname)s - %(message)s"))
     logging.getLogger().addHandler(tg_handler)

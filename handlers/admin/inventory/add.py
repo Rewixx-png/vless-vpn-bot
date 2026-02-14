@@ -62,7 +62,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     stats = {"added": 0, "err": 0, "checked": 0, "total": len(links), "is_finished": False}
     report = []
-    
+
     queue = asyncio.Queue()
     for link in links:
         queue.put_nowait(link)

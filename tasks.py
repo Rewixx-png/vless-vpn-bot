@@ -15,7 +15,6 @@ def run_async(coro):
     finally:
         loop.close()
 
-# High Priority: Проверка подписок пользователей
 @app.task
 def check_subs_batch_task(sub_ids: list[int]):
     async def _process():
@@ -53,13 +52,10 @@ def check_subs_batch_task(sub_ids: list[int]):
 
     return run_async(_process())
 
-# Low Priority: Сбор новых прокси
 @app.task
 def run_collector_task():
     run_async(SubscriptionCollector.run_collection())
 
-# High Priority: Чистка базы (удаление превышающих лимит 100)
-# Должна выполняться быстро и часто
 @app.task
 def cleanup_database_task():
     run_async(SubRepo.enforce_limits())

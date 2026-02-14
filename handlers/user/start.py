@@ -21,9 +21,6 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
     
-    # ПРИНУДИТЕЛЬНОЕ ЦИТИРОВАНИЕ
-    # Очищаем текст от возможных существующих тегов цитирования, чтобы избежать вложенности
-    # и оборачиваем ВЕСЬ текст в blockquote
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
     formatted_text = f"<blockquote>{clean_text}</blockquote>"
 

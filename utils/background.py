@@ -30,7 +30,6 @@ class BackgroundTasks:
             except Exception as e:
                 logger.error(f"❌ Checker Scheduler Error: {e}")
             
-            # Проверка базы каждые 5 минут
             await asyncio.sleep(300) 
 
     @staticmethod
@@ -43,28 +42,18 @@ class BackgroundTasks:
             except Exception as e:
                 logger.error(f"❌ Collector Scheduler Error: {e}")
             
-            # Сбор новых каждые 20 минут
             await asyncio.sleep(1200)
 
     @staticmethod
     async def cleanup_scheduler():
-        """
-        Запускает задачу жесткой очистки лимитов.
-        Исправляет последствия Race Condition, когда добавляется больше 100 серверов.
-        """
         while True:
             try:
-                # Запускаем в high_priority, так как это важно для чистоты базы
-                # (По умолчанию задачи идут в low, но check_subs и эта - могли бы в high. 
-                #  В celery_app.py мы не прописали роут для cleanup_database_task, значит она пойдет в default=low.
-                #  Это нормально, главное чтобы выполнялась).
                 tasks.cleanup_database_task.delay()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"❌ Cleanup Scheduler Error: {e}")
             
-            # Чистим каждые 3 минуты
             await asyncio.sleep(180)
 
     @staticmethod

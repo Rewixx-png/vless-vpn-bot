@@ -71,7 +71,6 @@ class XrayExecutor:
             with open(config_path, 'w') as f:
                 json.dump(xray_conf, f)
 
-            # ВАЖНО: start_new_session=True позволяет убивать процесс вместе с детьми (killpg)
             process = await asyncio.create_subprocess_exec(
                 cls.XRAY_BIN, "-c", config_path,
                 stdout=asyncio.subprocess.DEVNULL,
@@ -80,11 +79,9 @@ class XrayExecutor:
             )
             
             try:
-                # Даем процессу чуть больше времени на старт, но проверяем, не упал ли он сразу
                 await asyncio.wait_for(process.wait(), timeout=0.3)
                 return None, 0, "Xray failed startup (crashed immediately)"
             except asyncio.TimeoutError:
-                # Это нормальное поведение - процесс работает
                 pass 
 
             return process, local_port, config_path
@@ -95,14 +92,11 @@ class XrayExecutor:
     def cleanup(process, config_path):
         if process:
             try:
-                # Если процесс еще жив
                 if process.returncode is None:
-                    # Убиваем группу процессов, чтобы не плодить зомби
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except ProcessLookupError:
                 pass
             except Exception:
-                # Fallback на обычный kill
                 try:
                     process.kill()
                 except: pass

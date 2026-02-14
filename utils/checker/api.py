@@ -7,16 +7,12 @@ logger = logging.getLogger("CheckerAPI")
 class CheckerAPI:
     @staticmethod
     async def check(config_url: str) -> tuple[bool, str, int, bool, str]:
-        """
-        Отправляет запрос в Checker Service.
-        Возвращает: (success, region, latency, ai_available, error_msg)
-        """
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{config.CHECKER_URL}/check",
                     json={"config": config_url},
-                    timeout=15 # Таймаут чуть больше, чем внутри сервиса
+                    timeout=15
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()

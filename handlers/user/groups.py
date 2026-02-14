@@ -160,9 +160,6 @@ async def toggle_group_country(callback: CallbackQuery):
     all_regions = await SubRepo.get_regions()
     current_filter = group.country_filter.split(",") if group.country_filter else None
 
-    # Если было "Все" (None), значит при клике на одну страну мы хотим исключить ее?
-    # Или мы переходим в режим "Выбрана только она"?
-    # Для интуитивности: если было "Все", и мы кликаем на страну - мы ее ВЫКЛЮЧАЕМ.
     if current_filter is None:
         new_filter = [r for r in all_regions if r != region]
     elif current_filter == ["__EMPTY__"]:
@@ -193,7 +190,6 @@ async def group_set_all_on(callback: CallbackQuery):
 async def group_set_all_off(callback: CallbackQuery):
     group_id = int(callback.data.split("_")[-1])
     all_regions = await SubRepo.get_regions()
-    # Ставим специальный маркер пустоты
     await GroupRepo.update_group_countries(group_id, ["__EMPTY__"])
     await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, ["__EMPTY__"], group_id))
 

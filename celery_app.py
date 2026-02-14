@@ -30,12 +30,10 @@ app.conf.task_routes = {
 app.conf.update(
     timezone='Europe/Moscow',
     enable_utc=True,
-    # TURBO MAXIMUM: 30
-    # Так как задачи это асинхронные HTTP клиенты к сервису, 1 процесс легко держит кучу IO.
     worker_concurrency=30,
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=150,
-    worker_max_memory_per_child=300000, 
+    worker_max_memory_per_child=300000,
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
