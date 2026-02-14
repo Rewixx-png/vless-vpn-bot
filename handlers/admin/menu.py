@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from config import config
+from keyboards.admin import main_admin_kb
 from handlers.admin.utils import admin_edit_or_answer
 
 router = Router()
@@ -16,4 +17,4 @@ async def admin_dashboard(callback: CallbackQuery, state: FSMContext):
         "Управление ботом и серверами."
     )
     
-    await admin_edit_or_answer(callback, state, text)
+    await admin_edit_or_answer(callback, state, text, reply_markup=main_admin_kb())
