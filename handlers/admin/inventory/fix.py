@@ -11,7 +11,7 @@ from database.repo import SubRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
 from utils.batch_processor import SmartBatchProcessor
-from handlers.admin.utils import admin_edit_or_answer
+from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
 router = Router()
 
