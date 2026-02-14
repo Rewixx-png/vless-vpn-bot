@@ -113,25 +113,31 @@ class SubscriptionCollector:
     
     @classmethod
     async def _process_links_priority(cls, links: List[str]) -> dict:
-        """Process links with priority for preferred regions"""
+        """Process links with detailed logging"""
         added_count = 0
         checked_count = 0
+        dead_count = 0
+        rejected_count = 0
+        error_count = 0
+        region_stats = {}
         
         processor = SmartBatchProcessor(
             worker_count=cls.MAX_WORKERS,
             progress_interval=10.0,
-            rate_limit=30  # Limit to 30 checks/second
+            rate_limit=30
         )
         
         async def check_and_add(link: str) -> Optional[dict]:
-            """Check link and add if valid"""
-            nonlocal checked_count, added_count
+            """Check link and add if valid with detailed logging"""
+            nonlocal checked_count, added_count, dead_count, rejected_count, error_count
             
             try:
+                logger.debug(f"[COLLECTOR] Checking: {link[:60]}...")
                 is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
                 checked_count += 1
                 
                 if is_alive:
+                    logger.debug(f"[COLLECTOR] ALIVE - Region: {region}, Latency: {latency}ms")
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
@@ -141,35 +147,60 @@ class SubscriptionCollector:
                     
                     if added:
                         added_count += 1
-                        return {
-                            "status": "added",
-                            "region": region,
-                            "latency": latency
-                        }
+                        # Track by region
+                        if region not in region_stats:
+                            region_stats[region] = {"added": 0, "rejected": 0}
+                        region_stats[region]["added"] += 1
+                        logger.info(f"[COLLECTOR] ADDED - Region: {region}, Total added this run: {added_count}")
+                        return {"status": "added", "region": region, "latency": latency}
                     else:
+                        rejected_count += 1
+                        if region not in region_stats:
+                            region_stats[region] = {"added": 0, "rejected": 0}
+                        region_stats[region]["rejected"] += 1
+                        logger.warning(f"[COLLECTOR] REJECTED - Region: {region}, Reason: Duplicate or Unknown")
                         return {"status": "rejected", "region": region}
                 else:
-                    return {"status": "dead"}
+                    dead_count += 1
+                    logger.debug(f"[COLLECTOR] DEAD - Error: {err}")
+                    return {"status": "dead", "error": err}
                     
             except Exception as e:
+                error_count += 1
+                logger.error(f"[COLLECTOR] ERROR - {str(e)[:100]}")
                 return {"status": "error", "error": str(e)}
         
         # Process in batches
+        logger.info(f"[COLLECTOR] Starting to process {len(links)} links...")
         result = await processor.process(
             items=links,
             process_func=check_and_add
         )
         
-        # Count results
-        added = sum(1 for item in result.items 
-                   if item.get("result") and item["result"].get("status") == "added")
-        
-        logger.info(f"✅ Collection complete: {checked_count} checked, {added} added")
+        # Detailed stats
+        logger.info("=" * 60)
+        logger.info("[COLLECTOR] COLLECTION SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Total checked: {checked_count}")
+        logger.info(f"Added: {added_count}")
+        logger.info(f"Dead: {dead_count}")
+        logger.info(f"Rejected: {rejected_count}")
+        logger.info(f"Errors: {error_count}")
+        logger.info(f"Duration: {result.duration:.1f}s")
+        logger.info("-" * 60)
+        logger.info("By region:")
+        for region, stats in sorted(region_stats.items(), key=lambda x: x[1]["added"], reverse=True)[:10]:
+            logger.info(f"  {region}: +{stats['added']} added, {stats['rejected']} rejected")
+        logger.info("=" * 60)
         
         return {
             "processed": checked_count,
-            "added": added,
-            "duration": result.duration
+            "added": added_count,
+            "dead": dead_count,
+            "rejected": rejected_count,
+            "errors": error_count,
+            "duration": result.duration,
+            "region_stats": region_stats
         }
     
     @staticmethod

@@ -299,97 +299,70 @@ class SubRepo:
 
     @staticmethod
     async def smart_add_subscription(vless_key: str, region: str, latency: int, ai_available: bool = False) -> bool:
+        """Add subscription WITHOUT deleting old ones. Only adds if not duplicate."""
         if "Unknown" in region or "UNK" in region:
+            logger.warning(f"[ADD] Rejected - Unknown region: {region[:50]}")
             return False
 
         async with async_session_factory() as session:
-            # 1. Быстрая проверка на дубликат
+            # 1. Check for duplicate
             existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))
             if existing:
+                logger.debug(f"[ADD] Rejected - Duplicate: {vless_key[:50]}...")
                 return False
 
-            # 2. Получаем текущее количество
+            # 2. Get current count (for logging only)
             count = await session.scalar(
                 select(func.count(Subscription.id)).where(Subscription.region == region)
             )
             count = count or 0
 
-            # 3. ЛИМИТ 500 (увеличен с 100)
-            LIMIT = 500
-
-            if count < LIMIT:
-                sub = Subscription(
-                    vless_key=vless_key, 
-                    region=region, 
-                    latency_ms=latency,
-                    ai_available=ai_available
-                )
-                session.add(sub)
-                await session.commit()
-                return True
-            else:
-                # Если лимит превышен, ищем худший сервер (мертвый или с высоким пингом)
-                # is_active ASC -> False (мертвые) идут первыми
-                # latency_ms DESC -> Самый большой пинг идет первым
-                stmt = (
-                    select(Subscription)
-                    .where(Subscription.region == region)
-                    .order_by(Subscription.is_active.asc(), Subscription.latency_ms.desc())
-                    .limit(1)
-                )
-                worst = (await session.execute(stmt)).scalars().first()
-
-                # Если нашли худшего кандидата
-                if worst:
-                    # Заменяем ТОЛЬКО если новый сервер лучше (живой против мертвого) 
-                    # ИЛИ (оба живые, но новый быстрее)
-                    is_better = False
-                    if not worst.is_active:
-                        is_better = True # Заменяем мертвого всегда
-                    elif latency < worst.latency_ms:
-                        is_better = True # Заменяем медленного на быстрого
-                    
-                    if is_better:
-                        await session.delete(worst)
-                        await session.flush() # Применяем удаление, чтобы освободить место
-                        
-                        sub = Subscription(
-                            vless_key=vless_key, 
-                            region=region, 
-                            latency_ms=latency,
-                            ai_available=ai_available
-                        )
-                        session.add(sub)
-                        await session.commit()
-                        return True
-        
-        return False
+            # 3. NO LIMIT - always add
+            # Previous limit of 500 removed - users want unlimited configs
+            
+            sub = Subscription(
+                vless_key=vless_key, 
+                region=region, 
+                latency_ms=latency,
+                ai_available=ai_available
+            )
+            session.add(sub)
+            await session.commit()
+            
+            logger.info(f"[ADD] SUCCESS - Region: {region}, Count: {count+1}, Latency: {latency}ms, AI: {ai_available}")
+            return True
 
     @staticmethod
     async def enforce_limits():
         """
-        HARD CLEANUP: Удаляет лишние записи, если их стало больше 500 из-за гонки потоков.
-        Оставляет ТОП-500 лучших (Живые + Мин. пинг) для каждой страны.
+        DISABLED: Auto-cleanup is disabled. 
+        This function now only logs statistics without deleting anything.
+        Users want unlimited configs - no automatic deletion.
         """
+        logger.info("[CLEANUP] Auto-cleanup is DISABLED. No configs will be deleted automatically.")
+        
         async with async_session_factory() as session:
-            # SQL запрос для PostgreSQL
-            # Удаляем все записи, у которых порядковый номер > 500 в группе по региону
-            sql = text("""
-                DELETE FROM subscriptions
-                WHERE id IN (
-                    SELECT id FROM (
-                        SELECT id,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY region 
-                            ORDER BY is_active DESC, latency_ms ASC
-                        ) as rn
-                        FROM subscriptions
-                    ) t
-                    WHERE t.rn > 500
-                );
-            """)
             try:
-                await session.execute(sql)
-                await session.commit()
+                # Just log statistics, don't delete
+                stats_sql = text("""
+                    SELECT region, COUNT(*) as count, 
+                           SUM(CASE WHEN is_active THEN 1 ELSE 0 END) as active_count
+                    FROM subscriptions 
+                    GROUP BY region 
+                    ORDER BY count DESC
+                """)
+                result = await session.execute(stats_sql)
+                rows = result.fetchall()
+                
+                total = sum(row[1] for row in rows)
+                total_active = sum(row[2] for row in rows)
+                
+                logger.info(f"[STATS] Total subscriptions: {total} (Active: {total_active})")
+                logger.info(f"[STATS] Regions: {len(rows)}")
+                
+                # Log top 5 regions
+                for row in rows[:5]:
+                    logger.info(f"[STATS] {row[0]}: {row[1]} configs ({row[2]} active)")
+                    
             except Exception as e:
-                print(f"Error enforcing limits: {e}")
+                logger.error(f"[CLEANUP] Error getting stats: {e}")

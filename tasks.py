@@ -23,9 +23,10 @@ class OptimizedTask(AsyncTask):
 @app.task(base=OptimizedTask, bind=True, max_retries=3)
 async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
     """
-    Optimized batch check with parallel processing and batch updates.
-    Reduces DB calls from N queries to 1 fetch + batch update.
+    Batch check with detailed logging. Only marks as inactive, NEVER deletes.
     """
+    logger.info(f"[CHECKER] Starting batch check for {len(sub_ids)} subscriptions")
+    
     if not sub_ids:
         return {"checked": 0, "updated": 0, "duration": 0}
     
@@ -34,25 +35,44 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
     # Fetch all subscriptions in one query
     subs = await SubRepo.get_subs_by_ids(sub_ids)
     if not subs:
+        logger.warning("[CHECKER] No subscriptions found for check")
         return {"checked": 0, "updated": 0, "duration": 0}
     
     updates_needed = []
     region_updates = []
     checked_count = 0
+    alive_count = 0
+    died_count = 0
+    revived_count = 0
     
     async def check_one(sub):
-        """Check single subscription"""
-        nonlocal checked_count
+        """Check single subscription with detailed logging"""
+        nonlocal checked_count, alive_count, died_count, revived_count
         try:
+            logger.debug(f"[CHECKER] Checking sub {sub.id} - Current status: {'ALIVE' if sub.is_active else 'DEAD'}")
             is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(sub.vless_key)
             
             should_update = False
+            status_changed = False
+            
             if sub.is_active != is_alive:
                 should_update = True
+                status_changed = True
+                if is_alive:
+                    revived_count += 1
+                    logger.info(f"[CHECKER] REVIVED - Sub {sub.id} is now ALIVE ({region}, {latency}ms)")
+                else:
+                    died_count += 1
+                    logger.info(f"[CHECKER] DIED - Sub {sub.id} is now DEAD (Error: {err})")
             elif is_alive and abs(sub.latency_ms - latency) > 50:
                 should_update = True
+                logger.debug(f"[CHECKER] LATENCY CHANGE - Sub {sub.id}: {sub.latency_ms}ms -> {latency}ms")
             elif sub.ai_available != ai_available:
                 should_update = True
+                logger.debug(f"[CHECKER] AI STATUS CHANGE - Sub {sub.id}: AI={ai_available}")
+            
+            if is_alive:
+                alive_count += 1
             
             result = {
                 "id": sub.id,
@@ -60,13 +80,14 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
                 "is_active": is_alive,
                 "latency": latency if is_alive else 9999,
                 "ai_available": ai_available,
-                "region": region if is_alive and region and "Unknown" not in region else None
+                "region": region if is_alive and region and "Unknown" not in region else None,
+                "status_changed": status_changed
             }
             checked_count += 1
             return result
             
         except Exception as e:
-            logger.error(f"Check failed for sub {sub.id}: {e}")
+            logger.error(f"[CHECKER] ERROR checking sub {sub.id}: {e}")
             checked_count += 1
             return None
     
@@ -95,58 +116,86 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
     
     # Batch updates - reduces DB calls significantly
     if updates_needed:
+        logger.info(f"[CHECKER] Updating {len(updates_needed)} subscriptions in DB")
         await SubRepo.batch_update_status(updates_needed)
     
     if region_updates:
+        logger.info(f"[CHECKER] Updating regions for {len(region_updates)} subscriptions")
         await SubRepo.batch_update_regions(region_updates)
     
     duration = asyncio.get_event_loop().time() - start_time
     
-    logger.info(f"Batch check completed: {checked_count} checked, {len(updates_needed)} updated in {duration:.2f}s")
+    logger.info("=" * 60)
+    logger.info("[CHECKER] BATCH CHECK SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"Total checked: {checked_count}")
+    logger.info(f"Currently alive: {alive_count}")
+    logger.info(f"Died this run: {died_count}")
+    logger.info(f"Revived this run: {revived_count}")
+    logger.info(f"Updated in DB: {len(updates_needed)}")
+    logger.info(f"Duration: {duration:.2f}s")
+    logger.info("=" * 60)
     
     return {
         "checked": checked_count,
         "updated": len(updates_needed),
+        "alive": alive_count,
+        "died": died_count,
+        "revived": revived_count,
         "duration": duration
     }
 
 
 @app.task(base=OptimizedTask)
 async def run_collector_task() -> Dict[str, Any]:
-    """Optimized collector with progress tracking"""
+    """Collector task with detailed logging"""
+    logger.info("[COLLECTOR TASK] Starting automatic collection...")
     start_time = asyncio.get_event_loop().time()
     
     try:
         result = await SubscriptionCollector.run_collection()
         duration = asyncio.get_event_loop().time() - start_time
         
-        logger.info(f"Collection completed in {duration:.2f}s")
+        logger.info("=" * 60)
+        logger.info("[COLLECTOR TASK] AUTOMATIC COLLECTION COMPLETED")
+        logger.info("=" * 60)
+        logger.info(f"Duration: {duration:.2f}s")
+        logger.info(f"Links processed: {result.get('processed', 0)}")
+        logger.info(f"Configs added: {result.get('added', 0)}")
+        logger.info(f"Dead configs: {result.get('dead', 0)}")
+        logger.info(f"Rejected: {result.get('rejected', 0)}")
+        logger.info("=" * 60)
+        
         return {
             "success": True,
             "duration": duration,
             "result": result
         }
     except Exception as e:
-        logger.error(f"Collection failed: {e}")
+        logger.error(f"[COLLECTOR TASK] Collection failed: {e}")
         raise
 
 
 @app.task(base=OptimizedTask)
 async def cleanup_database_task() -> Dict[str, Any]:
-    """Database cleanup with limits enforcement"""
+    """Database cleanup - NOW SAFE: only logs statistics, NEVER deletes"""
+    logger.info("[CLEANUP] Starting cleanup task (SAFE MODE - no deletion)")
     start_time = asyncio.get_event_loop().time()
     
     try:
+        # This now only logs statistics, doesn't delete anything
         await SubRepo.enforce_limits()
         duration = asyncio.get_event_loop().time() - start_time
         
-        logger.info(f"Cleanup completed in {duration:.2f}s")
+        logger.info(f"[CLEANUP] Completed in {duration:.2f}s - NO CONFIGS WERE DELETED")
         return {
             "success": True,
-            "duration": duration
+            "duration": duration,
+            "deleted": 0,
+            "mode": "safe"
         }
     except Exception as e:
-        logger.error(f"Cleanup failed: {e}")
+        logger.error(f"[CLEANUP] Error: {e}")
         raise
 
 
