@@ -8,7 +8,7 @@ from config import config
 from database.repo import SystemRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin, domain_error_kb
-from handlers.admin.utils import safe_edit_message
+from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
 router = Router()
 
@@ -25,7 +25,7 @@ def settings_domain_kb(current_domain: str | None):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 @router.callback_query(F.data == "admin_domain")
-async def show_domain_settings(callback: CallbackQuery):
+async def show_domain_settings(callback: CallbackQuery, state: FSMContext):
     current_domain = await SystemRepo.get_config("public_domain")
     
     text = "<blockquote>⚙️ <b>Настройка домена</b>\n\n"
@@ -38,19 +38,19 @@ async def show_domain_settings(callback: CallbackQuery):
         text += "Чтобы включить HTTPS ссылки, добавьте домен, который направлен на этот сервер."
     text += "</blockquote>"
 
-    await safe_edit_message(callback.message, text, reply_markup=settings_domain_kb(current_domain), parse_mode="HTML")
+    await admin_edit_or_answer(callback, state, text, reply_markup=settings_domain_kb(current_domain))
 
 @router.callback_query(F.data == "set_domain_input")
 async def ask_domain(callback: CallbackQuery, state: FSMContext):
-    await safe_edit_message(
-        callback.message,
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>"
         "✍️ <b>Отправьте доменное имя:</b>\n\n"
         "Пример: <code>vpn.example.com</code>\n\n"
         "❗️ Домен должен иметь А-запись на IP этого сервера."
         "</blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
     await state.set_state(DomainStates.waiting_for_domain)
 
@@ -59,7 +59,7 @@ async def process_domain_input(message: Message, state: FSMContext):
     domain = message.text.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
     
     msg = await message.answer(
-        "<blockquote>🔍 Проверяю домен <code>{domain}</code>...\n1. DNS Resolve\n2. SSL Check (443)</blockquote>", 
+        f"<blockquote>🔍 Проверяю домен <code>{domain}</code>...\n1. DNS Resolve\n2. SSL Check (443)</blockquote>", 
         parse_mode="HTML"
     )
     
@@ -67,8 +67,7 @@ async def process_domain_input(message: Message, state: FSMContext):
     
     if is_valid:
         await SystemRepo.set_config("public_domain", domain)
-        await safe_edit_message(
-            msg,
+        await msg.edit_text(
             f"<blockquote>✅ <b>Домен сохранен!</b>\n\n"
             f"Теперь ссылки подписки будут вида:\n"
             f"<code>https://{domain}/sub?id=...</code></blockquote>",
@@ -77,8 +76,7 @@ async def process_domain_input(message: Message, state: FSMContext):
         )
         await state.clear()
     else:
-        await safe_edit_message(
-            msg,
+        await msg.edit_text(
             f"<blockquote>❌ <b>Ошибка проверки:</b>\n\n"
             f"{error}\n\n"
             f"Если вы используете Cloudflare или уверены в настройках, нажмите кнопку ниже.</blockquote>",
@@ -92,19 +90,19 @@ async def force_save_domain(callback: CallbackQuery, state: FSMContext):
     
     await SystemRepo.set_config("public_domain", domain)
     
-    await safe_edit_message(
-        callback.message,
+    await admin_edit_or_answer(
+        callback,
+        state,
         f"<blockquote>✅ <b>Домен сохранен (Принудительно)!</b>\n\n"
         f"🔗 Ссылки обновлены:\n"
         f"<code>https://{domain}/sub?id=...</code>\n\n"
         f"⚠️ <i>Убедитесь, что ваш обратный прокси (Nginx/Cloudflare) настроен верно и пересылает запросы на порт {config.WEB_PORT} бота.</i></blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
     await state.clear()
 
 @router.callback_query(F.data == "delete_domain")
-async def delete_domain(callback: CallbackQuery):
+async def delete_domain(callback: CallbackQuery, state: FSMContext):
     await SystemRepo.delete_config("public_domain")
     await callback.answer("🗑 Домен удален", show_alert=True)
-    await show_domain_settings(callback)
+    await show_domain_settings(callback, state)
