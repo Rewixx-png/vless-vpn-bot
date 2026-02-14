@@ -10,20 +10,15 @@ from database.repo import SubRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
 from utils.batch_processor import SmartBatchProcessor
+from handlers.admin.utils import safe_edit_message
 
 router = Router()
 
 
-async def safe_edit_text(message: Message, text: str, reply_markup=None, parse_mode="HTML"):
-    try:
-        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    except Exception:
-        pass
-
-
 @router.callback_query(F.data == "admin_fix_regions")
 async def fix_unknown_regions(callback: CallbackQuery):
-    msg = await callback.message.edit_text(
+    await safe_edit_message(
+        callback.message,
         "<blockquote>🚀 <b>Запуск GeoIP Batch Mode...</b>\n\n"
         "ℹ️ <i>Используем пакетную проверку IP с batch update.</i></blockquote>",
         parse_mode="HTML"
@@ -31,7 +26,8 @@ async def fix_unknown_regions(callback: CallbackQuery):
 
     subs = await SubRepo.get_unknown_regions_subs()
     if not subs:
-        await msg.edit_text(
+        await safe_edit_message(
+            callback.message,
             "<blockquote>✅ Unknown регионов не найдено.</blockquote>",
             reply_markup=back_to_admin(),
             parse_mode="HTML"
@@ -52,8 +48,8 @@ async def fix_unknown_regions(callback: CallbackQuery):
     total_hosts = len(unique_hosts)
 
     # Progress message
-    await safe_edit_text(
-        msg,
+    await safe_edit_message(
+        callback.message,
         f"<blockquote>🚀 <b>GeoIP Update: 0%</b>\n"
         f"📡 Проверено хостов: 0/{total_hosts}</blockquote>"
     )
@@ -76,18 +72,20 @@ async def fix_unknown_regions(callback: CallbackQuery):
     if updates:
         await SubRepo.batch_update_regions(updates)
 
-    await safe_edit_text(
-        msg,
+    await safe_edit_message(
+        callback.message,
         f"<blockquote>🏁 <b>Обновление регионов завершено!</b>\n\n"
         f"📡 Проверено хостов: <b>{total_hosts}</b>\n"
         f"✅ Обновлено ключей: <b>{fixed_count}</b></blockquote>",
-        reply_markup=back_to_admin()
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )
 
 
 @router.callback_query(F.data == "admin_recheck")
 async def recheck_all_subs(callback: CallbackQuery):
-    msg = await callback.message.edit_text(
+    await safe_edit_message(
+        callback.message,
         "<blockquote>🚀 <b>Xray Core Recheck</b>\n"
         "<i>Запускаю проверку через реальное ядро Xray...</i>\n"
         "Это может занять время.</blockquote>",
@@ -96,7 +94,8 @@ async def recheck_all_subs(callback: CallbackQuery):
 
     subs = await SubRepo.get_all_subscriptions_for_check()
     if not subs:
-        await msg.edit_text(
+        await safe_edit_message(
+            callback.message,
             "<blockquote>⚠️ База пуста.</blockquote>",
             reply_markup=back_to_admin(),
             parse_mode="HTML"
@@ -147,8 +146,8 @@ async def recheck_all_subs(callback: CallbackQuery):
 
     async def on_progress(completed: int, total: int, success: int, failed: int):
         percent = int((completed / total) * 100)
-        await safe_edit_text(
-            msg,
+        await safe_edit_message(
+            callback.message,
             f"<blockquote>🔄 <b>Xray Check: {percent}%</b>\n"
             f"📡 Проверено: {completed}/{total}\n\n"
             f"🟢 <b>Живых: {stats['active']}</b>\n"
@@ -179,12 +178,13 @@ async def recheck_all_subs(callback: CallbackQuery):
     if region_updates:
         await SubRepo.batch_update_regions(region_updates)
 
-    await safe_edit_text(
-        msg,
+    await safe_edit_message(
+        callback.message,
         f"<blockquote>🏁 <b>Xray Recheck завершен!</b>\n\n"
         f"Всего ключей: <b>{total}</b>\n"
         f"🟢 <b>Активных: {stats['active']}</b>\n"
         f"💀 Мертвых: <b>{stats['died']}</b>\n"
         f"🆙 Воскресло: <b>{stats['revived']}</b></blockquote>",
-        reply_markup=back_to_admin()
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )

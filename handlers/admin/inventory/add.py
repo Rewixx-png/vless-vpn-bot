@@ -15,25 +15,20 @@ from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
 from utils.batch_processor import SmartBatchProcessor
+from handlers.admin.utils import safe_edit_message
 
 router = Router()
 
 
-async def safe_edit_text(message: Message, text: str, reply_markup=None, parse_mode="HTML"):
-    try:
-        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    except Exception:
-        pass
-
-
 @router.callback_query(F.data == "admin_add")
 async def start_add_subs(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback.message,
         "<blockquote>📝 <b>Массовая загрузка (ТОЛЬКО VLESS)</b>\n\n"
         "Отправьте .txt файл или список ссылок.\n"
         "Каждая ссылка будет проверена через Xray перед добавлением.</blockquote>",
-        parse_mode="HTML",
-        reply_markup=back_to_admin()
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )
     await state.set_state(AdminStates.waiting_for_subs)
 
@@ -137,7 +132,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     # Progress callback
     async def on_progress(completed: int, total: int, success: int, failed: int):
         percent = int((completed / total) * 100)
-        await safe_edit_text(
+        await safe_edit_message(
             msg,
             f"<blockquote>🔄 Импорт и проверка: {completed}/{total} ({percent}%)\n"
             f"✅ Добавлено/Заменено: {success}\n"
@@ -167,5 +162,5 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     if len(final_text) > 4000:
         final_text = final_text[:4000] + "..." + "</blockquote>"
     
-    await safe_edit_text(msg, final_text, reply_markup=back_to_admin())
+    await safe_edit_message(msg, final_text, reply_markup=back_to_admin())
     await state.clear()
