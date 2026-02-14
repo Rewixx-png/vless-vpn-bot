@@ -46,12 +46,11 @@ async def fix_unknown_regions(callback: CallbackQuery):
         await msg.edit_text("✅ Unknown регионов не найдено.", reply_markup=back_to_admin())
         return
 
-    # Группируем по хостам для оптимизации
     host_to_subs = {}
     for sub in subs:
         parsed = VlessChecker.parse_config(sub.vless_key)
         if parsed and parsed.get("host"):
-            host = parsed["host"] # IP или Домен
+            host = parsed["host"]
             if host not in host_to_subs:
                 host_to_subs[host] = []
             host_to_subs[host].append(sub)
@@ -73,9 +72,7 @@ async def fix_unknown_regions(callback: CallbackQuery):
 
     updater_task = asyncio.create_task(ui_updater())
 
-    # Используем одну сессию для прямых запросов к ip-api
     async with aiohttp.ClientSession() as session:
-        # Проверяем батчами
         results = await VlessChecker.get_regions_batch(unique_hosts, session)
         
         for host, region in results.items():
@@ -119,7 +116,6 @@ async def recheck_all_subs(callback: CallbackQuery):
     for sub in subs:
         queue.put_nowait(sub)
 
-    # Количество одновременных процессов Xray (не ставьте слишком много, CPU загрузится)
     WORKERS_COUNT = 10 
 
     async def worker():
@@ -130,7 +126,6 @@ async def recheck_all_subs(callback: CallbackQuery):
                 break
 
             try:
-                # ВНИМАНИЕ: session не нужен для нового чекера, передаем None
                 success, region, latency, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
 
                 if success:
@@ -138,7 +133,6 @@ async def recheck_all_subs(callback: CallbackQuery):
                     if not sub.is_active:
                         stats["revived"] += 1
                     
-                    # Обновляем статус и, возможно, регион (так как Xray чекер точнее определяет регион)
                     await SubRepo.update_sub_status(sub.id, is_active=True, latency=latency, ai_available=ai_avail)
                     if region and "Unknown" not in region:
                         await SubRepo.update_sub_region(sub.id, region)
@@ -232,7 +226,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     for link in links:
         queue.put_nowait(link)
 
-    # Воркер для проверки при добавлении
     async def worker():
         while True:
             try:
@@ -241,16 +234,23 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                 break
 
             try:
-                # Xray проверка
                 success, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
 
                 if success:
-                    try:
-                        await SubRepo.add_subscription(vless_key=link, region=region, latency=latency, ai_available=ai_avail)
+                    # Используем Smart Add
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=link, 
+                        region=region, 
+                        latency=latency, 
+                        ai_available=ai_avail
+                    )
+                    
+                    if added:
                         stats["added"] += 1
                         report.append(f"✅ {region} ({latency}ms)")
-                    except IntegrityError:
-                        report.append(f"⚠️ Duplicate")
+                    else:
+                        stats["err"] += 1
+                        report.append(f"⚠️ Limit/Unknown: {region}")
                 else:
                     stats["err"] += 1
                     report.append(f"❌ {err}")
@@ -265,14 +265,13 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
             percent = int((stats["checked"] / stats["total"]) * 100)
             text = (
                 f"🔄 Импорт и проверка: {stats['checked']}/{stats['total']} ({percent}%)\n"
-                f"✅ Валидных: {stats['added']}\n"
-                f"❌ Нерабочих: {stats['err']}"
+                f"✅ Добавлено/Заменено: {stats['added']}\n"
+                f"❌ Отклонено (Err/Limit): {stats['err']}"
             )
             await safe_edit_text(msg, text)
             await asyncio.sleep(3.0)
 
     updater_task = asyncio.create_task(ui_updater())
-    # Запускаем 15 потоков для импорта (чтобы не перегрузить сервер)
     workers = [asyncio.create_task(worker()) for _ in range(15)] 
     await asyncio.gather(*workers)
 
@@ -282,7 +281,8 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     final_text = (
         f"🏁 <b>Импорт завершен</b>\n\n"
         f"✅ Добавлено: <b>{stats['added']}</b>\n"
-        f"❌ Отклонено: <b>{stats['err']}</b>\n\n"
+        f"❌ Отклонено: <b>{stats['err']}</b>\n"
+        f"ℹ️ <i>Unknown регионы и лимит >100 отфильтрованы.</i>\n\n"
         f"<i>Последние добавленные:</i>\n" + "\n".join(report[-10:])
     )
     if len(final_text) > 4000: final_text = final_text[:4000] + "..."
@@ -294,7 +294,6 @@ async def manage_regions(callback: CallbackQuery):
     regions = await SubRepo.get_regions()
     if not regions:
         await callback.answer("База пуста.", show_alert=True)
-        # Все равно показываем меню, чтобы можно было удалить unknown если есть
         await callback.message.edit_text("📂 База пуста, но вы можете проверить управление:", reply_markup=regions_kb([], "manage_region"))
         return
     await callback.message.edit_text("📂 Выберите регион для редактирования:", reply_markup=regions_kb(regions, "manage_region"))

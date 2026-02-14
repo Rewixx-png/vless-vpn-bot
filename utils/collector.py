@@ -124,16 +124,15 @@ class SubscriptionCollector:
                     is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
                     
                     if is_alive:
-                        try:
-                            await SubRepo.add_subscription(
-                                vless_key=link, 
-                                region=region, 
-                                latency=latency,
-                                ai_available=ai_available
-                            )
+                        # Используем Smart Add для соблюдения лимитов и замены
+                        added = await SubRepo.smart_add_subscription(
+                            vless_key=link, 
+                            region=region, 
+                            latency=latency,
+                            ai_available=ai_available
+                        )
+                        if added:
                             valid_count[0] += 1
-                        except Exception:
-                            pass
                 except asyncio.CancelledError:
                     queue.task_done()
                     return
@@ -155,7 +154,7 @@ class SubscriptionCollector:
             
             await asyncio.gather(*workers, return_exceptions=True)
             
-            logger.info(f"✅ Collector stopped. Added {valid_count[0]} VALID new keys.")
+            logger.info(f"✅ Collector stopped. Added/Rotated {valid_count[0]} VALID keys.")
 
     @staticmethod
     async def _fetch_url(session, url):

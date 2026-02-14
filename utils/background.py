@@ -3,68 +3,66 @@ import logging
 from database.repo import SubRepo
 from tasks import check_subs_batch_task, run_collector_task
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Scheduler")
 
 class BackgroundTasks:
     _tasks = []
 
     @classmethod
     async def start_scheduler(cls):
-        logger.info("⏳ Background scheduler started (Manager Mode).")
-        # Теперь планировщик только ОТПРАВЛЯЕТ задачи в Celery, а не выполняет их сам
+        logger.info("⏳ Планировщик фоновых задач запущен.")
         cls._tasks.append(asyncio.create_task(cls.checker_scheduler(), name="checker_scheduler"))
         cls._tasks.append(asyncio.create_task(cls.collector_scheduler(), name="collector_scheduler"))
 
     @classmethod
     async def stop(cls):
-        logger.info("🛑 Stopping scheduler...")
+        logger.info("🛑 Остановка планировщика...")
         for task in cls._tasks:
             if not task.done():
                 task.cancel()
-        logger.info("✅ Scheduler stopped.")
+        logger.info("✅ Планировщик остановлен.")
 
     @staticmethod
     async def checker_scheduler():
-        """Каждые 10 минут отправляет задачи на проверку в Celery"""
         while True:
             try:
-                logger.info("📨 Dispatching check tasks to Celery...")
+                logger.info("🔎 Планировщик: Подготовка задач проверки подписок...")
                 await BackgroundTasks.dispatch_checks()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"❌ Scheduler error: {e}")
+                logger.error(f"❌ Ошибка планировщика (Checker): {e}")
             
-            await asyncio.sleep(600) # 10 минут
+            # Интервал проверки (10 минут)
+            await asyncio.sleep(600) 
 
     @staticmethod
     async def collector_scheduler():
-        """Каждый час отправляет задачу сбора прокси в Celery"""
         while True:
             try:
-                logger.info("📨 Dispatching collector task to Celery...")
-                run_collector_task.delay() # Отправляем задачу в очередь
+                logger.info("📥 Планировщик: Отправка задачи сборщика (Collector) в очередь...")
+                run_collector_task.delay()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"❌ Collector scheduler error: {e}")
+                logger.error(f"❌ Ошибка планировщика (Collector): {e}")
             
-            await asyncio.sleep(3600) # 1 час
+            # Интервал сбора (1 час)
+            await asyncio.sleep(3600)
 
     @staticmethod
     async def dispatch_checks():
-        # Получаем все подписки
         subs = await SubRepo.get_all_subscriptions_for_check()
-        if not subs: return
+        if not subs: 
+            logger.info("ℹ️ База пуста, нечего проверять.")
+            return
 
-        # Разбиваем на пакеты по 50 штук
         BATCH_SIZE = 50
         sub_ids = [sub.id for sub in subs]
         
         batches = [sub_ids[i:i + BATCH_SIZE] for i in range(0, len(sub_ids), BATCH_SIZE)]
         
-        logger.info(f"📦 Sending {len(batches)} batches to Celery queue...")
+        logger.info(f"🚀 Отправка {len(batches)} пакетов задач (Всего: {len(sub_ids)} ключей) в очередь Celery...")
         
         for batch in batches:
-            # .delay() отправляет задачу в Redis
             check_subs_batch_task.delay(batch)

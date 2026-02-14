@@ -1,4 +1,4 @@
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, delete, update, func
 from database.core import async_session_factory
 from database.models import Subscription
 
@@ -156,3 +156,74 @@ class SubRepo:
                 )
                 session.add(sub)
                 await session.commit()
+
+    @staticmethod
+    async def count_by_region(region: str) -> int:
+        async with async_session_factory() as session:
+            count = await session.scalar(
+                select(func.count(Subscription.id)).where(Subscription.region == region)
+            )
+            return count or 0
+
+    @staticmethod
+    async def get_worst_in_region(region: str) -> Subscription | None:
+        async with async_session_factory() as session:
+            stmt = (
+                select(Subscription)
+                .where(Subscription.region == region)
+                .order_by(Subscription.is_active.asc(), Subscription.latency_ms.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            return result.scalars().first()
+
+    @staticmethod
+    async def smart_add_subscription(vless_key: str, region: str, latency: int, ai_available: bool = False) -> bool:
+        if "Unknown" in region or "UNK" in region:
+            return False
+
+        async with async_session_factory() as session:
+            existing = await session.scalar(select(Subscription).where(Subscription.vless_key == vless_key))
+            if existing:
+                return False
+
+            count = await session.scalar(
+                select(func.count(Subscription.id)).where(Subscription.region == region)
+            )
+            count = count or 0
+
+            if count < 100:
+                sub = Subscription(
+                    vless_key=vless_key, 
+                    region=region, 
+                    latency_ms=latency,
+                    ai_available=ai_available
+                )
+                session.add(sub)
+                await session.commit()
+                return True
+            else:
+                stmt = (
+                    select(Subscription)
+                    .where(Subscription.region == region)
+                    .order_by(Subscription.is_active.asc(), Subscription.latency_ms.desc())
+                    .limit(1)
+                )
+                worst = (await session.execute(stmt)).scalars().first()
+
+                if worst:
+                    if not worst.is_active or (worst.is_active and worst.latency_ms > latency):
+                        await session.delete(worst)
+                        await session.flush()
+                        
+                        sub = Subscription(
+                            vless_key=vless_key, 
+                            region=region, 
+                            latency_ms=latency,
+                            ai_available=ai_available
+                        )
+                        session.add(sub)
+                        await session.commit()
+                        return True
+        
+        return False
