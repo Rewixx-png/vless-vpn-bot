@@ -5,23 +5,24 @@ import asyncio
 import aiohttp
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
 
 from database.repo import SubRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
 from utils.batch_processor import SmartBatchProcessor
-from handlers.admin.utils import safe_edit_message
+from handlers.admin.utils import admin_edit_or_answer
 
 router = Router()
 
 
 @router.callback_query(F.data == "admin_fix_regions")
-async def fix_unknown_regions(callback: CallbackQuery):
-    await safe_edit_message(
-        callback.message,
+async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>🚀 <b>Запуск GeoIP Batch Mode...</b>\n\n"
-        "ℹ️ <i>Используем пакетную проверку IP с batch update.</i></blockquote>",
-        parse_mode="HTML"
+        "ℹ️ <i>Используем пакетную проверку IP с batch update.</i></blockquote>"
     )
 
     subs = await SubRepo.get_unknown_regions_subs()

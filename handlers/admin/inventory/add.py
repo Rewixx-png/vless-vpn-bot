@@ -15,20 +15,20 @@ from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
 from utils.batch_processor import SmartBatchProcessor
-from handlers.admin.utils import safe_edit_message
+from handlers.admin.utils import admin_edit_or_answer
 
 router = Router()
 
 
 @router.callback_query(F.data == "admin_add")
 async def start_add_subs(callback: CallbackQuery, state: FSMContext):
-    await safe_edit_message(
-        callback.message,
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>📝 <b>Массовая загрузка (ТОЛЬКО VLESS)</b>\n\n"
         "Отправьте .txt файл или список ссылок.\n"
         "Каждая ссылка будет проверена через Xray перед добавлением.</blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
     await state.set_state(AdminStates.waiting_for_subs)
 

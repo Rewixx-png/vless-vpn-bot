@@ -13,18 +13,18 @@ from database.repo import UserRepo
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
 from utils.async_celery import RateLimiter
-from handlers.admin.utils import safe_edit_message
+from handlers.admin.utils import admin_edit_or_answer
 
 router = Router()
 
 
 @router.callback_query(F.data == "admin_broadcast")
 async def ask_broadcast(callback: CallbackQuery, state: FSMContext):
-    await safe_edit_message(
-        callback.message,
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>📢 Пришлите сообщение (текст, фото, видео) для рассылки всем юзерам:</blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
     await state.set_state(AdminStates.waiting_for_broadcast)
 
