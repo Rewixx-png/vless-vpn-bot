@@ -58,8 +58,8 @@ SUBSCRIPTION_SOURCES = [
 class SubscriptionCollector:
     """Optimized subscription collector with streaming and prioritization"""
     
-    MAX_LINKS_PER_BATCH = 2000  # Process in chunks to manage memory
-    MAX_WORKERS = 50
+    MAX_LINKS_PER_BATCH = 1000  # Reduced for less memory
+    MAX_WORKERS = 15  # Reduced for less CPU usage
     PRIORITY_REGIONS = {"🇩🇪 DE", "🇳🇱 NL", "🇫🇷 FR", "🇬🇧 GB", "🇺🇸 US", "🇸🇬 SG", "🇯🇵 JP"}
     
     @classmethod

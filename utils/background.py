@@ -1,8 +1,10 @@
 """
 Optimized background scheduler with proper async support.
+Time-based scheduling: collection during day, checking at night.
 """
 import asyncio
 import logging
+from datetime import datetime
 from database.repo import SubRepo
 from tasks import check_subs_batch_task, run_collector_task, cleanup_database_task
 
@@ -15,10 +17,20 @@ class BackgroundTasks:
     _tasks = []
     _is_running = False
     
-    # Configurable intervals (in seconds)
-    CHECK_INTERVAL = 300      # 5 minutes
-    COLLECT_INTERVAL = 1800   # 30 minutes (was 20 minutes)
-    CLEANUP_INTERVAL = 600    # 10 minutes (was 3 minutes)
+    # Intervals
+    CHECK_INTERVAL = 900      # 15 minutes (night - less CPU)
+    COLLECT_INTERVAL = 1800  # 30 minutes (day)
+    CLEANUP_INTERVAL = 3600 # 1 hour
+    
+    # Time ranges (Moscow timezone UTC+3)
+    # Collection: 6:00 - 19:59 (day)
+    # Checking: 20:00 - 5:59 (night)
+    
+    @classmethod
+    def is_daytime(cls) -> bool:
+        """Check if it's daytime (6:00-19:59 Moscow time)"""
+        hour = datetime.now().hour
+        return 6 <= hour < 20
     
     @classmethod
     async def start_scheduler(cls):
@@ -27,7 +39,7 @@ class BackgroundTasks:
             return
         
         cls._is_running = True
-        logger.info("🚀 Starting background schedulers...")
+        logger.warning("🚀 Starting background schedulers...")
         
         cls._tasks = [
             asyncio.create_task(cls._checker_scheduler(), name="checker_scheduler"),
@@ -38,7 +50,7 @@ class BackgroundTasks:
     @classmethod
     async def stop(cls):
         """Stop all background tasks"""
-        logger.info("🛑 Stopping background schedulers...")
+        logger.warning("🛑 Stopping background schedulers...")
         cls._is_running = False
         
         for task in cls._tasks:
@@ -53,10 +65,13 @@ class BackgroundTasks:
     
     @classmethod
     async def _checker_scheduler(cls):
-        """Schedule subscription checks with optimized batching"""
+        """Schedule subscription checks - only at night (20:00-5:59)"""
         while cls._is_running:
             try:
-                await cls._dispatch_checks()
+                if not cls.is_daytime():
+                    await cls._dispatch_checks()
+                else:
+                    logger.debug("Checker: sleeping - daytime")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -72,21 +87,18 @@ class BackgroundTasks:
             if not subs:
                 return
             
-            # Larger batch size for efficiency
             BATCH_SIZE = 100
             sub_ids = [sub.id for sub in subs]
             batches = [sub_ids[i:i + BATCH_SIZE] for i in range(0, len(sub_ids), BATCH_SIZE)]
             
-            logger.info(f"📋 Dispatching {len(batches)} check batches for {len(subs)} subscriptions")
+            logger.warning(f"🔍 Night check: {len(batches)} batches for {len(subs)} subs")
             
             for batch in batches:
                 try:
-                    # Use new async task
                     check_subs_batch_task.delay(batch)
                 except Exception as e:
                     logger.error(f"Failed to dispatch batch: {e}")
                 
-                # Small delay between batches to avoid overwhelming the queue
                 await asyncio.sleep(0.5)
                 
         except Exception as e:
@@ -94,11 +106,14 @@ class BackgroundTasks:
     
     @classmethod
     async def _collector_scheduler(cls):
-        """Schedule subscription collection"""
+        """Schedule subscription collection - only during day (6:00-19:59)"""
         while cls._is_running:
             try:
-                logger.info("🌐 Starting subscription collection...")
-                run_collector_task.delay()
+                if cls.is_daytime():
+                    logger.warning("☀️ Daytime - starting collection...")
+                    run_collector_task.delay()
+                else:
+                    logger.debug("Collector: sleeping - nighttime")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -108,10 +123,10 @@ class BackgroundTasks:
     
     @classmethod
     async def _cleanup_scheduler(cls):
-        """Schedule database cleanup"""
+        """Schedule database cleanup - once per hour"""
         while cls._is_running:
             try:
-                logger.info("🧹 Starting database cleanup...")
+                logger.debug("Running cleanup...")
                 cleanup_database_task.delay()
             except asyncio.CancelledError:
                 break

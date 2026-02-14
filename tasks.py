@@ -100,7 +100,7 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
             return None
     
     # Process with limited concurrency
-    processor = AsyncWorkerPool(worker_count=20)
+    processor = AsyncWorkerPool(worker_count=10)
     results = await processor.process_batch(subs, check_one)
     
     # Collect updates
