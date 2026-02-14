@@ -314,8 +314,8 @@ class SubRepo:
             )
             count = count or 0
 
-            # 3. ЛИМИТ 100
-            LIMIT = 100
+            # 3. ЛИМИТ 500 (увеличен с 100)
+            LIMIT = 500
 
             if count < LIMIT:
                 sub = Subscription(
@@ -368,12 +368,12 @@ class SubRepo:
     @staticmethod
     async def enforce_limits():
         """
-        HARD CLEANUP: Удаляет лишние записи, если их стало больше 100 из-за гонки потоков.
-        Оставляет ТОП-100 лучших (Живые + Мин. пинг) для каждой страны.
+        HARD CLEANUP: Удаляет лишние записи, если их стало больше 500 из-за гонки потоков.
+        Оставляет ТОП-500 лучших (Живые + Мин. пинг) для каждой страны.
         """
         async with async_session_factory() as session:
             # SQL запрос для PostgreSQL
-            # Удаляем все записи, у которых порядковый номер > 100 в группе по региону
+            # Удаляем все записи, у которых порядковый номер > 500 в группе по региону
             sql = text("""
                 DELETE FROM subscriptions
                 WHERE id IN (
@@ -385,7 +385,7 @@ class SubRepo:
                         ) as rn
                         FROM subscriptions
                     ) t
-                    WHERE t.rn > 100
+                    WHERE t.rn > 500
                 );
             """)
             try:
