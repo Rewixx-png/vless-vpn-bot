@@ -22,19 +22,16 @@ class VideoManager:
             os.makedirs("storage")
 
         if os.path.exists(cls.PROCESSED_PATH):
-            logger.info("✅ Smooth Video found. Ready.")
             return
 
         # 1. Скачивание исходника
         if not os.path.exists(cls.RAW_PATH):
-            logger.info("⬇️ Downloading raw video...")
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(cls.SOURCE_URL) as resp:
                         if resp.status == 200:
                             with open(cls.RAW_PATH, 'wb') as f:
                                 f.write(await resp.read())
-                            logger.info("✅ Raw video downloaded.")
                         else:
                             logger.error(f"❌ Failed to download video: {resp.status}")
                             return
@@ -43,9 +40,6 @@ class VideoManager:
                 return
 
         # 2. Генерация плавности (Motion Interpolation)
-        logger.info("🧬 Starting AI Motion Interpolation (Creating new frames)...")
-        logger.info("⚠️ This process is CPU intensive and may take time!")
-        
         try:
             # Используем фильтр minterpolate для создания ПРОМЕЖУТОЧНЫХ кадров.
             # mi_mode=mci (Motion Compensated Interpolation) - это и есть "сглаживание".
@@ -73,7 +67,6 @@ class VideoManager:
             await process.wait()
             
             if process.returncode == 0:
-                logger.info("✅ Motion Interpolation complete! Video is now REAL 60 FPS (Smooth).")
                 if os.path.exists(cls.RAW_PATH):
                     os.remove(cls.RAW_PATH)
             else:
@@ -100,4 +93,3 @@ class VideoManager:
     def set_file_id(cls, file_id: str):
         if file_id:
             cls._file_id = file_id
-            logger.info(f"💾 Video cached in Telegram. File ID: {file_id[:20]}...")
