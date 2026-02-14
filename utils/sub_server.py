@@ -47,7 +47,7 @@ class SubscriptionServer:
         return "security=reality" in link or "flow=xtls-rprx-vision" in link
 
     @staticmethod
-    def _extract_links(text: str) -> list[str]:
+    def _extract_links(text: str, allowed_schemes: set[str]) -> list[str]:
         links = []
         if not text:
             return links
@@ -56,7 +56,11 @@ class SubscriptionServer:
             item = line.strip()
             if not item:
                 continue
-            if item.startswith(("vless://", "vmess://", "trojan://", "ss://", "ssr://", "hysteria2://", "hy2://", "tuic://")):
+            if "://" not in item:
+                continue
+
+            scheme = item.split("://", 1)[0].lower()
+            if scheme in allowed_schemes:
                 links.append(item)
         return links
 
@@ -78,10 +82,10 @@ class SubscriptionServer:
         return ""
 
     @classmethod
-    async def _get_external_links(cls) -> list[str]:
+    async def _get_external_links(cls, allowed_schemes: set[str]) -> list[str]:
         now = time.time()
         if now - cls._external_cache["ts"] < 300:
-            return cls._external_cache["links"]
+            return [k for k in cls._external_cache["links"] if k.split("://", 1)[0].lower() in allowed_schemes]
 
         external_url = await SystemRepo.get_config("external_sub_url")
         if not external_url:
@@ -99,7 +103,7 @@ class SubscriptionServer:
                     raw_text = await resp.text()
 
             text = cls._decode_subscription_text(raw_text)
-            links = cls._extract_links(text)
+            links = cls._extract_links(text, allowed_schemes)
 
             cls._external_cache = {"ts": now, "links": links}
             return links
@@ -115,6 +119,7 @@ class SubscriptionServer:
         try:
             user_id_raw = request.query.get('id')
             format_param = request.query.get('format', '').lower()
+            types_param = request.query.get('types', '').lower()
             # Check for different client types
             is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
             is_v2raytun = 'v2raytun' in user_agent
@@ -197,7 +202,21 @@ class SubscriptionServer:
             # Filter out malformed links to avoid client import failures
             renamed_links = [k for k in renamed_links if k.startswith("vless://")]
 
-            external_links = await SubscriptionServer._get_external_links()
+            supported_schemes = {"vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "hy2", "tuic"}
+            if types_param:
+                if types_param == "all":
+                    allowed_schemes = supported_schemes
+                else:
+                    allowed_schemes = {t.strip() for t in types_param.split(",") if t.strip() in supported_schemes}
+            else:
+                allowed_schemes = {"vless"}
+
+            if not allowed_schemes:
+                allowed_schemes = {"vless"}
+
+            renamed_links = [k for k in renamed_links if k.split("://", 1)[0].lower() in allowed_schemes]
+
+            external_links = await SubscriptionServer._get_external_links(allowed_schemes)
             combined_links = renamed_links + external_links
 
             if format_param in ["clash", "yaml", "clash-meta"] or is_clash:
