@@ -1,7 +1,8 @@
 import os
 import logging
 import warnings
-from celery import Celery, signals
+import asyncio
+from celery import Celery, signals, Task
 from celery.exceptions import SecurityWarning
 from kombu import Queue, Exchange
 from config import config
@@ -9,11 +10,34 @@ from config import config
 warnings.simplefilter('ignore', SecurityWarning)
 os.environ.setdefault('C_FORCE_ROOT', '1')
 
+
+class AsyncTask(Task):
+    """Base task class with native async support"""
+    
+    def __call__(self, *args, **kwargs):
+        """Override to properly handle async functions"""
+        if asyncio.iscoroutinefunction(self.run):
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            return loop.run_until_complete(self.run(*args, **kwargs))
+        
+        return self.run(*args, **kwargs)
+
+
 app = Celery(
     'vless_bot_worker',
     broker=config.REDIS_URL,
     backend=config.REDIS_URL,
-    include=['tasks']
+    include=['tasks'],
+    task_cls=AsyncTask
 )
 
 app.conf.task_queues = (

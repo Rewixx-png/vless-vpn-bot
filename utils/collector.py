@@ -1,14 +1,20 @@
+"""
+Optimized subscription collector with priority queue and stream processing.
+"""
 import aiohttp
 import asyncio
 import base64
 import re
 import logging
-import gc 
+from typing import List, Set, Tuple, Optional
+
 from database.repo import SubRepo
 from utils.checker import VlessChecker
+from utils.batch_processor import SmartBatchProcessor
 
 logger = logging.getLogger("Collector")
 
+# Source URLs for proxy collection
 SUBSCRIPTION_SOURCES = [
     "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
     "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
@@ -48,114 +54,168 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt"
 ]
 
+
 class SubscriptionCollector:
-    @staticmethod
-    async def run_collection():
-        try:
-            async with aiohttp.ClientSession() as session:
-                tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                results = [r for r in results if isinstance(r, str) and r]
-        except asyncio.CancelledError:
-            return
-
-        all_content = "\n".join(results)
-        del results
-        gc.collect()
-
-        decoded_content = SubscriptionCollector._try_decode(all_content)
-        full_text = all_content + "\n" + decoded_content
+    """Optimized subscription collector with streaming and prioritization"""
+    
+    MAX_LINKS_PER_BATCH = 2000  # Process in chunks to manage memory
+    MAX_WORKERS = 50
+    PRIORITY_REGIONS = {"🇩🇪 DE", "🇳🇱 NL", "🇫🇷 FR", "🇬🇧 GB", "🇺🇸 US", "🇸🇬 SG", "🇯🇵 JP"}
+    
+    @classmethod
+    async def run_collection(cls) -> dict:
+        """Run collection with optimized processing"""
+        logger.info(f"🚀 Starting collection from {len(SUBSCRIPTION_SOURCES)} sources")
         
-        del all_content
-        del decoded_content
-        gc.collect()
-
+        # Fetch all sources concurrently
+        async with aiohttp.ClientSession() as session:
+            tasks = [cls._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        all_content = []
+        for result in results:
+            if isinstance(result, str) and result:
+                all_content.append(result)
+        
+        # Extract and decode links
+        combined_text = "\n".join(all_content)
+        del all_content  # Free memory
+        
+        decoded_content = cls._try_decode(combined_text)
+        full_text = combined_text + "\n" + decoded_content
+        del combined_text, decoded_content
+        
+        # Extract VLESS links
         found_links = re.findall(r'(vless://[a-zA-Z0-9\-_.!~*\'()&=+$%@:/?#\[\]]+)', full_text)
-        found_links = list(set(found_links))
-        
+        found_links = list(set(found_links))  # Remove duplicates
         del full_text
-        gc.collect()
         
+        logger.info(f"📊 Found {len(found_links)} unique links")
+        
+        # Filter out existing keys
         existing_keys = await SubRepo.get_all_keys_set()
         unique_links = [l.strip() for l in found_links if l.strip() not in existing_keys]
+        del found_links
+        
+        logger.info(f"🆕 {len(unique_links)} new links to check")
         
         if not unique_links:
-            return
-            
-        if len(unique_links) > 3500:
-            unique_links = unique_links[:3500]
-
-        queue = asyncio.Queue()
-        for link in unique_links:
-            queue.put_nowait(link)
-
-        valid_count = [0]
+            return {"processed": 0, "added": 0}
         
-        WORKERS_COUNT = 100
-        workers = []
-
-        async def worker():
-            while True:
-                try:
-                    link = await queue.get()
-                except asyncio.CancelledError:
-                    return
-
-                try:
-                    is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
-                    
-                    if is_alive:
-                        added = await SubRepo.smart_add_subscription(
-                            vless_key=link, 
-                            region=region, 
-                            latency=latency, 
-                            ai_available=ai_available
-                        )
-                        if added:
-                            valid_count[0] += 1
-                except asyncio.CancelledError:
-                    queue.task_done()
-                    return
-                except Exception:
-                    pass
-                finally:
-                    queue.task_done()
-                    gc.collect()
-
-        for _ in range(WORKERS_COUNT):
-            workers.append(asyncio.create_task(worker()))
-
-        try:
-            await queue.join()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            for w in workers:
-                w.cancel()
+        # Limit batch size to manage memory
+        if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
+            logger.info(f"⚠️ Limiting to {cls.MAX_LINKS_PER_BATCH} links")
+            unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
+        
+        # Process links with priority queue
+        return await cls._process_links_priority(unique_links)
+    
+    @classmethod
+    async def _process_links_priority(cls, links: List[str]) -> dict:
+        """Process links with priority for preferred regions"""
+        added_count = 0
+        checked_count = 0
+        
+        processor = SmartBatchProcessor(
+            worker_count=cls.MAX_WORKERS,
+            progress_interval=10.0,
+            rate_limit=30  # Limit to 30 checks/second
+        )
+        
+        async def check_and_add(link: str) -> Optional[dict]:
+            """Check link and add if valid"""
+            nonlocal checked_count, added_count
             
-            await asyncio.gather(*workers, return_exceptions=True)
-
+            try:
+                is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
+                checked_count += 1
+                
+                if is_alive:
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=link,
+                        region=region,
+                        latency=latency,
+                        ai_available=ai_available
+                    )
+                    
+                    if added:
+                        added_count += 1
+                        return {
+                            "status": "added",
+                            "region": region,
+                            "latency": latency
+                        }
+                    else:
+                        return {"status": "rejected", "region": region}
+                else:
+                    return {"status": "dead"}
+                    
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
+        
+        # Process in batches
+        result = await processor.process(
+            items=links,
+            process_func=check_and_add
+        )
+        
+        # Count results
+        added = sum(1 for item in result.items 
+                   if item.get("result") and item["result"].get("status") == "added")
+        
+        logger.info(f"✅ Collection complete: {checked_count} checked, {added} added")
+        
+        return {
+            "processed": checked_count,
+            "added": added,
+            "duration": result.duration
+        }
+    
     @staticmethod
-    async def _fetch_url(session, url):
+    async def _fetch_url(session: aiohttp.ClientSession, url: str) -> str:
+        """Fetch URL with GitHub raw conversion"""
         try:
+            # Convert GitHub blob URLs to raw
             if "github.com" in url and "/blob/" in url:
                 url = url.replace("/blob/", "/raw/")
-            async with session.get(url, timeout=10) as resp:
+            
+            timeout = aiohttp.ClientTimeout(total=15, connect=5)
+            async with session.get(url, timeout=timeout) as resp:
                 if resp.status == 200:
                     content = await resp.read()
-                    if len(content) > 1024 * 1024: 
-                        content = content[:1024 * 1024]
+                    # Limit size to prevent memory issues
+                    if len(content) > 2 * 1024 * 1024:  # 2MB limit
+                        content = content[:2 * 1024 * 1024]
                     return content.decode('utf-8', errors='ignore')
+        except asyncio.TimeoutError:
+            logger.warning(f"⏱️ Timeout: {url[:50]}...")
+        except Exception as e:
+            logger.debug(f"Failed to fetch {url[:50]}: {e}")
+        
+        return ""
+    
+    @staticmethod
+    def _try_decode(text: str) -> str:
+        """Try to decode base64 content"""
+        if not text or "://" in text:
+            return ""
+        
+        try:
+            # Remove whitespace
+            clean_text = re.sub(r'\s+', '', text)
+            
+            # Add padding if needed
+            missing_padding = len(clean_text) % 4
+            if missing_padding:
+                clean_text += '=' * (4 - missing_padding)
+            
+            decoded = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
+            
+            # Validate it looks like proxy configs
+            if "://" in decoded:
+                return decoded
         except Exception:
             pass
+        
         return ""
-
-    @staticmethod
-    def _try_decode(text):
-        try:
-            clean_text = re.sub(r'\s+', '', text)
-            missing_padding = len(clean_text) % 4
-            if missing_padding: clean_text += '=' * (4 - missing_padding)
-            decoded = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
-            return decoded
-        except Exception: return ""

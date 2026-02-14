@@ -57,13 +57,16 @@ class XrayExecutor:
             "outbounds": [outbound, {"protocol": "freedom", "tag": "direct"}]
         }
 
+    XRAY_STARTUP_TIMEOUT = 0.5  # Increased slightly for stability
+    XRAY_MAX_LIFETIME = 10.0    # Maximum lifetime for xray process
+    
     @classmethod
     async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return None, 0, "Invalid Link"
 
-        local_port = random.randint(10000, 60000)
+        local_port = random.randint(20000, 55000)  # More conservative port range
         config_path = f"/tmp/xray_check_{local_port}.json"
 
         try:
@@ -78,29 +81,55 @@ class XrayExecutor:
                 start_new_session=True
             )
             
+            # Wait and check if process started successfully
             try:
-                await asyncio.wait_for(process.wait(), timeout=0.3)
+                await asyncio.wait_for(process.wait(), timeout=cls.XRAY_STARTUP_TIMEOUT)
+                # If we get here, process exited immediately
+                cls._cleanup_file(config_path)
                 return None, 0, "Xray failed startup (crashed immediately)"
             except asyncio.TimeoutError:
+                # Process is still running, good!
                 pass 
 
             return process, local_port, config_path
         except Exception as e:
+            cls._cleanup_file(config_path)
             return None, 0, str(e)
 
     @staticmethod
-    def cleanup(process, config_path):
+    def _cleanup_file(config_path: str):
+        """Safely remove config file"""
+        if config_path and os.path.exists(config_path):
+            try:
+                os.remove(config_path)
+            except Exception:
+                pass
+    
+    @classmethod
+    async def cleanup(cls, process, config_path):
+        """Enhanced cleanup with timeout and zombie prevention"""
         if process:
             try:
                 if process.returncode is None:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                    # Try graceful termination first
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                        # Wait a bit for graceful shutdown
+                        try:
+                            await asyncio.wait_for(process.wait(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            # Force kill if still running
+                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # Already dead
+                    except Exception:
+                        # Fallback to direct kill
+                        try:
+                            process.kill()
+                            await asyncio.wait_for(process.wait(), timeout=1.0)
+                        except Exception:
+                            pass
             except Exception:
-                try:
-                    process.kill()
-                except: pass
-
-        if config_path and os.path.exists(config_path):
-            try: os.remove(config_path)
-            except: pass
+                pass
+        
+        cls._cleanup_file(config_path)

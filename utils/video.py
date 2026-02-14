@@ -1,3 +1,7 @@
+"""
+VideoManager with non-blocking background processing.
+Video is prepared asynchronously without blocking bot startup.
+"""
 import os
 import logging
 import asyncio
@@ -6,47 +10,88 @@ from aiogram.types import FSInputFile
 
 logger = logging.getLogger("VideoManager")
 
+
 class VideoManager:
+    """Async video manager with background preparation"""
+    
     # Ссылка на исходное видео
     SOURCE_URL = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
     
     RAW_PATH = "storage/video_raw.mp4"
-    # Файл с реальной интерполяцией кадров (плавный)
     PROCESSED_PATH = "storage/video_smooth_60fps.mp4"
     
     _file_id: str | None = None
-
+    _ready: bool = False
+    _preparation_task: asyncio.Task | None = None
+    
     @classmethod
     async def prepare(cls):
+        """Start background video preparation - non-blocking"""
         if not os.path.exists("storage"):
             os.makedirs("storage")
-
+        
+        # If already processed, mark as ready immediately
         if os.path.exists(cls.PROCESSED_PATH):
+            cls._ready = True
             return
-
-        if not os.path.exists(cls.RAW_PATH):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(cls.SOURCE_URL) as resp:
-                        if resp.status == 200:
-                            with open(cls.RAW_PATH, 'wb') as f:
-                                f.write(await resp.read())
-                        else:
-                            logger.error(f"❌ Failed to download video: {resp.status}")
-                            return
-            except Exception as e:
-                logger.error(f"❌ Download error: {e}")
-                return
-
+        
+        # Start preparation in background
+        cls._preparation_task = asyncio.create_task(cls._prepare_video())
+        logger.info("🎬 Video preparation started in background")
+    
+    @classmethod
+    async def _prepare_video(cls):
+        """Background video processing"""
         try:
+            # Download if needed
+            if not os.path.exists(cls.RAW_PATH):
+                await cls._download_video()
+            
+            # Process with ffmpeg
+            if os.path.exists(cls.RAW_PATH) and not os.path.exists(cls.PROCESSED_PATH):
+                await cls._process_video()
+            
+            cls._ready = True
+            logger.info("✅ Video preparation completed")
+            
+        except Exception as e:
+            logger.error(f"❌ Video preparation failed: {e}")
+            cls._ready = False
+    
+    @classmethod
+    async def _download_video(cls):
+        """Download video from source"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(cls.SOURCE_URL, timeout=30) as resp:
+                    if resp.status == 200:
+                        with open(cls.RAW_PATH, 'wb') as f:
+                            while True:
+                                chunk = await resp.content.read(8192)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                        logger.info("✅ Video downloaded")
+                    else:
+                        raise Exception(f"Download failed: {resp.status}")
+        except Exception as e:
+            logger.error(f"❌ Download error: {e}")
+            raise
+    
+    @classmethod
+    async def _process_video(cls):
+        """Process video with ffmpeg"""
+        try:
+            # Use lighter preset for faster processing
             cmd = [
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
-                "-vf", "minterpolate=fps=120:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
+                "-vf", "fps=30,scale=480:-1:flags=lanczos",  # Simpler filter, lower resolution
                 "-c:v", "libx264",
-                "-preset", "veryfast", 
-                "-crf", "20",          
-                "-c:a", "copy",        
+                "-preset", "ultrafast",  # Fastest preset
+                "-crf", "23",  # Slightly higher CRF for smaller size
+                "-c:a", "copy",
+                "-movflags", "+faststart",  # Enable fast start for streaming
                 "-y",
                 cls.PROCESSED_PATH
             ]
@@ -54,35 +99,71 @@ class VideoManager:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.PIPE
             )
             
-            await process.wait()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=120)
+            except asyncio.TimeoutError:
+                process.kill()
+                raise Exception("FFmpeg timeout")
             
             if process.returncode == 0:
+                # Remove raw file to save space
                 if os.path.exists(cls.RAW_PATH):
                     os.remove(cls.RAW_PATH)
+                    logger.info("🗑️ Raw video removed")
+                
+                # Get file size
+                size_mb = os.path.getsize(cls.PROCESSED_PATH) / (1024 * 1024)
+                logger.info(f"✅ Video processed: {size_mb:.1f}MB")
             else:
-                logger.error("❌ FFmpeg interpolation failed.")
+                # Try to get error message
+                stderr = await process.stderr.read() if process.stderr else b""
+                raise Exception(f"FFmpeg failed: {stderr.decode()[:200]}")
                 
         except Exception as e:
             logger.error(f"❌ Render error: {e}")
-
+            # Fallback: use raw file if processing failed
+            if os.path.exists(cls.RAW_PATH) and not os.path.exists(cls.PROCESSED_PATH):
+                os.rename(cls.RAW_PATH, cls.PROCESSED_PATH)
+                logger.info("⚠️ Using raw video as fallback")
+    
     @classmethod
     def get_file(cls):
+        """Get video file (may return None if not ready)"""
+        # Return file_id if uploaded to Telegram
         if cls._file_id:
             return cls._file_id
         
+        # Return processed file if ready
         if os.path.exists(cls.PROCESSED_PATH):
             return FSInputFile(cls.PROCESSED_PATH)
         
-        # Fallback
+        # Return raw file if available
         if os.path.exists(cls.RAW_PATH):
             return FSInputFile(cls.RAW_PATH)
         
+        # Not ready yet
         return None
-
+    
+    @classmethod
+    def is_ready(cls) -> bool:
+        """Check if video is ready"""
+        return cls._ready
+    
     @classmethod
     def set_file_id(cls, file_id: str):
+        """Set Telegram file_id after successful upload"""
         if file_id:
             cls._file_id = file_id
+            logger.info("📎 Video file_id cached")
+    
+    @classmethod
+    async def wait_for_ready(cls, timeout: float = 30.0):
+        """Wait for video to be ready (optional)"""
+        start = asyncio.get_event_loop().time()
+        while not cls._ready:
+            if asyncio.get_event_loop().time() - start > timeout:
+                break
+            await asyncio.sleep(0.5)

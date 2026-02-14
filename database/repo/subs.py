@@ -1,6 +1,43 @@
-from sqlalchemy import select, delete, update, func, text
+import time
+from functools import lru_cache
+from typing import List, Dict, Any, Optional
+from sqlalchemy import select, delete, update, func, text, bindparam
 from database.core import async_session_factory
 from database.models import Subscription
+
+# Simple in-memory cache with TTL
+_cache = {}
+_cache_ttl = {}
+
+def _get_cached(key: str, ttl: int = 300):
+    """Get cached value if not expired"""
+    now = time.time()
+    if key in _cache and key in _cache_ttl:
+        if now < _cache_ttl[key]:
+            return _cache[key]
+        else:
+            del _cache[key]
+            del _cache_ttl[key]
+    return None
+
+def _set_cached(key: str, value: Any, ttl: int = 300):
+    """Set cached value with TTL"""
+    _cache[key] = value
+    _cache_ttl[key] = time.time() + ttl
+
+def _invalidate_cache(pattern: str = None):
+    """Invalidate cache entries matching pattern"""
+    global _cache, _cache_ttl
+    if pattern is None:
+        _cache.clear()
+        _cache_ttl.clear()
+    else:
+        keys_to_remove = [k for k in _cache.keys() if pattern in k]
+        for k in keys_to_remove:
+            del _cache[k]
+            if k in _cache_ttl:
+                del _cache_ttl[k]
+
 
 class SubRepo:
     @staticmethod
@@ -76,11 +113,19 @@ class SubRepo:
 
     @staticmethod
     async def get_regions(protocol: str = None):
+        """Get unique regions with caching"""
+        cache_key = f"regions_{protocol}"
+        cached = _get_cached(cache_key, ttl=60)  # Cache for 60 seconds
+        if cached is not None:
+            return cached
+            
         async with async_session_factory() as session:
             stmt = select(Subscription.region).where(Subscription.is_active == True)
             stmt = stmt.distinct().order_by(Subscription.region)
             result = await session.execute(stmt)
-            return result.scalars().all()
+            regions = result.scalars().all()
+            _set_cached(cache_key, regions, ttl=60)
+            return regions
 
     @staticmethod
     async def get_subs_by_region(region: str):
@@ -94,6 +139,74 @@ class SubRepo:
     async def get_sub_by_id(sub_id: int):
         async with async_session_factory() as session:
             return await session.get(Subscription, sub_id)
+    
+    @staticmethod
+    async def get_subs_by_ids(sub_ids: List[int]) -> List[Subscription]:
+        """Fetch multiple subscriptions by IDs in one query"""
+        if not sub_ids:
+            return []
+        async with async_session_factory() as session:
+            stmt = select(Subscription).where(Subscription.id.in_(sub_ids))
+            result = await session.execute(stmt)
+            return result.scalars().all()
+    
+    @staticmethod
+    async def batch_update_status(updates: List[Dict[str, Any]]):
+        """Batch update subscription status - reduces N queries to 1"""
+        if not updates:
+            return
+        
+        async with async_session_factory() as session:
+            # Use CASE statement for efficient batch update
+            case_active = []
+            case_latency = []
+            case_ai = []
+            ids = []
+            
+            for upd in updates:
+                ids.append(upd["id"])
+                case_active.append(f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}")
+                case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
+                case_ai.append(f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}")
+            
+            sql = text(f"""
+                UPDATE subscriptions
+                SET 
+                    is_active = CASE id {' '.join(case_active)} END,
+                    latency_ms = CASE id {' '.join(case_latency)} END,
+                    ai_available = CASE id {' '.join(case_ai)} END
+                WHERE id IN ({','.join(map(str, ids))})
+            """)
+            
+            await session.execute(sql)
+            await session.commit()
+            _invalidate_cache("subscription")
+    
+    @staticmethod
+    async def batch_update_regions(updates: List[Dict[str, Any]]):
+        """Batch update subscription regions"""
+        if not updates:
+            return
+        
+        async with async_session_factory() as session:
+            case_regions = []
+            ids = []
+            
+            for upd in updates:
+                ids.append(upd["id"])
+                # Escape single quotes in region names
+                region = upd["region"].replace("'", "''")
+                case_regions.append(f"WHEN {upd['id']} THEN '{region}'")
+            
+            sql = text(f"""
+                UPDATE subscriptions
+                SET region = CASE id {' '.join(case_regions)} END
+                WHERE id IN ({','.join(map(str, ids))})
+            """)
+            
+            await session.execute(sql)
+            await session.commit()
+            _invalidate_cache("subscription")
 
     @staticmethod
     async def delete_sub(sub_id: int):

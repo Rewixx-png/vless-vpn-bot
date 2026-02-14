@@ -107,7 +107,7 @@ async def check_handler(request):
             except Exception as e:
                 result["error"] = str(e)
             finally:
-                XrayExecutor.cleanup(process, config_path)
+                await XrayExecutor.cleanup(process, config_path)
 
             return web.json_response(result)
 
