@@ -133,7 +133,7 @@ class ClashGenerator:
             yaml_lines.append("")
             yaml_lines.append("proxy-groups:")
             
-            yaml_lines.append("  - name: \"🚀 Auto Select\"")
+            yaml_lines.append("  - name: \"Auto\"")
             yaml_lines.append("    type: url-test")
             yaml_lines.append("    url: \"http://www.gstatic.com/generate_204\"")
             yaml_lines.append("    interval: 300")
@@ -143,19 +143,23 @@ class ClashGenerator:
                 yaml_lines.append(f"      - \"{ClashGenerator.escape_yaml_str(name)}\"")
             
             yaml_lines.append("")
-            yaml_lines.append("  - name: \"🌍 Proxy\"")
+            yaml_lines.append("  - name: \"Proxy\"")
             yaml_lines.append("    type: select")
             yaml_lines.append("    proxies:")
-            yaml_lines.append("      - \"🚀 Auto Select\"")
+            yaml_lines.append("      - \"Auto\"")
             for name in proxy_names:
                 yaml_lines.append(f"      - \"{ClashGenerator.escape_yaml_str(name)}\"")
 
             yaml_lines.append("")
             yaml_lines.append("rules:")
-            yaml_lines.append("  - MATCH, \"🌍 Proxy\"")
+            yaml_lines.append("  - MATCH,Proxy")
 
         return "\n".join(yaml_lines)
 
     @staticmethod
     def escape_yaml_str(s):
-        return s.replace('"', '\\"').replace('\\', '\\\\')
+        # Remove or replace problematic characters for FlClash
+        s = s.replace('"', '')
+        s = s.replace('\\', '')
+        s = s.replace('•', '-')
+        return s

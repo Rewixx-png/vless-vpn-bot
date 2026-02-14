@@ -123,6 +123,7 @@ class SubscriptionServer:
             # Check for different client types
             is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
             is_v2raytun = 'v2raytun' in user_agent
+            is_happ = 'happ' in user_agent.lower()
 
             subs = []
             
@@ -217,8 +218,9 @@ class SubscriptionServer:
             external_links = await SubscriptionServer._get_external_links(allowed_schemes)
             combined_links = renamed_links + external_links
 
-            # Default to Clash YAML for modern clients
-            if format_param in ["clash", "yaml", "yml"] or is_clash or not format_param:
+            # Default to plain text for most clients (Happ, V2RayTun, etc.)
+            # Only Clash clients get YAML
+            if format_param in ["clash", "yaml", "yml"] or is_clash:
                 parsed_configs = []
                 for k in combined_links:
                     cfg = LinkParser.parse_vless(k)
@@ -226,12 +228,8 @@ class SubscriptionServer:
 
                 response_text = ClashGenerator.generate_conf(parsed_configs)
                 filename = "config.yaml"
-                content_type = "text/yaml; charset=utf-8"
-            elif format_param in ["raw", "plain", "txt"]:
-                response_text = "\n".join(combined_links)
-                filename = "sub.txt"
-                content_type = "text/plain; charset=utf-8"
-            elif format_param == "v2raytun" or is_v2raytun:
+                content_type = "application/x-yaml; charset=utf-8"
+            elif format_param in ["raw", "plain", "txt"] or is_v2raytun or is_happ:
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
