@@ -156,14 +156,8 @@ async def run_collector_task() -> Dict[str, Any]:
         result = await SubscriptionCollector.run_collection()
         duration = asyncio.get_event_loop().time() - start_time
         
-        logger.warning(f"✅ Collection done in {duration:.1f}s: +{result.get('added', 0)} added")
-        logger.info("=" * 60)
-        logger.info(f"Duration: {duration:.2f}s")
-        logger.info(f"Links processed: {result.get('processed', 0)}")
-        logger.info(f"Configs added: {result.get('added', 0)}")
-        logger.info(f"Dead configs: {result.get('dead', 0)}")
-        logger.info(f"Rejected: {result.get('rejected', 0)}")
-        logger.info("=" * 60)
+        added = result.get('added', 0) if isinstance(result, dict) else 0
+        logger.warning(f"✅ Collection done in {duration:.1f}s: +{added} added")
         
         return {
             "success": True,
