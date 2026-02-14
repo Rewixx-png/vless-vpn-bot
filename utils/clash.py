@@ -88,7 +88,15 @@ class ClashGenerator:
                 logger.error(f"Error processing config for Clash: {e}")
                 continue
 
-        yaml_lines = ["proxies:"]
+        yaml_lines = [
+            "mixed-port: 7890",
+            "allow-lan: false",
+            "mode: rule",
+            "log-level: warning",
+            "ipv6: true",
+            "",
+            "proxies:"
+        ]
         proxy_names = []
 
         for p in proxies:
