@@ -25,11 +25,14 @@ class SubscriptionServer:
     @staticmethod
     async def handle_subscription(request):
         client_ip = request.remote
-        user_agent = request.headers.get('User-Agent', 'Unknown')
-        
+        user_agent = request.headers.get('User-Agent', 'Unknown').lower()
+
         try:
             user_id_raw = request.query.get('id')
-            is_clash = any(x in user_agent.lower() for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
+            format_param = request.query.get('format', '').lower()
+            # Check for different client types
+            is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
+            is_v2raytun = 'v2raytun' in user_agent or 'v2ray' in user_agent or format_param == 'v2raytun'
 
             subs = []
             
@@ -112,11 +115,17 @@ class SubscriptionServer:
                 for k in renamed_links:
                     cfg = LinkParser.parse_vless(k)
                     if cfg: parsed_configs.append(cfg)
-                
+
                 response_text = ClashGenerator.generate_conf(parsed_configs)
                 filename = "config.yaml"
                 content_type = "text/yaml; charset=utf-8"
+            elif is_v2raytun:
+                # V2RayTun expects plain text list of VLESS links (one per line)
+                response_text = "\n".join(renamed_links)
+                filename = "sub.txt"
+                content_type = "text/plain; charset=utf-8"
             else:
+                # Standard base64 encoded subscription for most v2ray clients
                 text_data = "\n".join(renamed_links)
                 response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
                 filename = "config.txt"
