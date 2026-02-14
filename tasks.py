@@ -55,15 +55,22 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
             should_update = False
             status_changed = False
             
+            current_death_count = sub.death_count or 0
+            
             if sub.is_active != is_alive:
                 should_update = True
                 status_changed = True
                 if is_alive:
                     revived_count += 1
                     logger.info(f"[CHECKER] REVIVED - Sub {sub.id} is now ALIVE ({region}, {latency}ms)")
+                    current_death_count = 0
                 else:
-                    died_count += 1
-                    logger.info(f"[CHECKER] DIED - Sub {sub.id} is now DEAD (Error: {err})")
+                    current_death_count += 1
+                    if current_death_count >= 2:
+                        died_count += 1
+                        logger.info(f"[CHECKER] DIED - Sub {sub.id} is now DEAD (Error: {err})")
+                    else:
+                        logger.info(f"[CHECKER] WARNING - Sub {sub.id} failed check ({current_death_count}/2) - keeping alive")
             elif is_alive and abs(sub.latency_ms - latency) > 50:
                 should_update = True
                 logger.debug(f"[CHECKER] LATENCY CHANGE - Sub {sub.id}: {sub.latency_ms}ms -> {latency}ms")
@@ -81,7 +88,8 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
                 "latency": latency if is_alive else 9999,
                 "ai_available": ai_available,
                 "region": region if is_alive and region and "Unknown" not in region else None,
-                "status_changed": status_changed
+                "status_changed": status_changed,
+                "death_count": current_death_count
             }
             checked_count += 1
             return result
@@ -105,7 +113,8 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
                 "id": result["id"],
                 "is_active": result["is_active"],
                 "latency_ms": result["latency"],
-                "ai_available": result["ai_available"]
+                "ai_available": result["ai_available"],
+                "death_count": result.get("death_count", 0)
             })
         
         if result["region"]:

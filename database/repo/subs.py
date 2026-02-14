@@ -161,10 +161,10 @@ class SubRepo:
         
         async with async_session_factory() as session:
             logger.info(f"[DB] batch_update_status: {len(updates)} ids")
-            # Use CASE statement for efficient batch update
             case_active = []
             case_latency = []
             case_ai = []
+            case_death = []
             ids = []
             
             for upd in updates:
@@ -172,13 +172,16 @@ class SubRepo:
                 case_active.append(f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}")
                 case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
                 case_ai.append(f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}")
+                death_count = upd.get("death_count", 0)
+                case_death.append(f"WHEN {upd['id']} THEN {death_count}")
             
             sql = text(f"""
                 UPDATE subscriptions
                 SET 
                     is_active = CASE id {' '.join(case_active)} END,
                     latency_ms = CASE id {' '.join(case_latency)} END,
-                    ai_available = CASE id {' '.join(case_ai)} END
+                    ai_available = CASE id {' '.join(case_ai)} END,
+                    death_count = CASE id {' '.join(case_death)} END
                 WHERE id IN ({','.join(map(str, ids))})
             """)
             

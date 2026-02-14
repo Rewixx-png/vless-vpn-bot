@@ -46,6 +46,7 @@ class Subscription(Base):
     ai_available: Mapped[bool] = mapped_column(Boolean, default=False)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    death_count: Mapped[int] = mapped_column(Integer, default=0)
     added_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
