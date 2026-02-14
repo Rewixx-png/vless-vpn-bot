@@ -1,9 +1,12 @@
 import time
+import logging
 from functools import lru_cache
 from typing import List, Dict, Any, Optional
 from sqlalchemy import select, delete, update, func, text, bindparam
 from database.core import async_session_factory
 from database.models import Subscription
+
+logger = logging.getLogger("SubRepo")
 
 # Simple in-memory cache with TTL
 _cache = {}
@@ -157,6 +160,7 @@ class SubRepo:
             return
         
         async with async_session_factory() as session:
+            logger.info(f"[DB] batch_update_status: {len(updates)} ids")
             # Use CASE statement for efficient batch update
             case_active = []
             case_latency = []
@@ -189,6 +193,7 @@ class SubRepo:
             return
         
         async with async_session_factory() as session:
+            logger.info(f"[DB] batch_update_regions: {len(updates)} ids")
             case_regions = []
             ids = []
             
