@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+from typing import Iterable
 from aiogram import Bot, Dispatcher
 
 # 1. Сразу настраиваем базовое логирование на WARNING
@@ -35,6 +36,27 @@ for logger_name in loggers_to_silence:
 
 logger = logging.getLogger(__name__)
 
+class TelegramLogHandler(logging.Handler):
+    def __init__(self, bot: Bot, admin_ids: Iterable[int]):
+        super().__init__(level=logging.ERROR)
+        self.bot = bot
+        self.admin_ids = list(admin_ids)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            if len(msg) > 3500:
+                msg = msg[:3500] + "..."
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            for admin_id in self.admin_ids:
+                loop.create_task(self.bot.send_message(admin_id, f"❗️ Ошибка:\n{msg}"))
+        except Exception:
+            pass
+
 async def main():
     await init_db()
 
@@ -43,6 +65,11 @@ async def main():
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
+
+    # Отправка всех ошибок в ЛС владельцу
+    tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
+    tg_handler.setFormatter(logging.Formatter("%(name)s - %(levelname)s - %(message)s"))
+    logging.getLogger().addHandler(tg_handler)
 
     dp.include_router(user_router)
     dp.include_router(admin_router)
