@@ -9,17 +9,19 @@ class Settings(BaseSettings):
     CRYPTO_BOT_TOKEN: SecretStr
     
     # URL подключения к Redis (для Celery)
-    # Если Redis на другом сервере или с паролем, измените этот параметр
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Публичный IP сервера
     PUBLIC_IP: str = "108.165.164.160"
     
-    # Порт веб-сервера подписок
+    # Порт веб-сервера подписок (для пользователей)
     WEB_PORT: int = 2082
     
+    # Порт внутреннего микросервиса чекера (Localhost only)
+    CHECKER_PORT: int = 8081
+    CHECKER_URL: str = "http://127.0.0.1:8081"
+    
     # Если вы хотите принудительно использовать HTTPS ссылки при работе через HTTP порт (за Cloudflare)
-    # установите этот домен (например: vpn.example.com)
     public_domain: str | None = None
 
     class Config:

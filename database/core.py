@@ -24,9 +24,8 @@ async def init_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"))
             await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE"))
             
-            # Create user_groups table manually if create_all skipped it (though create_all should handle it)
-            # This is just a safe-check block for migrations logic if needed in future
-            pass
+            # Миграция для тегов групп
+            await conn.execute(text("ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"))
         except Exception as e:
             print(f"Migration warning: {e}")
 

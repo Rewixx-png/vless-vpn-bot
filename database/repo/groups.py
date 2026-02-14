@@ -7,7 +7,6 @@ class GroupRepo:
     async def create_group(user_id: int, name: str, countries: list[str] | None):
         filter_str = ",".join(countries) if countries else None
         async with async_session_factory() as session:
-            # Check if group with this name exists for user
             existing = await session.execute(
                 select(UserGroup).where(UserGroup.user_id == user_id, UserGroup.name == name)
             )
@@ -46,5 +45,13 @@ class GroupRepo:
         filter_str = ",".join(countries) if countries else None
         async with async_session_factory() as session:
             stmt = update(UserGroup).where(UserGroup.id == group_id).values(country_filter=filter_str)
+            await session.execute(stmt)
+            await session.commit()
+
+    @staticmethod
+    async def update_group_tags(group_id: int, tags: list[str] | None):
+        tags_str = ",".join(tags) if tags else None
+        async with async_session_factory() as session:
+            stmt = update(UserGroup).where(UserGroup.id == group_id).values(tags_filter=tags_str)
             await session.execute(stmt)
             await session.commit()

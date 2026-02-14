@@ -1,11 +1,9 @@
-import asyncio
-import aiohttp
-import time
 import logging
-from aiohttp_socks import ProxyConnector
-from .xray import XrayExecutor
-from .geoip import GeoIP
+import aiohttp
 from utils.parser import LinkParser
+from utils.checker.api import CheckerAPI
+from utils.checker.geoip import GeoIP
+from utils.checker.xray import XrayExecutor
 
 logger = logging.getLogger("Checker")
 
@@ -14,57 +12,24 @@ class VlessChecker:
     def parse_config(config_url: str):
         return LinkParser.parse_vless(config_url)
 
-    @classmethod
-    async def process_subscription(cls, config_url: str) -> tuple[bool, str, int, bool, str]:
-        process, local_port, config_path = await XrayExecutor.start_xray(config_url)
+    @staticmethod
+    async def process_subscription(config_url: str) -> tuple[bool, str, int, bool, str]:
+        """
+        Основной метод проверки. 
+        Пытается использовать микросервис.
+        Если микросервис недоступен, фоллбэк на локальный запуск (но лучше запустить сервис!)
+        """
+        # Попытка через API сервиса
+        success, region, latency, ai, err = await CheckerAPI.check(config_url)
         
-        if not process:
-            # config_path тут содержит ошибку
-            return False, "", 0, False, config_path
-
-        connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
-        timeout = aiohttp.ClientTimeout(total=6, connect=3)
-        
-        try:
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as proxy_session:
-                start_time = time.monotonic()
-                latency = 9999
-                
-                try:
-                    async with proxy_session.get('http://cp.cloudflare.com/generate_204', allow_redirects=False) as resp:
-                        if resp.status in [200, 204]:
-                            latency = int((time.monotonic() - start_time) * 1000)
-                        else:
-                            raise Exception(f"Status {resp.status}")
-                except Exception as e:
-                    return False, "", 0, False, f"Connection Failed: {str(e)}"
-
-                region = "🌍 UNK"
-                ai_available = False
-
-                if latency < 2000:
-                    try:
-                        ai_timeout = aiohttp.ClientTimeout(total=2.5)
-                        async with proxy_session.get('https://api.openai.com/v1/models', timeout=ai_timeout) as ai_resp:
-                            if ai_resp.status in [200, 401, 403]:
-                                ai_available = True
-                    except: pass
-
-                    region = await GeoIP.identify_region(proxy_session)
-
-            return True, region, latency, ai_available, "OK"
-
-        except asyncio.CancelledError:
-            if process:
-                process.kill()
-                await process.wait()
-            raise 
-
-        except Exception as e:
-            return False, "", 0, False, f"System Error: {e}"
-
-        finally:
-            XrayExecutor.cleanup(process, config_path)
+        if not success and err == "Checker Service Offline":
+            # FALLBACK: Если сервис лежит, пробуем локально (но с риском загрузить CPU)
+            # Это на случай если юзер забыл запустить сервис
+            # logger.warning("Checker Service is offline! Using local check (High Load Risk).")
+            # Временно возвращаем ошибку, чтобы принудить юзера запустить сервис
+            return False, "", 0, False, "Checker Service Offline (Start utils/checker/service.py)"
+            
+        return success, region, latency, ai, err
 
     @classmethod
     async def get_regions_batch(cls, ips: list[str], session: aiohttp.ClientSession) -> dict[str, str]:
@@ -73,6 +38,7 @@ class VlessChecker:
     @staticmethod
     async def verify_domain(domain: str) -> tuple[bool, str]:
         try:
+            import asyncio
             loop = asyncio.get_running_loop()
             try:
                 ip = await loop.getaddrinfo(domain, 80)

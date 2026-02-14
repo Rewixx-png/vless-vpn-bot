@@ -10,15 +10,10 @@ from utils.checker import VlessChecker
 logger = logging.getLogger("Collector")
 
 SUBSCRIPTION_SOURCES = [
-    # --- Старые источники ---
-    "https://github.com/ebrasha/free-v2ray-public-list/blob/main/vless_configs.txt",
-    "https://github.com/iboxz/free-v2ray-collector/blob/main/main/vless.txt",
-    "https://github.com/F0rc3Run/F0rc3Run/blob/main/splitted-by-protocol/vless.txt",
-    "https://github.com/sevcator/5ubscrpt10n/blob/main/protocols/vl.txt",
+    "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
+    "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
+    "https://github.com/V2RayRoot/V2RayConfig/blob/main/Config/vless.txt",
     "https://github.com/ALIILAPRO/v2rayNG-Config/blob/main/server.txt",
-    "https://github.com/igareck/vpn-configs-for-russia/blob/main/WHITE-SNI-RU-all.txt",
-    "https://github.com/sakha1370/OpenRay/raw/refs/heads/main/output/all_valid_proxies.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
     "https://raw.githubusercontent.com/yitong2333/proxy-minging/refs/heads/main/v2ray.txt",
     "https://raw.githubusercontent.com/acymz/AutoVPN/refs/heads/main/data/V2.txt",
     "https://raw.githubusercontent.com/miladtahanian/V2RayCFGDumper/refs/heads/main/config.txt",
@@ -50,61 +45,7 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/speed.txt",
     "https://raw.githubusercontent.com/Mahdi0024/ProxyCollector/master/sub/proxies.txt",
     "https://raw.githubusercontent.com/Mosifree/-FREE2CONFIG/refs/heads/main/Reality",
-    "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Cable.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no1.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no2.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no3.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no4.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no5.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no6.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no7.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no8.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no9.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no10.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no11.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no12.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no13.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no14.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no15.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no16.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no17.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no18.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no19.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no20.txt",
-    
-    # --- Новые источники ---
-    "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
-    "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
-    "https://github.com/V2RayRoot/V2RayConfig/blob/main/Config/vless.txt",
-    "https://github.com/ALIILAPRO/v2rayNG-Config/blob/main/server.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/seperated_by_protocol/vless.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-1.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-2.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-3.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-4.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-5.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-6.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-7.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-8.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-9.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-10.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-11.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-12.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-13.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-14.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-15.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-16.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-17.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-18.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-19.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-20.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-21.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-22.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-23.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-24.txt",
-    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-25.txt"
+    "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt"
 ]
 
 class SubscriptionCollector:
@@ -119,15 +60,12 @@ class SubscriptionCollector:
             return
 
         all_content = "\n".join(results)
-        
-        # Освобождаем память от results, они больше не нужны
         del results
         gc.collect()
 
         decoded_content = SubscriptionCollector._try_decode(all_content)
         full_text = all_content + "\n" + decoded_content
         
-        # Освобождаем память от all_content и decoded_content
         del all_content
         del decoded_content
         gc.collect()
@@ -135,7 +73,6 @@ class SubscriptionCollector:
         found_links = re.findall(r'(vless://[a-zA-Z0-9\-_.!~*\'()&=+$%@:/?#\[\]]+)', full_text)
         found_links = list(set(found_links))
         
-        # Очищаем full_text
         del full_text
         gc.collect()
         
@@ -144,14 +81,20 @@ class SubscriptionCollector:
         
         if not unique_links:
             return
+            
+        # TURBO MAXIMUM: 3500 за раз.
+        if len(unique_links) > 3500:
+            unique_links = unique_links[:3500]
 
         queue = asyncio.Queue()
         for link in unique_links:
             queue.put_nowait(link)
 
         valid_count = [0]
-        # ВАЖНО: Радикально снижаем количество воркеров до 3, чтобы спасти VPS
-        WORKERS_COUNT = 3
+        
+        # TURBO MAXIMUM: 100 воркеров
+        # Они очень легкие, это просто генераторы HTTP запросов к сервису.
+        WORKERS_COUNT = 100
         workers = []
 
         async def worker():
@@ -180,7 +123,6 @@ class SubscriptionCollector:
                     pass
                 finally:
                     queue.task_done()
-                    # Принудительная очистка после каждого шага
                     gc.collect()
 
         for _ in range(WORKERS_COUNT):
@@ -203,7 +145,10 @@ class SubscriptionCollector:
                 url = url.replace("/blob/", "/raw/")
             async with session.get(url, timeout=10) as resp:
                 if resp.status == 200:
-                    return await resp.text(encoding='utf-8', errors='ignore')
+                    content = await resp.read()
+                    if len(content) > 1024 * 1024: 
+                        content = content[:1024 * 1024]
+                    return content.decode('utf-8', errors='ignore')
         except Exception:
             pass
         return ""

@@ -8,10 +8,6 @@ from config import config
 from utils.parser import LinkParser
 from utils.clash import ClashGenerator
 
-# УБРАНО: logging.basicConfig(level=logging.INFO) 
-# Причина: Эта строка перехватывала конфигурацию логгера у bot.py, 
-# из-за чего настройки уровня (WARNING) не применялись.
-
 logger = logging.getLogger("SubServer")
 
 class SubscriptionServer:
@@ -37,17 +33,15 @@ class SubscriptionServer:
 
             subs = []
             
-            # Логика определения фильтров (Глобальные или Групповые)
             if user_id_raw:
                 user_id = 0
                 group_name = None
                 
-                # Проверяем формат ID/Group
                 if "/" in user_id_raw:
                     try:
                         uid_str, g_name = user_id_raw.split("/", 1)
                         user_id = int(uid_str)
-                        group_name = urllib.parse.unquote(g_name) # Декодируем %20 и т.д.
+                        group_name = urllib.parse.unquote(g_name)
                     except ValueError:
                         pass
                 elif user_id_raw.isdigit():
@@ -56,35 +50,35 @@ class SubscriptionServer:
                 user = await UserRepo.get_user(user_id)
                 if user:
                     countries_filter = None
+                    tags_filter = None
                     
-                    # Если запрошена группа
                     if group_name:
                         group = await GroupRepo.get_group_by_name(user_id, group_name)
                         if group:
-                            # Берем фильтр из группы
                             if group.country_filter:
-                                countries_filter = group.country_filter.split(",")
-                        else:
-                            # Группа не найдена
-                            pass 
+                                if group.country_filter == "__EMPTY__":
+                                    # Если группа пустая, ставим фильтр, который ничего не найдет
+                                    countries_filter = ["__NONE__"]
+                                else:
+                                    countries_filter = group.country_filter.split(",")
+                            
+                            if group.tags_filter:
+                                tags_filter = group.tags_filter.split(",")
                     else:
-                        # Глобальный фильтр пользователя
                         if user.country_filter:
                             countries_filter = user.country_filter.split(",")
+                        
+                        if user.tags_filter:
+                            tags_filter = user.tags_filter.split(",")
 
-                    # Теги всегда берем из глобальных настроек юзера (пока что)
-                    user_tags = user.tags_filter.split(",") if user.tags_filter else None
-                    
                     subs = await SubRepo.get_smart_keys(
                         regions=countries_filter, 
-                        tags=user_tags,
+                        tags=tags_filter,
                         limit=user.subscription_limit
                     )
                 else:
-                    # Юзер не найден в БД -> отдаем все (публичный режим)
                     subs = await SubRepo.get_smart_keys(regions=None, limit=10)
             else:
-                # Нет ID -> Публичный режим
                 subs = await SubRepo.get_smart_keys(regions=None, limit=10)
 
             if not subs:
@@ -99,7 +93,6 @@ class SubscriptionServer:
                 else: region_counters[region_name] += 1
                 count = region_counters[region_name]
                 
-                # Формируем имя
                 final_name = f"➤ {region_name} {count}"
                 
                 if sub.latency_ms < 100:

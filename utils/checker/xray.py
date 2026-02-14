@@ -3,6 +3,7 @@ import asyncio
 import os
 import random
 import logging
+import signal
 from utils.parser import LinkParser
 
 logger = logging.getLogger("XrayCore")
@@ -70,16 +71,20 @@ class XrayExecutor:
             with open(config_path, 'w') as f:
                 json.dump(xray_conf, f)
 
+            # ВАЖНО: start_new_session=True позволяет убивать процесс вместе с детьми (killpg)
             process = await asyncio.create_subprocess_exec(
                 cls.XRAY_BIN, "-c", config_path,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True
             )
             
             try:
-                await asyncio.wait_for(process.wait(), timeout=0.2)
-                return None, 0, "Xray failed startup"
+                # Даем процессу чуть больше времени на старт, но проверяем, не упал ли он сразу
+                await asyncio.wait_for(process.wait(), timeout=0.3)
+                return None, 0, "Xray failed startup (crashed immediately)"
             except asyncio.TimeoutError:
+                # Это нормальное поведение - процесс работает
                 pass 
 
             return process, local_port, config_path
@@ -88,20 +93,19 @@ class XrayExecutor:
 
     @staticmethod
     def cleanup(process, config_path):
-        if process and process.returncode is None:
+        if process:
             try:
-                process.terminate()
-            except: pass
-            
-            async def force_kill():
+                # Если процесс еще жив
+                if process.returncode is None:
+                    # Убиваем группу процессов, чтобы не плодить зомби
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                # Fallback на обычный kill
                 try:
-                    await asyncio.sleep(0.1)
-                    if process.returncode is None:
-                        process.kill()
-                        await process.wait()
+                    process.kill()
                 except: pass
-            
-            asyncio.create_task(force_kill())
 
         if config_path and os.path.exists(config_path):
             try: os.remove(config_path)

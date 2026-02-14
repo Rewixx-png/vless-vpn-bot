@@ -28,6 +28,7 @@ class UserGroup(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     country_filter: Mapped[str] = mapped_column(Text, nullable=True)
+    tags_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -36,7 +37,6 @@ class UserGroup(Base):
 class Subscription(Base):
     __tablename__ = "subscriptions"
     
-    # Отключаем предупреждение SAWarning при конкурентном удалении
     __mapper_args__ = {"confirm_deleted_rows": False}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

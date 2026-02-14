@@ -1,4 +1,4 @@
-from sqlalchemy import select, delete, update, func
+from sqlalchemy import select, delete, update, func, text
 from database.core import async_session_factory
 from database.models import Subscription
 
@@ -190,16 +190,21 @@ class SubRepo:
             return False
 
         async with async_session_factory() as session:
-            existing = await session.scalar(select(Subscription).where(Subscription.vless_key == vless_key))
+            # 1. Быстрая проверка на дубликат
+            existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))
             if existing:
                 return False
 
+            # 2. Получаем текущее количество
             count = await session.scalar(
                 select(func.count(Subscription.id)).where(Subscription.region == region)
             )
             count = count or 0
 
-            if count < 100:
+            # 3. ЛИМИТ 100
+            LIMIT = 100
+
+            if count < LIMIT:
                 sub = Subscription(
                     vless_key=vless_key, 
                     region=region, 
@@ -210,6 +215,9 @@ class SubRepo:
                 await session.commit()
                 return True
             else:
+                # Если лимит превышен, ищем худший сервер (мертвый или с высоким пингом)
+                # is_active ASC -> False (мертвые) идут первыми
+                # latency_ms DESC -> Самый большой пинг идет первым
                 stmt = (
                     select(Subscription)
                     .where(Subscription.region == region)
@@ -218,10 +226,19 @@ class SubRepo:
                 )
                 worst = (await session.execute(stmt)).scalars().first()
 
+                # Если нашли худшего кандидата
                 if worst:
-                    if not worst.is_active or (worst.is_active and worst.latency_ms > latency):
+                    # Заменяем ТОЛЬКО если новый сервер лучше (живой против мертвого) 
+                    # ИЛИ (оба живые, но новый быстрее)
+                    is_better = False
+                    if not worst.is_active:
+                        is_better = True # Заменяем мертвого всегда
+                    elif latency < worst.latency_ms:
+                        is_better = True # Заменяем медленного на быстрого
+                    
+                    if is_better:
                         await session.delete(worst)
-                        await session.flush()
+                        await session.flush() # Применяем удаление, чтобы освободить место
                         
                         sub = Subscription(
                             vless_key=vless_key, 
@@ -234,3 +251,32 @@ class SubRepo:
                         return True
         
         return False
+
+    @staticmethod
+    async def enforce_limits():
+        """
+        HARD CLEANUP: Удаляет лишние записи, если их стало больше 100 из-за гонки потоков.
+        Оставляет ТОП-100 лучших (Живые + Мин. пинг) для каждой страны.
+        """
+        async with async_session_factory() as session:
+            # SQL запрос для PostgreSQL
+            # Удаляем все записи, у которых порядковый номер > 100 в группе по региону
+            sql = text("""
+                DELETE FROM subscriptions
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY region 
+                            ORDER BY is_active DESC, latency_ms ASC
+                        ) as rn
+                        FROM subscriptions
+                    ) t
+                    WHERE t.rn > 100
+                );
+            """)
+            try:
+                await session.execute(sql)
+                await session.commit()
+            except Exception as e:
+                print(f"Error enforcing limits: {e}")

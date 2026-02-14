@@ -5,7 +5,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from database.repo import GroupRepo, SubRepo, SystemRepo
-from keyboards.user import groups_list_kb, back_to_home, settings_countries_kb, group_view_kb
+from keyboards.user import groups_list_kb, back_to_home, settings_countries_kb, group_view_kb, settings_tags_kb
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
 from config import config
@@ -15,15 +15,12 @@ router = Router()
 async def get_base_url():
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
-    
     if domain:
         return f"http://{domain}"
-    
     return f"http://{config.PUBLIC_IP}:{config.WEB_PORT}"
 
 @router.callback_query(F.data == "groups_list")
 async def show_groups(callback: CallbackQuery, state: FSMContext):
-    # Очищаем состояние если пришли из другого меню
     current_state = await state.get_state()
     if current_state != UserStates.waiting_for_group_name:
         data = await state.get_data()
@@ -33,13 +30,11 @@ async def show_groups(callback: CallbackQuery, state: FSMContext):
             await state.update_data(last_msg_id=last_msg_id)
 
     groups = await GroupRepo.get_user_groups(callback.from_user.id)
-    
     text = (
         "📂 <b>Мои Группы</b>\n\n"
         "Создавайте отдельные ссылки подписки с разными наборами стран.\n"
         "<i>Например: «Gaming» (только Германия) или «Work» (Вся Европа).</i>"
     )
-    
     await edit_or_answer(callback.message, text, groups_list_kb(groups), state, media_url="video")
 
 @router.callback_query(F.data == "group_create")
@@ -57,8 +52,7 @@ async def ask_group_name(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(UserStates.waiting_for_group_name))
 async def create_group_finish(message: Message, state: FSMContext):
-    try:
-        await message.delete()
+    try: await message.delete()
     except: pass
     
     name = message.text.strip().replace(" ", "_").replace("/", "-")
@@ -67,21 +61,16 @@ async def create_group_finish(message: Message, state: FSMContext):
         await edit_or_answer(message, "⚠️ Название от 2 до 20 символов.", back_to_home(), state, media_url="video")
         return
 
-    # Проверка на кириллицу (простой вариант)
     if not all(ord(c) < 128 for c in name):
         await edit_or_answer(message, "⚠️ Используйте только английские буквы.", back_to_home(), state, media_url="video")
         return
 
-    # Создаем группу (по умолчанию все страны выключены, или включены - сделаем все включены (None))
     group = await GroupRepo.create_group(message.from_user.id, name, None)
-    
     if not group:
         await edit_or_answer(message, "⚠️ Группа с таким именем уже существует.", back_to_home(), state, media_url="video")
         return
         
     await state.set_state(None)
-    
-    # Сразу перекидываем в редактирование стран
     all_regions = await SubRepo.get_regions()
     
     await edit_or_answer(
@@ -105,20 +94,29 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
         return
 
     base = await get_base_url()
-    # Формат ссылки: id/GroupName
     link_url = f"{base}/sub?id={callback.from_user.id}/{group.name}"
     
-    countries_txt = group.country_filter if group.country_filter else "Все доступные"
-    
+    countries_txt = "Все доступные"
+    if group.country_filter:
+        if group.country_filter == "__EMPTY__": countries_txt = "❌ Ничего не выбрано"
+        else: countries_txt = group.country_filter
+
+    tags_txt = "Нет фильтров"
+    if group.tags_filter:
+        tags_txt = group.tags_filter
+
     text = (
         f"📂 Группа: <b>{group.name}</b>\n\n"
-        f"🌍 Страны: <b>{countries_txt}</b>\n\n"
+        f"🌍 Страны: <b>{countries_txt}</b>\n"
+        f"🏷 Теги: <b>{tags_txt}</b>\n\n"
         f"🔗 <b>Ссылка подписки:</b>\n"
         f"<code>{link_url}</code>\n\n"
         f"👆 <i>Нажмите для копирования</i>"
     )
     
     await edit_or_answer(callback.message, text, group_view_kb(group.id, link_url), state, media_url="video")
+
+# --- COUNTRIES EDITING ---
 
 @router.callback_query(F.data.startswith("group_edit_countries_"))
 async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
@@ -131,7 +129,9 @@ async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
         return
 
     all_regions = await SubRepo.get_regions()
-    current_filter = group.country_filter.split(",") if group.country_filter else None
+    current_filter = None
+    if group.country_filter:
+        current_filter = group.country_filter.split(",")
     
     await edit_or_answer(
         callback.message,
@@ -144,33 +144,29 @@ async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("g_toggle_country_"))
 async def toggle_group_country(callback: CallbackQuery):
-    # Формат: g_toggle_country_{group_id}_{Region Name}
-    # Region Name может содержать пробелы и эмодзи
-    # Разбиваем с ограничением
     prefix = "g_toggle_country_"
-    data = callback.data[len(prefix):] # {group_id}_{Region Name}
-    
+    data = callback.data[len(prefix):]
     try:
         group_id_str, region = data.split("_", 1)
         group_id = int(group_id_str)
     except ValueError:
-        await callback.answer("Ошибка данных")
         return
 
     user_id = callback.from_user.id
     groups = await GroupRepo.get_user_groups(user_id)
     group = next((g for g in groups if g.id == group_id), None)
-    
-    if not group:
-        await callback.answer("Группа не найдена или нет прав")
-        return
+    if not group: return
 
     all_regions = await SubRepo.get_regions()
     current_filter = group.country_filter.split(",") if group.country_filter else None
 
-    # Если фильтр None (все), то при клике мы переходим в режим "Выбрано всё кроме этого"
+    # Если было "Все" (None), значит при клике на одну страну мы хотим исключить ее?
+    # Или мы переходим в режим "Выбрана только она"?
+    # Для интуитивности: если было "Все", и мы кликаем на страну - мы ее ВЫКЛЮЧАЕМ.
     if current_filter is None:
         new_filter = [r for r in all_regions if r != region]
+    elif current_filter == ["__EMPTY__"]:
+        new_filter = [region]
     else:
         new_filter = current_filter.copy()
         if region in new_filter:
@@ -178,16 +174,76 @@ async def toggle_group_country(callback: CallbackQuery):
         else:
             new_filter.append(region)
 
-    # Если список пуст или равен всем - сбрасываем в None
-    if not new_filter or set(new_filter) == set(all_regions):
+    if not new_filter:
+        new_filter = ["__EMPTY__"]
+    elif set(new_filter) == set(all_regions):
         new_filter = None
 
     await GroupRepo.update_group_countries(group.id, new_filter)
+    await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, new_filter, group_id))
+
+@router.callback_query(F.data.startswith("g_set_all_on_"))
+async def group_set_all_on(callback: CallbackQuery):
+    group_id = int(callback.data.split("_")[-1])
+    all_regions = await SubRepo.get_regions()
+    await GroupRepo.update_group_countries(group_id, None) # None = All
+    await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, None, group_id))
+
+@router.callback_query(F.data.startswith("g_set_all_off_"))
+async def group_set_all_off(callback: CallbackQuery):
+    group_id = int(callback.data.split("_")[-1])
+    all_regions = await SubRepo.get_regions()
+    # Ставим специальный маркер пустоты
+    await GroupRepo.update_group_countries(group_id, ["__EMPTY__"])
+    await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, ["__EMPTY__"], group_id))
+
+# --- TAGS EDITING ---
+
+@router.callback_query(F.data.startswith("group_edit_tags_"))
+async def edit_group_tags(callback: CallbackQuery, state: FSMContext):
+    group_id = int(callback.data.split("group_edit_tags_")[1])
+    groups = await GroupRepo.get_user_groups(callback.from_user.id)
+    group = next((g for g in groups if g.id == group_id), None)
     
-    # Обновляем клавиатуру
-    await callback.message.edit_reply_markup(
-        reply_markup=settings_countries_kb(all_regions, new_filter, group_id)
+    if not group:
+        await callback.answer("Группа не найдена")
+        return
+
+    tags = group.tags_filter.split(",") if group.tags_filter else []
+    
+    await edit_or_answer(
+        callback.message,
+        f"🏷 Настройка тегов для группы <b>{group.name}</b>\n"
+        "Выберите, какие ключи включать.\n\n"
+        "✅ = Оставить только эти\n"
+        "❌ = Не фильтровать",
+        settings_tags_kb(tags, group_id),
+        state,
+        media_url="video"
     )
+
+@router.callback_query(F.data.startswith("g_toggle_tag_"))
+async def toggle_group_tag(callback: CallbackQuery):
+    prefix = "g_toggle_tag_"
+    data = callback.data[len(prefix):] # {id}_{tag}
+    try:
+        group_id_str, tag = data.split("_", 1)
+        group_id = int(group_id_str)
+    except ValueError: return
+
+    groups = await GroupRepo.get_user_groups(callback.from_user.id)
+    group = next((g for g in groups if g.id == group_id), None)
+    if not group: return
+
+    current_tags = group.tags_filter.split(",") if group.tags_filter else []
+    
+    if tag in current_tags:
+        current_tags.remove(tag)
+    else:
+        current_tags.append(tag)
+        
+    await GroupRepo.update_group_tags(group.id, current_tags)
+    await callback.message.edit_reply_markup(reply_markup=settings_tags_kb(current_tags, group_id))
 
 @router.callback_query(F.data.startswith("group_delete_"))
 async def delete_group(callback: CallbackQuery, state: FSMContext):

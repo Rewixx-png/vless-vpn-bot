@@ -3,18 +3,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def user_main_kb(is_admin: bool = False):
     kb = InlineKeyboardBuilder()
-    
-    # Primary Style
     kb.button(text="📥 Моя Подписка", callback_data="my_subscription")
     kb.button(text="📂 Мои Группы", callback_data="groups_list")
-    
-    # Secondary
     kb.button(text="⚙️ Настройки", callback_data="settings_main")
-    
-    # Info / Danger / Warning colors
     kb.button(text="📊 Статус сети", callback_data="public_stats")
     kb.button(text="📱 Приложения", callback_data="apps_menu")
-    
     kb.button(text="ℹ️ Инструкция", callback_data="user_instruction") 
     kb.button(text="💜 Поддержать", callback_data="donate_info")
 
@@ -33,47 +26,45 @@ def sub_action_kb(url: str, deep_link: str = None):
 
 def settings_main_kb(current_limit: int):
     kb = InlineKeyboardBuilder()
-    
     limit_text = "♾️ Все" if current_limit == 0 else f"{current_limit} шт."
-    
     kb.button(text="🌍 Выбор стран (Общий)", callback_data="settings_countries")
     kb.button(text="🏷 Теги (AI, Fast)", callback_data="settings_tags")
     kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
-    
     kb.button(text="🔙 В главное меню", callback_data="home")
     kb.adjust(1)
     return kb.as_markup()
 
-def settings_tags_kb(selected_tags: list):
+def settings_tags_kb(selected_tags: list, group_id: int = None):
     kb = InlineKeyboardBuilder()
     
+    prefix = "toggle_tag" if group_id is None else f"g_toggle_tag_{group_id}"
+    
     ai_status = "🟢" if "ai" in selected_tags else "🔴"
-    kb.button(text=f"{ai_status} [AI] (ChatGPT)", callback_data="toggle_tag_ai")
+    kb.button(text=f"{ai_status} [AI] (ChatGPT/Gemini)", callback_data=f"{prefix}_ai")
     
     fast_status = "🟢" if "fast" in selected_tags else "🔴"
-    kb.button(text=f"{fast_status} [Fast] (<100ms)", callback_data="toggle_tag_fast")
+    kb.button(text=f"{fast_status} [Fast] (<100ms)", callback_data=f"{prefix}_fast")
     
     wl_status = "🟢" if "wl" in selected_tags else "🔴"
-    kb.button(text=f"{wl_status} [WL] (Reality)", callback_data="toggle_tag_wl")
+    kb.button(text=f"{wl_status} [WL] (Reality)", callback_data=f"{prefix}_wl")
     
     kb.adjust(1)
-    kb.button(text="🔙 Назад", callback_data="settings_main")
+    
+    if group_id is None:
+        kb.button(text="🔙 Назад", callback_data="settings_main")
+    else:
+        kb.button(text="💾 Сохранить и выйти", callback_data=f"group_view_{group_id}")
+        
     return kb.as_markup()
 
 def settings_limit_kb(current: int):
     kb = InlineKeyboardBuilder()
-    
     options = [10, 50, 100, 200, 0]
-    
     for opt in options:
         text = "♾️ Безлимит" if opt == 0 else f"{opt} шт."
-        if opt == current:
-            text = f"✅ {text}"
-        
+        if opt == current: text = f"✅ {text}"
         kb.button(text=text, callback_data=f"set_limit_{opt}")
-        
     kb.button(text="✍️ Свой вариант", callback_data="set_limit_custom")
-    
     kb.adjust(2)
     kb.button(text="🔙 Назад", callback_data="settings_main")
     return kb.as_markup()
@@ -83,8 +74,18 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
 
     prefix = "toggle_country" if group_id is None else f"g_toggle_country_{group_id}"
 
+    # Если selected_regions содержит специальный маркер пустоты, показываем всё выключенным
+    # Если None - показываем всё включенным (по умолчанию)
+    # Если список - показываем выбор
+    
+    real_selection = selected_regions
+    if selected_regions == ["__EMPTY__"]:
+        real_selection = []
+    
+    is_all_on = real_selection is None
+
     for reg in all_regions:
-        is_selected = True if selected_regions is None else reg in selected_regions
+        is_selected = True if is_all_on else (reg in real_selection)
         status = "🟢" if is_selected else "🔴"
         text = f"{status} {reg}"
         kb.button(text=text, callback_data=f"{prefix}_{reg}")
@@ -92,14 +93,18 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
     kb.adjust(3)
 
     if group_id is None:
-        if selected_regions is None:
+        if is_all_on:
             kb.row(InlineKeyboardButton(text="🧹 Снять все", callback_data="set_all_off"))
         else:
             kb.row(InlineKeyboardButton(text="✅ Выбрать все", callback_data="set_all_on"))
         kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="settings_main"))
     else:
         # Для групп кнопки управления
-        kb.row(InlineKeyboardButton(text="💾 Сохранить и выйти", callback_data="groups_list"))
+        if is_all_on:
+            kb.row(InlineKeyboardButton(text="🧹 Снять все", callback_data=f"g_set_all_off_{group_id}"))
+        else:
+            kb.row(InlineKeyboardButton(text="✅ Выбрать все", callback_data=f"g_set_all_on_{group_id}"))
+        kb.row(InlineKeyboardButton(text="💾 Сохранить и выйти", callback_data=f"group_view_{group_id}"))
 
     return kb.as_markup()
 
@@ -107,7 +112,6 @@ def groups_list_kb(groups: list):
     kb = InlineKeyboardBuilder()
     for g in groups:
         kb.button(text=f"📂 {g.name}", callback_data=f"group_view_{g.id}")
-    
     kb.button(text="➕ Создать группу", callback_data="group_create")
     kb.button(text="🔙 Назад", callback_data="home")
     kb.adjust(1)
@@ -116,6 +120,7 @@ def groups_list_kb(groups: list):
 def group_view_kb(group_id: int, url: str):
     kb = InlineKeyboardBuilder()
     kb.button(text="🌍 Изменить страны", callback_data=f"group_edit_countries_{group_id}")
+    kb.button(text="🏷 Изменить теги", callback_data=f"group_edit_tags_{group_id}")
     kb.button(text="🗑 Удалить группу", callback_data=f"group_delete_{group_id}")
     kb.button(text="🔙 К списку групп", callback_data="groups_list")
     kb.adjust(1)
