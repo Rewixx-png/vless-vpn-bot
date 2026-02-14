@@ -41,18 +41,14 @@ class VideoManager:
 
         # 2. Генерация плавности (Motion Interpolation)
         try:
-            # Используем фильтр minterpolate для создания ПРОМЕЖУТОЧНЫХ кадров.
-            # mi_mode=mci (Motion Compensated Interpolation) - это и есть "сглаживание".
-            # Ставим 60 FPS, так как 120 FPS интерполяция займет слишком много времени на CPU.
-            # 60 FPS достаточно для идеально плавного эффекта.
             cmd = [
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
                 "-vf", "minterpolate=fps=120:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
                 "-c:v", "libx264",
-                "-preset", "veryfast", # Быстрый пресет, чтобы не ждать вечность
-                "-crf", "20",          # Высокое качество
-                "-c:a", "copy",        # Аудио копируем без изменений
+                "-preset", "veryfast", 
+                "-crf", "20",          
+                "-c:a", "copy",        
                 "-y",
                 cls.PROCESSED_PATH
             ]

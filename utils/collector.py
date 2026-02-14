@@ -76,15 +76,12 @@ SUBSCRIPTION_SOURCES = [
 class SubscriptionCollector:
     @staticmethod
     async def run_collection():
-        logger.info("🚀 Starting VLESS collector...")
-        
         try:
             async with aiohttp.ClientSession() as session:
                 tasks = [SubscriptionCollector._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 results = [r for r in results if isinstance(r, str) and r]
         except asyncio.CancelledError:
-            logger.info("🛑 Collection cancelled during fetch.")
             return
 
         all_content = "\n".join(results)
@@ -94,16 +91,11 @@ class SubscriptionCollector:
         found_links = re.findall(r'(vless://[a-zA-Z0-9\-_.!~*\'()&=+$%@:/?#\[\]]+)', full_text)
         found_links = list(set(found_links))
         
-        logger.info(f"🔎 Found {len(found_links)} potential VLESS links. Validating...")
-
         existing_keys = await SubRepo.get_all_keys_set()
         unique_links = [l.strip() for l in found_links if l.strip() not in existing_keys]
         
         if not unique_links:
-            logger.info("😴 No new unique links found.")
             return
-
-        logger.info(f"🧬 Checking {len(unique_links)} new unique links via Xray...")
 
         queue = asyncio.Queue()
         for link in unique_links:
@@ -124,7 +116,6 @@ class SubscriptionCollector:
                     is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
                     
                     if is_alive:
-                        # Используем Smart Add для соблюдения лимитов и замены
                         added = await SubRepo.smart_add_subscription(
                             vless_key=link, 
                             region=region, 
@@ -147,14 +138,12 @@ class SubscriptionCollector:
         try:
             await queue.join()
         except asyncio.CancelledError:
-            logger.info("🛑 Collector waiting interrupted!")
+            pass
         finally:
             for w in workers:
                 w.cancel()
             
             await asyncio.gather(*workers, return_exceptions=True)
-            
-            logger.info(f"✅ Collector stopped. Added/Rotated {valid_count[0]} VALID keys.")
 
     @staticmethod
     async def _fetch_url(session, url):

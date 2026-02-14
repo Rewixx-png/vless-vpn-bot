@@ -65,24 +65,12 @@ def check_subs_batch_task(sub_ids: list[int]):
             
             checked_count += 1
             
-        # Логируем только если была реальная работа
-        if checked_count > 0:
-            status_icons = []
-            if revived_count > 0: status_icons.append(f"🟢 Воскресло: {revived_count}")
-            if died_count > 0: status_icons.append(f"🔴 Умерло: {died_count}")
-            
-            status_text = " | ".join(status_icons)
-            if not status_text:
-                status_text = "Без изменений"
-
-            logger.info(f"🔎 Пакет проверен ({checked_count} шт.) | {status_text}")
-            
+        # Убраны INFO логи для тишины в консоли
         return checked_count
 
     return run_async(_process())
 
 @app.task
 def run_collector_task():
-    logger.info("🚀 Воркер: Запуск сборщика прокси...")
+    # Запускаем сборщик без лишнего шума в логах
     run_async(SubscriptionCollector.run_collection())
-    logger.info("✅ Воркер: Сборщик завершил работу.")

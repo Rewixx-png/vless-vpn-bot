@@ -2,6 +2,14 @@ import asyncio
 import logging
 import sys
 from aiogram import Bot, Dispatcher
+
+# 1. Сразу настраиваем базовое логирование на WARNING
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True # Принудительно переписываем конфиг, если кто-то (например, модули) уже настроил его
+)
+
 from config import config
 from database.core import init_db
 from handlers.admin.router import admin_router
@@ -11,21 +19,26 @@ from utils.background import BackgroundTasks
 from utils.sub_server import SubscriptionServer
 from utils.video import VideoManager
 
-# Устанавливаем уровень WARNING, чтобы скрыть INFO логи от aiogram и прочих модулей
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# 2. Жестко глушим "болтливые" логгеры
+loggers_to_silence = [
+    "aiogram", 
+    "aiogram.event", 
+    "aiogram.dispatcher", 
+    "VideoManager", 
+    "Scheduler", 
+    "aiohttp",
+    "asyncio"
+]
 
-# Дополнительно глушим aiogram, если вдруг он переопределит конфиг
-logging.getLogger("aiogram").setLevel(logging.WARNING)
-logging.getLogger("aiogram.event").setLevel(logging.WARNING)
+for logger_name in loggers_to_silence:
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 
 async def main():
     await init_db()
 
-    # Подготовка видео (скачивание + ffmpeg)
+    # Подготовка видео (без логов)
     await VideoManager.prepare()
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())

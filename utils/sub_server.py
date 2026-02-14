@@ -8,7 +8,10 @@ from config import config
 from utils.parser import LinkParser
 from utils.clash import ClashGenerator
 
-logging.basicConfig(level=logging.INFO)
+# УБРАНО: logging.basicConfig(level=logging.INFO) 
+# Причина: Эта строка перехватывала конфигурацию логгера у bot.py, 
+# из-за чего настройки уровня (WARNING) не применялись.
+
 logger = logging.getLogger("SubServer")
 
 class SubscriptionServer:
@@ -62,8 +65,7 @@ class SubscriptionServer:
                             if group.country_filter:
                                 countries_filter = group.country_filter.split(",")
                         else:
-                            # Группа не найдена - отдаем пустой список или глобальный?
-                            # Лучше ничего не отдавать или ошибку, чтобы юзер понял
+                            # Группа не найдена
                             pass 
                     else:
                         # Глобальный фильтр пользователя
@@ -79,8 +81,7 @@ class SubscriptionServer:
                         limit=user.subscription_limit
                     )
                 else:
-                    # Юзер не найден в БД -> отдаем все (публичный режим) или ничего
-                    # Для безопасности лучше отдавать все, но с лимитом
+                    # Юзер не найден в БД -> отдаем все (публичный режим)
                     subs = await SubRepo.get_smart_keys(regions=None, limit=10)
             else:
                 # Нет ID -> Публичный режим

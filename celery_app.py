@@ -1,7 +1,13 @@
 import os
 import logging
+import warnings
 from celery import Celery, signals
+from celery.exceptions import SecurityWarning
 from config import config
+
+# Игнорируем SecurityWarning (запуск от root) и настраиваем окружение
+warnings.simplefilter('ignore', SecurityWarning)
+os.environ.setdefault('C_FORCE_ROOT', '1')
 
 app = Celery(
     'vless_bot_worker',
@@ -18,12 +24,13 @@ app.conf.update(
     accept_content=['json'],
     result_serializer='json',
     worker_redirect_stdouts=False,
-    worker_hijack_root_logger=False 
+    worker_hijack_root_logger=False,
+    broker_connection_retry_on_startup=True
 )
 
 @signals.after_setup_logger.connect
 def setup_loggers(logger, *args, **kwargs):
-    # Убираем шум от стандартных логгеров Celery
+    # Список модулей, которые нужно заглушить
     noisy_loggers = [
         "celery",
         "celery.app.trace",
@@ -36,20 +43,19 @@ def setup_loggers(logger, *args, **kwargs):
     for name in noisy_loggers:
         logging.getLogger(name).setLevel(logging.WARNING)
 
-    # Настраиваем формат для наших логгеров
     formatter = logging.Formatter('%(asctime)s | %(message)s', datefmt='%H:%M:%S')
     
-    # Применяем формат к корневому логгеру, если нужно, или конкретным
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     
     root_logger = logging.getLogger()
-    # Очищаем старые хендлеры, чтобы не дублировалось
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
     
     root_logger.addHandler(console_handler)
-    root_logger.setLevel(logging.INFO)
+    
+    # Уровень WARNING уберет все INFO сообщения из логов воркера
+    root_logger.setLevel(logging.WARNING)
 
 if __name__ == '__main__':
     app.start()
