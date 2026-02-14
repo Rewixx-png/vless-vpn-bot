@@ -13,16 +13,18 @@ from database.repo import UserRepo
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
 from utils.async_celery import RateLimiter
+from handlers.admin.utils import safe_edit_message
 
 router = Router()
 
 
 @router.callback_query(F.data == "admin_broadcast")
 async def ask_broadcast(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "<blockquote>📢 Пришлите сообщение (текст, фото, видео) для рассылки всем юзерам:</blockquote>", 
-        parse_mode="HTML",
-        reply_markup=back_to_admin()
+    await safe_edit_message(
+        callback.message,
+        "<blockquote>📢 Пришлите сообщение (текст, фото, видео) для рассылки всем юзерам:</blockquote>",
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )
     await state.set_state(AdminStates.waiting_for_broadcast)
 
@@ -71,17 +73,15 @@ async def do_broadcast(message: Message, state: FSMContext):
         # Update every 5% or every 50 users
         if processed - last_update >= 50 or (total > 0 and (processed / total) * 100 % 5 < 1):
             percent = int((processed / total) * 100) if total > 0 else 0
-            try:
-                await progress_msg.edit_text(
-                    f"<blockquote>🚀 Рассылка в процессе...\n"
-                    f"📊 Прогресс: {processed}/{total} ({percent}%)\n"
-                    f"✅ Отправлено: {sent_count}\n"
-                    f"❌ Ошибок: {failed_count}</blockquote>",
-                    parse_mode="HTML"
-                )
-                last_update = processed
-            except Exception:
-                pass
+            await safe_edit_message(
+                progress_msg,
+                f"<blockquote>🚀 Рассылка в процессе...\n"
+                f"📊 Прогресс: {processed}/{total} ({percent}%)\n"
+                f"✅ Отправлено: {sent_count}\n"
+                f"❌ Ошибок: {failed_count}</blockquote>",
+                parse_mode="HTML"
+            )
+            last_update = processed
     
     # Process in batches with limited concurrency
     semaphore = asyncio.Semaphore(20)  # Max 20 concurrent sends
@@ -100,14 +100,15 @@ async def do_broadcast(message: Message, state: FSMContext):
     
     # Final update
     final_percent = int((sent_count / total) * 100) if total > 0 else 0
-    await progress_msg.edit_text(
+    await safe_edit_message(
+        progress_msg,
         f"<blockquote>✅ Рассылка завершена!\n\n"
         f"📊 Всего пользователей: {total}\n"
         f"✅ Успешно доставлено: {sent_count}\n"
         f"❌ Ошибок: {failed_count}\n"
         f"📈 Процент доставки: {final_percent}%</blockquote>",
-        parse_mode="HTML",
-        reply_markup=back_to_admin()
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )
     
     await state.clear()

@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from database.repo import StatsRepo
 from keyboards.admin import back_to_admin
+from handlers.admin.utils import safe_edit_message
 
 router = Router()
 
@@ -18,4 +19,4 @@ async def show_stats(callback: CallbackQuery):
         f"<b>🌍 Распределение по странам:</b>\n<pre>{stats['regions']}</pre>"
         "</blockquote>"
     )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_admin())
+    await safe_edit_message(callback.message, text, reply_markup=back_to_admin(), parse_mode="HTML")
