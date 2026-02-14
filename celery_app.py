@@ -19,7 +19,13 @@ app = Celery(
 app.conf.update(
     timezone='Europe/Moscow',
     enable_utc=True,
-    worker_max_tasks_per_child=100,
+    # ВАЖНО: Строго 1 процесс. Это предотвращает запуск двух тяжелых задач одновременно.
+    worker_concurrency=1,
+    # Перезапускаем воркер чаще, чтобы гарантированно возвращать память системе
+    worker_max_tasks_per_child=10,
+    # Лимиты памяти (мягкий и жесткий перезапуск при превышении) - в КБ
+    # 500 МБ - если один процесс съест столько, он перезапустится после завершения задачи
+    worker_max_memory_per_child=500000, 
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',

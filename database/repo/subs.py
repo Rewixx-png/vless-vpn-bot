@@ -119,6 +119,13 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
+    async def delete_subs_by_region(region: str):
+        async with async_session_factory() as session:
+            stmt = delete(Subscription).where(Subscription.region == region)
+            await session.execute(stmt)
+            await session.commit()
+
+    @staticmethod
     async def toggle_active(sub_id: int, current_state: bool):
         async with async_session_factory() as session:
             stmt = update(Subscription).where(Subscription.id == sub_id).values(is_active=not current_state)

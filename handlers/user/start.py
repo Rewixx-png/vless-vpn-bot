@@ -21,10 +21,11 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
     
-    if not text.strip().startswith("<blockquote>"):
-        formatted_text = f"<blockquote>{text}</blockquote>"
-    else:
-        formatted_text = text
+    # ПРИНУДИТЕЛЬНОЕ ЦИТИРОВАНИЕ
+    # Очищаем текст от возможных существующих тегов цитирования, чтобы избежать вложенности
+    # и оборачиваем ВЕСЬ текст в blockquote
+    clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
+    formatted_text = f"<blockquote>{clean_text}</blockquote>"
 
     video_file = VideoManager.get_file()
 

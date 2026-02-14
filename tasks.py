@@ -2,7 +2,7 @@ import asyncio
 import logging
 from celery_app import app
 from database.repo import SubRepo
-from utils.vless_checker import VlessChecker
+from utils.checker import VlessChecker
 from utils.collector import SubscriptionCollector
 
 # Используем имя логгера, который мы настроили (корневой или специфичный)
@@ -65,7 +65,6 @@ def check_subs_batch_task(sub_ids: list[int]):
             
             checked_count += 1
             
-        # Убраны INFO логи для тишины в консоли
         return checked_count
 
     return run_async(_process())

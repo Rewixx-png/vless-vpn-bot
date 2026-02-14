@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from database.repo import SubRepo
-from tasks import check_subs_batch_task, run_collector_task
+# Импортируем модуль tasks целиком, а не функции, чтобы избежать Circular Import на этапе инициализации
+import tasks 
 
 logger = logging.getLogger("Scheduler")
 
@@ -36,7 +37,8 @@ class BackgroundTasks:
     async def collector_scheduler():
         while True:
             try:
-                run_collector_task.delay()
+                # Используем tasks.run_collector_task
+                tasks.run_collector_task.delay()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -57,4 +59,5 @@ class BackgroundTasks:
         batches = [sub_ids[i:i + BATCH_SIZE] for i in range(0, len(sub_ids), BATCH_SIZE)]
         
         for batch in batches:
-            check_subs_batch_task.delay(batch)
+            # Используем tasks.check_subs_batch_task
+            tasks.check_subs_batch_task.delay(batch)

@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    force=True # Принудительно переписываем конфиг, если кто-то (например, модули) уже настроил его
+    force=True 
 )
 
 from config import config

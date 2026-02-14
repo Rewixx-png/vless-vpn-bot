@@ -11,30 +11,26 @@ router = Router()
 async def admin_dashboard(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.ADMIN_IDS:
         return
+    
     await state.clear()
     
+    # Оборачиваем текст в blockquote
     text = (
+        "<blockquote>"
         "🛠 <b>Control Panel</b>\n"
         "Управление ботом и серверами."
+        "</blockquote>"
     )
     
     try:
-        # Пытаемся отредактировать сообщение (сработает, если переход внутри админки: Текст -> Текст)
-        await callback.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=main_admin_kb()
-        )
+        await callback.message.delete()
     except TelegramBadRequest:
-        # Если ловим ошибку (например, переход из Юзер-меню: Видео -> Текст),
-        # то удаляем старое медиа-сообщение и отправляем новое текстовое.
-        try:
-            await callback.message.delete()
-        except:
-            pass
-        
-        await callback.message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=main_admin_kb()
-        )
+        pass
+    except Exception:
+        pass
+    
+    await callback.message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=main_admin_kb()
+    )

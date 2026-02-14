@@ -3,12 +3,14 @@ import asyncio
 import base64
 import re
 import logging
+import gc 
 from database.repo import SubRepo
-from utils.vless_checker import VlessChecker
+from utils.checker import VlessChecker
 
 logger = logging.getLogger("Collector")
 
 SUBSCRIPTION_SOURCES = [
+    # --- Старые источники ---
     "https://github.com/ebrasha/free-v2ray-public-list/blob/main/vless_configs.txt",
     "https://github.com/iboxz/free-v2ray-collector/blob/main/main/vless.txt",
     "https://github.com/F0rc3Run/F0rc3Run/blob/main/splitted-by-protocol/vless.txt",
@@ -70,7 +72,39 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no17.txt",
     "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no18.txt",
     "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no19.txt",
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no20.txt"
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/V2RAY_SUB/refs/heads/main/v2ray_configs_no20.txt",
+    
+    # --- Новые источники ---
+    "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
+    "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
+    "https://github.com/V2RayRoot/V2RayConfig/blob/main/Config/vless.txt",
+    "https://github.com/ALIILAPRO/v2rayNG-Config/blob/main/server.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/seperated_by_protocol/vless.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-1.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-2.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-3.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-4.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-5.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-6.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-7.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-8.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-9.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-10.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-11.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-12.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-13.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-14.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-15.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-16.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-17.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-18.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-19.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-20.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-21.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-22.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-23.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-24.txt",
+    "https://github.com/Firmfox/Proxify/blob/main/v2ray_configs/mixed/subscription-25.txt"
 ]
 
 class SubscriptionCollector:
@@ -85,11 +119,25 @@ class SubscriptionCollector:
             return
 
         all_content = "\n".join(results)
+        
+        # Освобождаем память от results, они больше не нужны
+        del results
+        gc.collect()
+
         decoded_content = SubscriptionCollector._try_decode(all_content)
         full_text = all_content + "\n" + decoded_content
+        
+        # Освобождаем память от all_content и decoded_content
+        del all_content
+        del decoded_content
+        gc.collect()
 
         found_links = re.findall(r'(vless://[a-zA-Z0-9\-_.!~*\'()&=+$%@:/?#\[\]]+)', full_text)
         found_links = list(set(found_links))
+        
+        # Очищаем full_text
+        del full_text
+        gc.collect()
         
         existing_keys = await SubRepo.get_all_keys_set()
         unique_links = [l.strip() for l in found_links if l.strip() not in existing_keys]
@@ -102,7 +150,8 @@ class SubscriptionCollector:
             queue.put_nowait(link)
 
         valid_count = [0]
-        WORKERS_COUNT = 50 
+        # ВАЖНО: Радикально снижаем количество воркеров до 3, чтобы спасти VPS
+        WORKERS_COUNT = 3
         workers = []
 
         async def worker():
@@ -119,7 +168,7 @@ class SubscriptionCollector:
                         added = await SubRepo.smart_add_subscription(
                             vless_key=link, 
                             region=region, 
-                            latency=latency,
+                            latency=latency, 
                             ai_available=ai_available
                         )
                         if added:
@@ -131,6 +180,8 @@ class SubscriptionCollector:
                     pass
                 finally:
                     queue.task_done()
+                    # Принудительная очистка после каждого шага
+                    gc.collect()
 
         for _ in range(WORKERS_COUNT):
             workers.append(asyncio.create_task(worker()))
