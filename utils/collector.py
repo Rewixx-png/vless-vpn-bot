@@ -65,7 +65,7 @@ class SubscriptionCollector:
     @classmethod
     async def run_collection(cls) -> dict:
         """Run collection with optimized processing"""
-        logger.info(f"🚀 Starting collection from {len(SUBSCRIPTION_SOURCES)} sources")
+        logger.warning(f"🔄 Starting collection from {len(SUBSCRIPTION_SOURCES)} sources")
         
         # Fetch all sources concurrently
         async with aiohttp.ClientSession() as session:
@@ -91,29 +91,26 @@ class SubscriptionCollector:
         found_links = list(set(found_links))  # Remove duplicates
         del full_text
         
-        logger.info(f"📊 Found {len(found_links)} unique links")
-        
         # Filter out existing keys
         existing_keys = await SubRepo.get_all_keys_set()
         unique_links = [l.strip() for l in found_links if l.strip() not in existing_keys]
         del found_links
         
-        logger.info(f"🆕 {len(unique_links)} new links to check")
-        
         if not unique_links:
+            logger.warning("No new links to add")
             return {"processed": 0, "added": 0}
         
         # Limit batch size to manage memory
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
-            logger.info(f"⚠️ Limiting to {cls.MAX_LINKS_PER_BATCH} links")
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
+        logger.warning(f"Checking {len(unique_links)} new links...")
         # Process links with priority queue
         return await cls._process_links_priority(unique_links)
     
     @classmethod
     async def _process_links_priority(cls, links: List[str]) -> dict:
-        """Process links with detailed logging"""
+        """Process links with minimal logging"""
         log = logging.getLogger("Collector")
         added_count = 0
         checked_count = 0
@@ -124,21 +121,19 @@ class SubscriptionCollector:
         
         processor = SmartBatchProcessor(
             worker_count=cls.MAX_WORKERS,
-            progress_interval=10.0,
-            rate_limit=30
+            progress_interval=30.0,
+            rate_limit=10
         )
         
         async def check_and_add(link: str) -> Optional[dict]:
-            """Check link and add if valid with detailed logging"""
+            """Check link and add if valid"""
             nonlocal checked_count, added_count, dead_count, rejected_count, error_count
             
             try:
-                log.debug(f"[COLLECTOR] Checking: {link[:60]}...")
                 is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
                 checked_count += 1
                 
                 if is_alive:
-                    log.debug(f"[COLLECTOR] ALIVE - Region: {region}, Latency: {latency}ms")
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
@@ -148,51 +143,28 @@ class SubscriptionCollector:
                     
                     if added:
                         added_count += 1
-                        # Track by region
                         if region not in region_stats:
                             region_stats[region] = {"added": 0, "rejected": 0}
                         region_stats[region]["added"] += 1
-                        log.info(f"[COLLECTOR] ADDED - Region: {region}, Total added this run: {added_count}")
                         return {"status": "added", "region": region, "latency": latency}
                     else:
                         rejected_count += 1
-                        if region not in region_stats:
-                            region_stats[region] = {"added": 0, "rejected": 0}
-                        region_stats[region]["rejected"] += 1
-                        log.warning(f"[COLLECTOR] REJECTED - Region: {region}, Reason: Duplicate or Unknown")
                         return {"status": "rejected", "region": region}
                 else:
                     dead_count += 1
-                    log.debug(f"[COLLECTOR] DEAD - Error: {err}")
                     return {"status": "dead", "error": err}
                     
             except Exception as e:
                 error_count += 1
-                log.error(f"[COLLECTOR] ERROR - {str(e)[:100]}")
                 return {"status": "error", "error": str(e)}
         
         # Process in batches
-        log.info(f"[COLLECTOR] Starting to process {len(links)} links...")
         result = await processor.process(
             items=links,
             process_func=check_and_add
         )
         
-        # Detailed stats
-        log.info("=" * 60)
-        log.info("[COLLECTOR] COLLECTION SUMMARY")
-        log.info("=" * 60)
-        log.info(f"Total checked: {checked_count}")
-        log.info(f"Added: {added_count}")
-        log.info(f"Dead: {dead_count}")
-        log.info(f"Rejected: {rejected_count}")
-        log.info(f"Errors: {error_count}")
-        log.info(f"Duration: {result.duration:.1f}s")
-        log.info("-" * 60)
-        log.info("By region:")
-        for region, stats in sorted(region_stats.items(), key=lambda x: x[1]["added"], reverse=True)[:10]:
-            log.info(f"  {region}: +{stats['added']} added, {stats['rejected']} rejected")
-        log.info("=" * 60)
+        logger.warning(f"✅ Done: +{added_count} added, {dead_count} dead, {rejected_count} rejected, {error_count} errors ({result.duration:.1f}s)")
         
         return {
             "processed": checked_count,

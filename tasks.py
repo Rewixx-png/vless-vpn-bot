@@ -125,25 +125,16 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
     
     # Batch updates - reduces DB calls significantly
     if updates_needed:
-        logger.info(f"[CHECKER] Updating {len(updates_needed)} subscriptions in DB")
+        logger.warning(f"[CHECKER] Updating {len(updates_needed)} subs")
         await SubRepo.batch_update_status(updates_needed)
     
     if region_updates:
-        logger.info(f"[CHECKER] Updating regions for {len(region_updates)} subscriptions")
+        logger.warning(f"[CHECKER] Updating regions for {len(region_updates)} subs")
         await SubRepo.batch_update_regions(region_updates)
     
     duration = asyncio.get_event_loop().time() - start_time
     
-    logger.info("=" * 60)
-    logger.info("[CHECKER] BATCH CHECK SUMMARY")
-    logger.info("=" * 60)
-    logger.info(f"Total checked: {checked_count}")
-    logger.info(f"Currently alive: {alive_count}")
-    logger.info(f"Died this run: {died_count}")
-    logger.info(f"Revived this run: {revived_count}")
-    logger.info(f"Updated in DB: {len(updates_needed)}")
-    logger.info(f"Duration: {duration:.2f}s")
-    logger.info("=" * 60)
+    logger.warning(f"✅ Check done: {alive_count} alive, {died_count} died, {revived_count} revived ({duration:.1f}s)")
     
     return {
         "checked": checked_count,
@@ -157,16 +148,15 @@ async def check_subs_batch_task(self, sub_ids: List[int]) -> Dict[str, Any]:
 
 @app.task(base=OptimizedTask)
 async def run_collector_task() -> Dict[str, Any]:
-    """Collector task with detailed logging"""
-    logger.info("[COLLECTOR TASK] Starting automatic collection...")
+    """Collector task"""
+    logger.warning("🔄 Starting collection...")
     start_time = asyncio.get_event_loop().time()
     
     try:
         result = await SubscriptionCollector.run_collection()
         duration = asyncio.get_event_loop().time() - start_time
         
-        logger.info("=" * 60)
-        logger.info("[COLLECTOR TASK] AUTOMATIC COLLECTION COMPLETED")
+        logger.warning(f"✅ Collection done in {duration:.1f}s: +{result.get('added', 0)} added")
         logger.info("=" * 60)
         logger.info(f"Duration: {duration:.2f}s")
         logger.info(f"Links processed: {result.get('processed', 0)}")
@@ -187,16 +177,13 @@ async def run_collector_task() -> Dict[str, Any]:
 
 @app.task(base=OptimizedTask)
 async def cleanup_database_task() -> Dict[str, Any]:
-    """Database cleanup - NOW SAFE: only logs statistics, NEVER deletes"""
-    logger.info("[CLEANUP] Starting cleanup task (SAFE MODE - no deletion)")
+    """Database cleanup - SAFE MODE"""
     start_time = asyncio.get_event_loop().time()
     
     try:
-        # This now only logs statistics, doesn't delete anything
         await SubRepo.enforce_limits()
         duration = asyncio.get_event_loop().time() - start_time
         
-        logger.info(f"[CLEANUP] Completed in {duration:.2f}s - NO CONFIGS WERE DELETED")
         return {
             "success": True,
             "duration": duration,
