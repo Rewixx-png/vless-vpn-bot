@@ -16,7 +16,7 @@ async def get_base_url():
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
     if domain:
-        return f"http://{domain}"
+        return f"https://{domain}"
     return f"http://{config.PUBLIC_IP}:{config.WEB_PORT}"
 
 @router.callback_query(F.data == "groups_list")

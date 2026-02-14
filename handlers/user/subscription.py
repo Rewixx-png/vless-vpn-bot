@@ -18,9 +18,9 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
     
-    # HTTPS FIX: Если есть домен -> HTTPS, иначе HTTP+IP:PORT
+    # HTTPS: если есть домен -> HTTPS, иначе HTTP+IP:PORT
     if domain:
-        protocol = "http"
+        protocol = "https"
         host = domain
     else:
         protocol = "http"
