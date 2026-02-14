@@ -38,8 +38,15 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
     if not message:
         return
     
-    data = await state.get_data()
-    last_msg_id = data.get("last_msg_id")
+    last_msg_id = None
+    try:
+        if state:
+            data = await state.get_data()
+            if data and isinstance(data, dict):
+                last_msg_id = data.get("last_msg_id")
+    except Exception:
+        pass
+    
     chat_id = message.chat.id
     
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
