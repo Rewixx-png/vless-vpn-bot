@@ -19,7 +19,7 @@ class BackgroundTasks:
     
     # Intervals
     CHECK_INTERVAL = 900      # 15 minutes (night - less CPU)
-    COLLECT_INTERVAL = 1800  # 30 minutes (day)
+    COLLECT_INTERVAL = 900  # 15 minutes (day)
     CLEANUP_INTERVAL = 3600 # 1 hour
     
     # Time ranges (Moscow timezone UTC+3)

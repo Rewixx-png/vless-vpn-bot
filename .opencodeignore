@@ -1,0 +1,14 @@
+# Игнорируем тяжелые папки и файлы
+node_modules
+venv
+.git
+__pycache__
+*.log
+*.db
+*.sqlite
+*.sqlite3
+package-lock.json
+yarn.lock
+dist
+build
+.next

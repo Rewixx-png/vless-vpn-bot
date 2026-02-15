@@ -127,9 +127,31 @@ def main():
     web.run_app(app, port=config.CHECKER_PORT, print=None)
 
 if __name__ == "__main__":
-    try:
-        if os.name == 'nt':
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        main()
-    except KeyboardInterrupt:
-        pass
+    import sys
+    
+    restart_count = 0
+    max_restarts = 20
+    
+    while restart_count < max_restarts:
+        try:
+            if os.name == 'nt':
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            main()
+            break
+            
+        except KeyboardInterrupt:
+            print("👋 Interrupted")
+            break
+            
+        except Exception as e:
+            restart_count += 1
+            print(f"❌ Error (restart {restart_count}/{max_restarts}): {e}")
+            
+            if restart_count < max_restarts:
+                import time
+                wait_time = min(restart_count * 3, 15)
+                print(f"🔄 Restarting in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                print("❌ Max restarts reached")
+                sys.exit(1)

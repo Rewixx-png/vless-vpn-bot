@@ -58,7 +58,7 @@ SUBSCRIPTION_SOURCES = [
 class SubscriptionCollector:
     """Optimized subscription collector with streaming and prioritization"""
     
-    MAX_LINKS_PER_BATCH = 1000  # Reduced for less memory
+    MAX_LINKS_PER_BATCH = 50000  # No limit - process all
     MAX_WORKERS = 15  # Reduced for less CPU usage
     PRIORITY_REGIONS = {"🇩🇪 DE", "🇳🇱 NL", "🇫🇷 FR", "🇬🇧 GB", "🇺🇸 US", "🇸🇬 SG", "🇯🇵 JP"}
     
@@ -118,21 +118,24 @@ class SubscriptionCollector:
         rejected_count = 0
         error_count = 0
         region_stats = {}
-        
+        total_links = len(links)
+
         processor = SmartBatchProcessor(
-            worker_count=cls.MAX_WORKERS,
-            progress_interval=30.0,
-            rate_limit=10
+            worker_count=30,
+            progress_interval=5.0,
+            rate_limit=50
         )
-        
+
+        logger.warning(f"🔄 Start check: {total_links} links")
+
         async def check_and_add(link: str) -> Optional[dict]:
             """Check link and add if valid"""
             nonlocal checked_count, added_count, dead_count, rejected_count, error_count
-            
+
             try:
                 is_alive, region, latency, ai_available, err = await VlessChecker.process_subscription(link)
                 checked_count += 1
-                
+
                 if is_alive:
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
@@ -140,28 +143,36 @@ class SubscriptionCollector:
                         latency=latency,
                         ai_available=ai_available
                     )
-                    
+
                     if added:
                         added_count += 1
+                        logger.info(f"✅ +1 {region} | {latency}ms | [{added_count}/{total_links}]")
                         if region not in region_stats:
                             region_stats[region] = {"added": 0, "rejected": 0}
                         region_stats[region]["added"] += 1
                         return {"status": "added", "region": region, "latency": latency}
                     else:
                         rejected_count += 1
+                        logger.debug(f"⚠️ Rejected: {region} | [{checked_count}/{total_links}]")
                         return {"status": "rejected", "region": region}
                 else:
                     dead_count += 1
+                    logger.debug(f"❌ Dead: {err} | [{checked_count}/{total_links}]")
                     return {"status": "dead", "error": err}
-                    
+
             except Exception as e:
                 error_count += 1
                 return {"status": "error", "error": str(e)}
-        
+
+        # Progress callback
+        def on_progress(completed: int, total: int, success: int, failed: int):
+            log.warning(f"🔄 Progress: {completed}/{total} | Added: {added_count}, Dead: {dead_count}, Rejected: {rejected_count}, Errors: {error_count}")
+
         # Process in batches
         result = await processor.process(
             items=links,
-            process_func=check_and_add
+            process_func=check_and_add,
+            on_progress=on_progress
         )
         
         logger.warning(f"✅ Done: +{added_count} added, {dead_count} dead, {rejected_count} rejected, {error_count} errors ({result.duration:.1f}s)")

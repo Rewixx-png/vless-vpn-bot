@@ -206,13 +206,29 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Interrupted by user")
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+    restart_count = 0
+    max_restarts = 10
+    
+    while restart_count < max_restarts:
+        try:
+            if sys.platform == 'win32':
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
+            asyncio.run(main())
+            break  # Normal exit
+            
+        except KeyboardInterrupt:
+            logger.info("👋 Interrupted by user")
+            break
+            
+        except Exception as e:
+            restart_count += 1
+            logger.error(f"❌ Fatal error (restart {restart_count}/{max_restarts}): {e}", exc_info=True)
+            
+            if restart_count < max_restarts:
+                wait_time = min(restart_count * 5, 30)  # 5, 10, 15... up to 30 sec
+                logger.info(f"🔄 Restarting in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error("❌ Max restarts reached, exiting...")
+                sys.exit(1)
