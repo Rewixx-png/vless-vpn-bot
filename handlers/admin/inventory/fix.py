@@ -18,21 +18,23 @@ router = Router()
 
 @router.callback_query(F.data == "admin_fix_regions")
 async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>🌍 <b>Обновление геолокации серверов</b>\n\n"
         "📡 Определяю регионы по IP-адресам серверов\n"
         "⚡ Используется пакетная проверка\n"
-        "⏳ Загружаю данные...</blockquote>",
-        parse_mode="HTML"
+        "⏳ Загружаю данные...</blockquote>"
     )
 
     subs = await SubRepo.get_unknown_regions_subs()
     if not subs:
-        await callback.message.edit_text(
+        await admin_edit_or_answer(
+            callback,
+            state,
             "<blockquote>✅ <b>Все серверы имеют регион!</b>\n\n"
             "ℹ️ Нет серверов с неизвестным регионом.</blockquote>",
-            reply_markup=back_to_admin(),
-            parse_mode="HTML"
+            reply_markup=back_to_admin()
         )
         return
 
@@ -50,11 +52,11 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
     total_hosts = len(unique_hosts)
 
     # Progress message
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback.message,
         f"<blockquote>🌍 <b>Обновление геолокации</b>\n\n"
         f"📡 Определено уникальных хостов: <b>{total_hosts}</b>\n"
-        f"⏳ Загружаю данные GeoIP...</blockquote>",
-        parse_mode="HTML"
+        f"⏳ Загружаю данные GeoIP...</blockquote>"
     )
 
     # Process with batch API
@@ -75,7 +77,9 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
     if updates:
         await SubRepo.batch_update_regions(updates)
 
-    await callback.message.edit_text(
+    await admin_edit_or_answer(
+        callback,
+        state,
         f"<blockquote>✅ <b>Геолокация обновлена!</b>\n\n"
         f"📊 <b>Итоговый отчёт:</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -83,28 +87,29 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
         f"✅ Обновлено регионов: <b>{fixed_count}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"ℹ️ <i>Серверы с Unknown регионом оставлены без изменений.</i></blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
 
 
 @router.callback_query(F.data == "admin_recheck")
-async def recheck_all_subs(callback: CallbackQuery):
-    await callback.message.edit_text(
+async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
+    await admin_edit_or_answer(
+        callback,
+        state,
         "<blockquote>🔍 <b>Запуск полной проверки серверов</b>\n\n"
         "⚡ Используется реальное ядро Xray\n"
         "🌐 Проверяется каждый сервер на работоспособность\n"
-        "⏱️ Это может занять несколько минут...</blockquote>",
-        parse_mode="HTML"
+        "⏱️ Это может занять несколько минут...</blockquote>"
     )
 
     subs = await SubRepo.get_all_subscriptions_for_check()
     if not subs:
-        await callback.message.edit_text(
+        await admin_edit_or_answer(
+            callback,
+            state,
             "<blockquote>⚠️ <b>База данных пуста!</b>\n\n"
             "Сначала добавьте серверы через меню инвентаря.</blockquote>",
-            reply_markup=back_to_admin(),
-            parse_mode="HTML"
+            reply_markup=back_to_admin()
         )
         return
 
@@ -157,7 +162,8 @@ async def recheck_all_subs(callback: CallbackQuery):
         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
         remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
         
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback.message,
             f"<blockquote>⚡ <b>Проверка серверов: {percent}%</b>\n\n"
             f"📊 <b>{completed} / {total}</b>\n"
             f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
@@ -166,8 +172,7 @@ async def recheck_all_subs(callback: CallbackQuery):
             f"💀 Нерабочих: <b>{stats['died']}</b>\n"
             f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔄 Проверяю...</blockquote>",
-            parse_mode="HTML"
+            f"🔄 Проверяю...</blockquote>"
         )
 
     # Process with progress
@@ -193,7 +198,9 @@ async def recheck_all_subs(callback: CallbackQuery):
     if region_updates:
         await SubRepo.batch_update_regions(region_updates)
 
-    await callback.message.edit_text(
+    await admin_edit_or_answer(
+        callback,
+        state,
         f"<blockquote>✅ <b>Проверка серверов завершена!</b>\n\n"
         f"📊 <b>Итоговый отчёт:</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -203,6 +210,5 @@ async def recheck_all_subs(callback: CallbackQuery):
         f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"ℹ️ <i>Нерабочие серверы отмечены как неактивные.</i></blockquote>",
-        reply_markup=back_to_admin(),
-        parse_mode="HTML"
+        reply_markup=back_to_admin()
     )
