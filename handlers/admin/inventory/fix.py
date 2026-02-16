@@ -38,7 +38,6 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    # Group subs by host
     host_to_subs = {}
     for sub in subs:
         parsed = VlessChecker.parse_config(sub.vless_key)
@@ -51,7 +50,6 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
     unique_hosts = list(host_to_subs.keys())
     total_hosts = len(unique_hosts)
 
-    # Progress message
     await safe_edit_message(
         callback.message,
         f"<blockquote>🌍 <b>Обновление геолокации</b>\n\n"
@@ -59,11 +57,9 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
         f"⏳ Загружаю данные GeoIP...</blockquote>"
     )
 
-    # Process with batch API
     async with aiohttp.ClientSession() as session:
         results = await VlessChecker.get_regions_batch(unique_hosts, session)
 
-    # Collect updates
     updates = []
     fixed_count = 0
 
@@ -73,7 +69,6 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
                 updates.append({"id": sub.id, "region": region})
                 fixed_count += 1
 
-    # Batch update all at once
     if updates:
         await SubRepo.batch_update_regions(updates)
 
@@ -93,29 +88,27 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_recheck")
 async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
-    await admin_edit_or_answer(
-        callback,
-        state,
+    msg = await callback.message.answer(
         "<blockquote>🔍 <b>Запуск полной проверки серверов</b>\n\n"
         "⚡ Используется реальное ядро Xray\n"
         "🌐 Проверяется каждый сервер на работоспособность\n"
-        "⏱️ Это может занять несколько минут...</blockquote>"
+        "⏱️ Это может занять несколько минут...</blockquote>",
+        parse_mode="HTML"
     )
+    await callback.answer()
 
     subs = await SubRepo.get_all_subscriptions_for_check()
     if not subs:
-        await admin_edit_or_answer(
-            callback,
-            state,
+        await msg.edit_text(
             "<blockquote>⚠️ <b>База данных пуста!</b>\n\n"
             "Сначала добавьте серверы через меню инвентаря.</blockquote>",
-            reply_markup=back_to_admin()
+            reply_markup=back_to_admin(),
+            parse_mode="HTML"
         )
         return
 
     total = len(subs)
 
-    # Use SmartBatchProcessor
     processor = SmartBatchProcessor(
         worker_count=10,
         progress_interval=3.0
@@ -125,7 +118,6 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
     region_updates = []
 
     async def process_sub(sub):
-        """Process single subscription"""
         try:
             is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
 
@@ -152,37 +144,37 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         except Exception:
             return (False, {"status": "error"})
 
-    # Progress tracking
     stats = {"active": 0, "died": 0, "revived": 0}
     start_time = asyncio.get_event_loop().time()
 
     async def on_progress(completed: int, total: int, success: int, failed: int):
         elapsed = asyncio.get_event_loop().time() - start_time
-        percent = int((completed / total) * 100)
+        percent = int((completed / total) * 100) if total > 0 else 0
         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
         remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
         
-        await safe_edit_message(
-            callback.message,
-            f"<blockquote>⚡ <b>Проверка серверов: {percent}%</b>\n\n"
-            f"📊 <b>{completed} / {total}</b>\n"
-            f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🟢 Рабочих: <b>{stats['active']}</b>\n"
-            f"💀 Нерабочих: <b>{stats['died']}</b>\n"
-            f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔄 Проверяю...</blockquote>"
-        )
+        try:
+            await msg.edit_text(
+                f"<blockquote>⚡ <b>Проверка серверов: {percent}%</b>\n\n"
+                f"📊 <b>{completed} / {total}</b>\n"
+                f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🟢 Рабочих: <b>{stats['active']}</b>\n"
+                f"💀 Нерабочих: <b>{stats['died']}</b>\n"
+                f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔄 Проверяю...</blockquote>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
-    # Process with progress
     result = await processor.process(
         items=subs,
         process_func=process_sub,
         on_progress=on_progress
     )
 
-    # Count stats
     for item in result.items:
         res = item.get("result", {})
         if res.get("status") == "active":
@@ -192,15 +184,12 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         elif res.get("status") == "dead" and res.get("was_active"):
             stats["died"] += 1
 
-    # Batch update all changes at once
     if status_updates:
         await SubRepo.batch_update_status(status_updates)
     if region_updates:
         await SubRepo.batch_update_regions(region_updates)
 
-    await admin_edit_or_answer(
-        callback,
-        state,
+    await msg.edit_text(
         f"<blockquote>✅ <b>Проверка серверов завершена!</b>\n\n"
         f"📊 <b>Итоговый отчёт:</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -210,5 +199,6 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"ℹ️ <i>Нерабочие серверы отмечены как неактивные.</i></blockquote>",
-        reply_markup=back_to_admin()
+        reply_markup=back_to_admin(),
+        parse_mode="HTML"
     )
