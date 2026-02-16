@@ -91,7 +91,7 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
     msg = await callback.message.answer(
         "<blockquote>🔍 <b>Запуск полной проверки серверов</b>\n\n"
         "⚡ Используется реальное ядро Xray\n"
-        "🌐 Проверяется каждый сервер на работоспособность\n"
+        "💾 <b>Live Update:</b> База обновляется в реальном времени\n"
         "⏱️ Это может занять несколько минут...</blockquote>",
         parse_mode="HTML"
     )
@@ -110,42 +110,84 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
     total = len(subs)
 
     processor = SmartBatchProcessor(
-        worker_count=10,
-        progress_interval=3.0
+        worker_count=50,
+        progress_interval=2.0
     )
 
-    status_updates = []
-    region_updates = []
+    update_lock = asyncio.Lock()
+    status_buffer = []
+    region_buffer = []
+    BATCH_SIZE = 50
+
+    stats = {"active": 0, "died": 0, "revived": 0, "saved": 0}
+    start_time = asyncio.get_event_loop().time()
+
+    async def flush_buffers():
+        async with update_lock:
+            to_save_status = list(status_buffer)
+            to_save_region = list(region_buffer)
+            status_buffer.clear()
+            region_buffer.clear()
+
+        if to_save_status:
+            await SubRepo.batch_update_status(to_save_status)
+            stats["saved"] += len(to_save_status)
+        
+        if to_save_region:
+            await SubRepo.batch_update_regions(to_save_region)
 
     async def process_sub(sub):
         try:
             is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
+            
+            status_upd = None
+            region_upd = None
 
             if is_alive:
-                status_updates.append({
+                stats["active"] += 1
+                if not sub.is_active:
+                    stats["revived"] += 1
+
+                status_upd = {
                     "id": sub.id,
                     "is_active": True,
                     "latency_ms": latency,
                     "ai_available": ai_avail
-                })
+                }
+                
                 if region and "Unknown" not in region:
-                    region_updates.append({"id": sub.id, "region": region})
-                return (True, {"status": "active", "was_dead": not sub.is_active})
+                    region_upd = {"id": sub.id, "region": region}
+                
+                result_status = "active"
             else:
                 if sub.is_active:
-                    status_updates.append({
-                        "id": sub.id,
-                        "is_active": False,
-                        "latency_ms": 9999,
-                        "ai_available": False
-                    })
-                return (False, {"status": "dead", "was_active": sub.is_active})
+                    stats["died"] += 1
+                
+                status_upd = {
+                    "id": sub.id,
+                    "is_active": False,
+                    "latency_ms": 9999,
+                    "ai_available": False
+                }
+                result_status = "dead"
+
+            should_flush = False
+            async with update_lock:
+                if status_upd:
+                    status_buffer.append(status_upd)
+                if region_upd:
+                    region_buffer.append(region_upd)
+                
+                if len(status_buffer) >= BATCH_SIZE:
+                    should_flush = True
+            
+            if should_flush:
+                await flush_buffers()
+
+            return (True, {"status": result_status})
 
         except Exception:
             return (False, {"status": "error"})
-
-    stats = {"active": 0, "died": 0, "revived": 0}
-    start_time = asyncio.get_event_loop().time()
 
     async def on_progress(completed: int, total: int, success: int, failed: int):
         elapsed = asyncio.get_event_loop().time() - start_time
@@ -161,7 +203,7 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🟢 Рабочих: <b>{stats['active']}</b>\n"
                 f"💀 Нерабочих: <b>{stats['died']}</b>\n"
-                f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
+                f"💾 Сохранено в БД: <b>{stats['saved']}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🔄 Проверяю...</blockquote>",
                 parse_mode="HTML"
@@ -169,25 +211,13 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         except Exception:
             pass
 
-    result = await processor.process(
+    await processor.process(
         items=subs,
         process_func=process_sub,
         on_progress=on_progress
     )
 
-    for item in result.items:
-        res = item.get("result", {})
-        if res.get("status") == "active":
-            stats["active"] += 1
-            if res.get("was_dead"):
-                stats["revived"] += 1
-        elif res.get("status") == "dead" and res.get("was_active"):
-            stats["died"] += 1
-
-    if status_updates:
-        await SubRepo.batch_update_status(status_updates)
-    if region_updates:
-        await SubRepo.batch_update_regions(region_updates)
+    await flush_buffers()
 
     await msg.edit_text(
         f"<blockquote>✅ <b>Проверка серверов завершена!</b>\n\n"
@@ -198,7 +228,7 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         f"💀 Нерабочих серверов: <b>{stats['died']}</b>\n"
         f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"ℹ️ <i>Нерабочие серверы отмечены как неактивные.</i></blockquote>",
+        f"ℹ️ <i>База данных обновлена.</i></blockquote>",
         reply_markup=back_to_admin(),
         parse_mode="HTML"
     )

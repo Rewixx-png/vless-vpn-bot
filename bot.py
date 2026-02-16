@@ -5,6 +5,7 @@ import asyncio
 import logging
 import sys
 import time
+import traceback
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
@@ -33,6 +34,7 @@ loggers_to_silence = [
     "VideoManager", 
     "Scheduler", 
     "aiohttp.access",
+    "aiohttp.server",
     "asyncio"
 ]
 
@@ -51,6 +53,11 @@ class TelegramLogHandler(logging.Handler):
         self.admin_ids = list(admin_ids)
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.name == "aiohttp.server":
+            return
+        if "BadStatusLine" in str(record.msg) or "BadHttpMessage" in str(record.msg):
+            return
+            
         try:
             msg = self.format(record)
             if len(msg) > 3500:
@@ -86,7 +93,8 @@ async def check_services() -> dict:
     results = {
         "checker": False,
         "database": False,
-        "video": False
+        "video": False,
+        "db_error": None
     }
     
     # Check database
@@ -96,11 +104,11 @@ async def check_services() -> dict:
         results["database"] = True
     except Exception as e:
         logger.error(f"Database check failed: {e}")
+        results["db_error"] = str(e)
     
     # Check checker service
     try:
         test_result = await CheckerAPI.check("vless://test@localhost:443?security=none")
-        # Service is online if we get any response (even failure for test link)
         results["checker"] = test_result[4] != "Checker Service Offline"
     except Exception:
         results["checker"] = False
@@ -118,9 +126,12 @@ async def main():
     
     # Initialize database
     logger.info("📦 Initializing database...")
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        logger.critical(f"🔥 DATABASE INIT FAILED: {e}")
     
-    # Start video preparation in background (non-blocking)
+    # Start video preparation in background
     logger.info("🎬 Starting video preparation...")
     await VideoManager.prepare()
     
@@ -145,7 +156,7 @@ async def main():
     logger.info("🌐 Starting subscription server...")
     server_task = asyncio.create_task(SubscriptionServer.start())
     
-    # Wait a bit for services to initialize
+    # Wait a bit for services
     await asyncio.sleep(2)
     
     # Check services
@@ -170,7 +181,13 @@ async def main():
         startup_msg += (
             f"⚠️ <b>Внимание!</b>\n"
             f"Checker Service не запущен.\n"
-            f"Запустите: <code>python utils/checker/service.py</code>"
+            f"Запустите: <code>python utils/checker/service.py</code>\n\n"
+        )
+        
+    if not service_status["database"]:
+        startup_msg += (
+            f"🛑 <b>Ошибка БД:</b>\n"
+            f"<pre>{service_status.get('db_error', 'Unknown Error')}</pre>"
         )
     
     # Notify admins
@@ -188,17 +205,13 @@ async def main():
     finally:
         logger.info("🛑 Shutting down...")
         
-        # Stop background tasks
         await BackgroundTasks.stop()
-        
-        # Stop server
         server_task.cancel()
         try:
             await server_task
         except asyncio.CancelledError:
             pass
         
-        # Close connections
         await bot.session.close()
         await payment_client.close()
         
@@ -215,7 +228,7 @@ if __name__ == "__main__":
                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             
             asyncio.run(main())
-            break  # Normal exit
+            break
             
         except KeyboardInterrupt:
             logger.info("👋 Interrupted by user")
@@ -224,11 +237,4 @@ if __name__ == "__main__":
         except Exception as e:
             restart_count += 1
             logger.error(f"❌ Fatal error (restart {restart_count}/{max_restarts}): {e}", exc_info=True)
-            
-            if restart_count < max_restarts:
-                wait_time = min(restart_count * 5, 30)  # 5, 10, 15... up to 30 sec
-                logger.info(f"🔄 Restarting in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                logger.error("❌ Max restarts reached, exiting...")
-                sys.exit(1)
+            time.sleep(5)

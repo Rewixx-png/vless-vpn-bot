@@ -116,19 +116,16 @@ class XrayExecutor:
             try:
                 if process.returncode is None:
                     try:
-                        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                        try:
-                            await asyncio.wait_for(process.wait(), timeout=0.5)
-                        except asyncio.TimeoutError:
-                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    except ProcessLookupError:
+                        os.kill(process.pid, signal.SIGKILL)
+                        await asyncio.wait_for(process.wait(), timeout=0.1)
+                    except (ProcessLookupError, OSError):
+                        pass
+                    except asyncio.TimeoutError:
                         pass
                     except Exception:
                         try:
                             process.kill()
-                            await asyncio.wait_for(process.wait(), timeout=1.0)
-                        except Exception:
-                            pass
+                        except: pass
             except Exception:
                 pass
         

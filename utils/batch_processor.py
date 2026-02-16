@@ -50,13 +50,7 @@ class BatchProcessor:
         on_complete: Optional[Callable[[BatchResult], None]] = None
     ) -> BatchResult:
         """
-        Process items with progress tracking.
-        
-        Args:
-            items: List of items to process
-            process_func: Function that takes item and returns (success, result)
-            on_progress: Callback(completed, total, success, failed)
-            on_complete: Callback(result)
+        Process items with progress tracking and WATCHDOG timeouts.
         """
         start_time = asyncio.get_event_loop().time()
         queue = asyncio.Queue()
@@ -84,7 +78,14 @@ class BatchProcessor:
                         if self.rate_limit:
                             await asyncio.sleep(1.0 / self.rate_limit)
                         
-                        success, result = await process_func(item)
+                        try:
+                            success, result = await asyncio.wait_for(
+                                process_func(item), 
+                                timeout=25.0
+                            )
+                        except asyncio.TimeoutError:
+                            success = False
+                            result = "WATCHDOG_TIMEOUT"
                         
                         stats["completed"] += 1
                         if success:
@@ -120,7 +121,6 @@ class BatchProcessor:
             async def progress_updater():
                 while not self._cancelled:
                     try:
-                        # Check if on_progress is async
                         if asyncio.iscoroutinefunction(on_progress):
                             await on_progress(
                                 stats["completed"], 
@@ -135,6 +135,11 @@ class BatchProcessor:
                                 stats["success"], 
                                 stats["failed"]
                             )
+                        
+                        # If all tasks completed, exit progress loop
+                        if stats["completed"] >= len(items):
+                            break
+                            
                         await asyncio.sleep(self.progress_interval)
                     except asyncio.CancelledError:
                         break

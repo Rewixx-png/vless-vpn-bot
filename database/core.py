@@ -1,13 +1,19 @@
+import logging
+import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 from config import config
 from database.models import Base
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Database")
+
 engine = create_async_engine(
     config.DB_URL, 
     echo=False,
-    poolclass=NullPool
+    poolclass=NullPool,
+    pool_pre_ping=True
 )
 
 async_session_factory = async_sessionmaker(
@@ -15,20 +21,39 @@ async_session_factory = async_sessionmaker(
 )
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    logger.info("⏳ Connecting to database...")
+    
+    try:
+        async with engine.begin() as conn:
+            logger.info("🛠 Checking tables schema...")
+            await conn.run_sync(Base.metadata.create_all)
+        
+        logger.info("✅ Tables schema checked.")
 
-        try:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"))
-            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE"))
-            await conn.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS death_count INTEGER DEFAULT 0"))
+        async with engine.begin() as conn:
+            logger.info("🔄 Checking migrations...")
             
-            # Миграция для тегов групп
-            await conn.execute(text("ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"))
-        except Exception as e:
-            print(f"Migration warning: {e}")
+            migrations = [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS death_count INTEGER DEFAULT 0",
+                "ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL"
+            ]
+
+            for sql in migrations:
+                try:
+                    await conn.execute(text(sql))
+                except Exception as e:
+                    if "duplicate column" not in str(e).lower() and "exists" not in str(e).lower():
+                         logger.warning(f"⚠️ Migration warning: {e}")
+
+            logger.info("✅ Migrations completed.")
+
+    except Exception as e:
+        logger.critical(f"❌ CRITICAL DATABASE ERROR: {e}")
+        raise e
 
 async def get_session() -> AsyncSession:
     async with async_session_factory() as session:

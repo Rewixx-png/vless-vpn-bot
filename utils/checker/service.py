@@ -17,13 +17,18 @@ from utils.checker.xray import XrayExecutor
 from utils.checker.geoip import GeoIP
 from config import config
 
+# Configure logging
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - CHECKER_SVC - %(levelname)s - %(message)s"
 )
+# Silence network noise in checker too
+logging.getLogger("aiohttp.server").setLevel(logging.ERROR)
+logging.getLogger("aiohttp.access").setLevel(logging.ERROR)
+
 logger = logging.getLogger("CheckerService")
 
-MAX_CONCURRENT_CHECKS = 50
+MAX_CONCURRENT_CHECKS = 100
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
 async def check_handler(request):
@@ -44,7 +49,7 @@ async def check_handler(request):
                 })
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
-            timeout = aiohttp.ClientTimeout(total=6.0, connect=3.0)
+            timeout = aiohttp.ClientTimeout(total=5.0, connect=2.5)
             
             result = {
                 "success": False,
@@ -73,7 +78,6 @@ async def check_handler(request):
                     try:
                         async with proxy_session.get('https://www.gstatic.com/generate_204', allow_redirects=False) as resp:
                             if resp.status == 204:
-                                # Замеряем пинг только по успешному HTTPS
                                 result["latency"] = int((time.monotonic() - start_time) * 1000)
                                 https_ok = True
                             else:
@@ -86,7 +90,7 @@ async def check_handler(request):
                         
                         if result["latency"] < 2000:
                             try:
-                                ai_timeout = aiohttp.ClientTimeout(total=2.0)
+                                ai_timeout = aiohttp.ClientTimeout(total=1.5)
                                 openai_ok = False
                                 async with proxy_session.get('https://api.openai.com/v1/models', timeout=ai_timeout) as ai_resp:
                                     if ai_resp.status in [200, 401, 403]:

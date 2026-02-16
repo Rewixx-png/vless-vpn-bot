@@ -1,6 +1,3 @@
-"""
-Subscription collector - no health check, just basic validation and add to DB.
-"""
 import aiohttp
 import asyncio
 import base64
@@ -9,6 +6,8 @@ import logging
 from typing import List, Set, Optional
 
 from database.repo import SubRepo
+from utils.checker import VlessChecker
+from utils.batch_processor import SmartBatchProcessor
 
 logger = logging.getLogger("Collector")
 
@@ -51,56 +50,13 @@ SUBSCRIPTION_SOURCES = [
     "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt"
 ]
 
-REGION_KEYWORDS = {
-    "DE": ["germany", "deutschland", "berlin", "frankfurt"],
-    "NL": ["netherlands", "nederland", "amsterdam", "rotterdam"],
-    "FR": ["france", "français", "paris", "marseille"],
-    "GB": ["uk", "united kingdom", "britain", "london", "england"],
-    "US": ["usa", "united states", "america", "new york", "los angeles", "chicago"],
-    "SG": ["singapore"],
-    "JP": ["japan", "tokyo", "osaka"],
-    "CA": ["canada", "toronto", "montreal"],
-    "AU": ["australia", "sydney", "melbourne"],
-    "CH": ["switzerland", "zürich", "geneva"],
-    "SE": ["sweden", "stockholm"],
-    "NO": ["norway", "oslo"],
-    "FI": ["finland", "helsinki"],
-    "DK": ["denmark", "copenhagen"],
-    "AT": ["austria", "wien", "vienna"],
-    "BE": ["belgium", "brussels"],
-    "IE": ["ireland", "dublin"],
-    "IT": ["italy", "italia", "rome", "milano"],
-    "ES": ["spain", "españa", "madrid", "barcelona"],
-    "PT": ["portugal", "lisbon"],
-    "PL": ["poland", "warsaw"],
-    "CZ": ["czech", "praha", "prague"],
-    "RU": ["russia", "россия", "москва", "saint petersburg"],
-    "UA": ["ukraine", "україна", "kyiv"],
-    "TR": ["turkey", "türkiye", "istanbul"],
-    "IN": ["india", "mumbai", "delhi"],
-    "HK": ["hong kong", "hk"],
-    "KR": ["korea", "south korea", "seoul"],
-    "TW": ["taiwan", "taipei"],
-    "TH": ["thailand", "bangkok"],
-    "VN": ["vietnam", "hanoi", "ho chi minh"],
-    "ID": ["indonesia", "jakarta"],
-    "MY": ["malaysia", "kuala lumpur"],
-    "PH": ["philippines", "manila"],
-    "BR": ["brazil", "brasil", "são paulo"],
-    "AR": ["argentina", "buenos aires"],
-    "MX": ["mexico", "méxico"],
-    "ZA": ["south africa", "johannesburg"],
-    "AE": ["uae", "dubai", "emirates"],
-}
-
-
 class SubscriptionCollector:
-    MAX_LINKS_PER_BATCH = 50000
-    MAX_WORKERS = 30
+    MAX_LINKS_PER_BATCH = 100000 
+    WORKER_COUNT = 100
     
     @classmethod
     async def run_collection(cls) -> dict:
-        logger.warning(f"🔄 Starting collection from {len(SUBSCRIPTION_SOURCES)} sources")
+        logger.warning(f"🚀 Starting AGGRESSIVE collection from {len(SUBSCRIPTION_SOURCES)} sources...")
         
         async with aiohttp.ClientSession() as session:
             tasks = [cls._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
@@ -124,61 +80,74 @@ class SubscriptionCollector:
         del found_links, existing_keys
         
         if not unique_links:
-            logger.warning("No new links to add")
+            logger.warning("💤 No new unique links found.")
             return {"processed": 0, "added": 0}
         
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"Processing {len(unique_links)} new links...")
-        return await cls._process_links_fast(unique_links)
+        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Xray Recheck ({cls.WORKER_COUNT} threads)...")
+        return await cls._check_and_add_batch(unique_links)
     
     @classmethod
-    async def _process_links_fast(cls, links: List[str]) -> dict:
+    async def _check_and_add_batch(cls, links: List[str]) -> dict:
         added_count = 0
-        rejected_count = 0
+        failed_count = 0
         region_stats = {}
-        total_links = len(links)
         
-        semaphore = asyncio.Semaphore(cls.MAX_WORKERS)
-        
-        async def validate_and_add(link: str):
-            nonlocal added_count, rejected_count
-            
-            async with semaphore:
-                parsed = cls._parse_vless(link)
-                if not parsed:
-                    rejected_count += 1
-                    return {"status": "rejected", "reason": "parse_error"}
+        processor = SmartBatchProcessor(
+            worker_count=cls.WORKER_COUNT,
+            rate_limit=None 
+        )
+
+        async def process_link(link: str):
+            try:
+                if not cls._parse_vless(link):
+                    return False, "parse_error"
+
+                is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
                 
-                region = cls._detect_region(parsed)
-                
-                added = await SubRepo.smart_add_subscription(
-                    vless_key=link,
-                    region=region,
-                    latency=0,
-                    ai_available=False
-                )
-                
-                if added:
-                    added_count += 1
-                    if region not in region_stats:
-                        region_stats[region] = {"added": 0}
-                    region_stats[region]["added"] += 1
-                    return {"status": "added", "region": region}
+                if is_alive:
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=link,
+                        region=region,
+                        latency=latency,
+                        ai_available=ai_avail
+                    )
+                    
+                    if added:
+                        return True, {"region": region}
+                    else:
+                        return False, "duplicate_or_limit"
                 else:
-                    rejected_count += 1
-                    return {"status": "rejected", "reason": "duplicate"}
+                    return False, "dead"
+                    
+            except Exception as e:
+                return False, str(e)
+
+        result = await processor.process(
+            items=links,
+            process_func=process_link
+        )
+
+        for item in result.items:
+            if item["success"]:
+                added_count += 1
+                res_data = item["result"]
+                reg = res_data.get("region", "UNK")
+                
+                if reg not in region_stats:
+                    region_stats[reg] = 0
+                region_stats[reg] += 1
+            else:
+                failed_count += 1
         
-        tasks = [validate_and_add(link) for link in links]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        
-        logger.warning(f"✅ Done: +{added_count} added, {rejected_count} rejected")
+        logger.warning(f"✅ Collection Finished: +{added_count} Added | {failed_count} Discarded")
         
         return {
-            "processed": total_links,
+            "processed": len(links),
             "added": added_count,
-            "rejected": rejected_count,
+            "rejected": failed_count,
             "region_stats": region_stats
         }
     
@@ -189,39 +158,18 @@ class SubscriptionCollector:
                 return None
             
             rest = link[8:]
-            
-            if "#" in rest:
-                rest = rest.split("#")[0]
-            
-            if "?" in rest:
-                rest = rest.split("?")[0]
-            
+            if "#" in rest: rest = rest.split("#")[0]
+            if "?" in rest: rest = rest.split("?")[0]
             rest = rest.rstrip("/")
             
-            if "@" not in rest:
-                return None
-            
+            if "@" not in rest: return None
             userinfo, host_port = rest.split("@", 1)
             
-            if ":" not in host_port:
-                return None
+            if ":" not in host_port: return None
             
-            return {"link": link, "userinfo": userinfo, "host_port": host_port}
+            return {"link": link}
         except:
             return None
-    
-    @classmethod
-    def _detect_region(cls, parsed: dict) -> str:
-        link = parsed.get("link", "")
-        link_lower = link.lower()
-        
-        for code, keywords in REGION_KEYWORDS.items():
-            for kw in keywords:
-                if kw in link_lower:
-                    flag = "".join(chr(ord(c.upper()) + 127397) for c in code)
-                    return f"{flag} {code}"
-        
-        return "🌍 UNK"
     
     @staticmethod
     async def _fetch_url(session: aiohttp.ClientSession, url: str) -> str:
@@ -229,12 +177,17 @@ class SubscriptionCollector:
             if "github.com" in url and "/blob/" in url:
                 url = url.replace("/blob/", "/raw/")
             
-            timeout = aiohttp.ClientTimeout(total=15, connect=5)
-            async with session.get(url, timeout=timeout) as resp:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            
+            timeout = aiohttp.ClientTimeout(total=10, connect=3)
+            
+            async with session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:
                     content = await resp.read()
-                    if len(content) > 2 * 1024 * 1024:
-                        content = content[:2 * 1024 * 1024]
+                    if len(content) > 5 * 1024 * 1024:
+                        content = content[:5 * 1024 * 1024]
                     return content.decode('utf-8', errors='ignore')
         except:
             pass
@@ -244,19 +197,14 @@ class SubscriptionCollector:
     def _try_decode(text: str) -> str:
         if not text or "://" in text:
             return ""
-        
         try:
             clean_text = re.sub(r'\s+', '', text)
-            
             missing_padding = len(clean_text) % 4
             if missing_padding:
                 clean_text += '=' * (4 - missing_padding)
-            
             decoded = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
-            
             if "://" in decoded:
                 return decoded
         except:
             pass
-        
         return ""
