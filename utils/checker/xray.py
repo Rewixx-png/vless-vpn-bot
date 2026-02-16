@@ -18,13 +18,17 @@ class XrayExecutor:
     
     @staticmethod
     def _generate_config(parsed: dict, local_port: int) -> dict:
+        encryption = parsed.get('encryption', 'none')
+        if encryption == 'auto':
+            encryption = 'none'
+        
         outbound = {
             "protocol": "vless",
             "settings": {
                 "vnext": [{
                     "address": parsed['server'],
                     "port": parsed['port'],
-                    "users": [{"id": parsed['uuid'], "encryption": "none", "flow": parsed.get('flow', '')}]
+                    "users": [{"id": parsed['uuid'], "encryption": encryption, "flow": parsed.get('flow', '')}]
                 }]
             },
             "streamSettings": {

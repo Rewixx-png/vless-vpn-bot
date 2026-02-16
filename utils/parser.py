@@ -67,6 +67,7 @@ class LinkParser:
                 "host": get_p("host", ""),
                 "serviceName": get_p("serviceName", ""),
                 "mode": get_p("mode", ""),
+                "encryption": get_p("encryption", "none"),
                 "ps": remarks,
                 "name": remarks,
                 "full_config": full_link,
