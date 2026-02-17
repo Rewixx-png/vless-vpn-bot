@@ -4,19 +4,15 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def user_main_kb(is_admin: bool = False):
     kb = InlineKeyboardBuilder()
     
-    # Row 1: Primary Actions
     kb.button(text="🚀 Подключиться", callback_data="my_subscription")
     kb.button(text="📂 Мои Профили", callback_data="groups_list")
     
-    # Row 2: Secondary Actions
     kb.button(text="📡 Статус Сети", callback_data="public_stats")
     kb.button(text="⚙️ Настройки", callback_data="settings_main")
     
-    # Row 3: Info & Support
     kb.button(text="📱 Приложения", callback_data="apps_menu")
     kb.button(text="🆘 Помощь", callback_data="user_instruction") 
     
-    # Row 4: Donate
     kb.button(text="💎 Поддержать проект", callback_data="donate_info")
 
     if is_admin:
@@ -49,12 +45,10 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
     
     prefix = "toggle_tag" if group_id is None else f"g_toggle_tag_{group_id}"
     
-    # Visual states
     def get_btn(tag, label):
         status = "✅" if tag in selected_tags else "⬜️"
         return f"{status} {label}"
     
-    # New STABLE button
     kb.button(text=get_btn("stable", "🛡 Stable (24h Uptime)"), callback_data=f"{prefix}_stable")
     
     kb.button(text=get_btn("ai", "AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")

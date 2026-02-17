@@ -9,16 +9,19 @@ router = Router()
 
 @router.callback_query(F.data == "public_stats")
 async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
-    """Отображение подробной статистики для пользователей"""
+    """Network Statistics Dashboard"""
     stats = await StatsRepo.get_network_stats()
     
     text = (
-        f"📊 <b>Статус сети VLESS VPN</b>\n\n"
-        f"🟢 Всего онлайн: <b>{stats['active']}</b> серверов\n"
-        f"🌍 Доступно стран: <b>{stats['regions_count']}</b>\n\n"
-        f"<b>Детальная статистика по странам:</b>\n"
-        f"<pre>{stats['regions_list']}</pre>\n"
-        f"<i>Эти серверы доступны прямо сейчас в вашей подписке.</i>"
+        "<b>📊 NETWORK STATUS | СОСТОЯНИЕ</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>🌐 Глобальная статистика:</b>\n"
+        f"▪️ <b>Серверов онлайн:</b> <code>{stats['active']}</code>\n"
+        f"▪️ <b>Доступных стран:</b> <code>{stats['regions_count']}</code>\n"
+        f"▪️ <b>Состояние системы:</b> 🟢 Stable\n\n"
+        "<b>🗺 Карта покрытия:</b>\n"
+        f"<pre>{stats['regions_list']}</pre>\n\n"
+        "<i>⚡ Обновление данных происходит в реальном времени.</i>"
     )
     
     await edit_or_answer(callback.message, text, back_to_home(), state, media_url="video")

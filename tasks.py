@@ -1,5 +1,5 @@
 """
-Celery tasks for collector.
+Celery tasks including new Stability Checker.
 """
 import asyncio
 import logging
@@ -8,6 +8,9 @@ from typing import Dict, Any
 from celery_app import app
 from utils.async_celery import AsyncTask
 from utils.collector import SubscriptionCollector
+from database.repo import SubRepo
+from utils.checker import VlessChecker
+from utils.batch_processor import SmartBatchProcessor
 
 logger = logging.getLogger("Worker")
 
@@ -19,9 +22,9 @@ class OptimizedTask(AsyncTask):
 
 @app.task(base=OptimizedTask, bind=True, max_retries=3)
 async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
-    """DEPRECATED - checker is disabled"""
+    """DEPRECATED"""
     logger.warning("[CHECKER] Checker is disabled")
-    return {"checked": 0, "updated": 0, "status": "disabled"}
+    return {"status": "disabled"}
 
 
 @app.task(base=OptimizedTask)
@@ -33,15 +36,58 @@ async def run_collector_task() -> Dict[str, Any]:
     try:
         result = await SubscriptionCollector.run_collection()
         duration = asyncio.get_event_loop().time() - start_time
-        
-        added = result.get('added', 0) if isinstance(result, dict) else 0
-        logger.warning(f"✅ Collection done in {duration:.1f}s: +{added} added")
-        
-        return {
-            "success": True,
-            "duration": duration,
-            "result": result
-        }
+        return {"success": True, "duration": duration, "result": result}
     except Exception as e:
         logger.error(f"[COLLECTOR TASK] Collection failed: {e}")
         raise
+
+@app.task(base=OptimizedTask)
+async def check_stability_task() -> Dict[str, Any]:
+    """
+    NEW: Stability Check Task
+    Runs every 10 minutes.
+    Checks candidates and stable servers. 
+    Updates streaks and blacklist.
+    """
+    logger.warning("🛡 Starting Stability Check...")
+    
+    subs = await SubRepo.get_candidates_for_stability()
+    if not subs:
+        logger.warning("🛡 No candidates for stability check.")
+        return {"checked": 0}
+
+    logger.warning(f"🛡 Checking {len(subs)} candidates for stability...")
+
+    processor = SmartBatchProcessor(worker_count=50)
+    
+    results_buffer = []
+    
+    async def check_one(sub):
+        try:
+            is_alive, _, _, _, _ = await VlessChecker.process_subscription(sub.vless_key)
+            return (True, {"id": sub.id, "is_alive": is_alive})
+        except:
+            return (True, {"id": sub.id, "is_alive": False})
+
+    batch_res = await processor.process(
+        items=subs,
+        process_func=check_one
+    )
+    
+    updates = [item["result"] for item in batch_res.items if item["success"]]
+    
+    if updates:
+        await SubRepo.batch_update_stability(updates)
+        status_updates = [
+            {
+                "id": u["id"], 
+                "is_active": u["is_alive"], 
+                "latency_ms": 9999 if not u["is_alive"] else 100, 
+                "ai_available": False
+            } 
+            for u in updates
+        ]
+        await SubRepo.batch_update_status(status_updates)
+
+    logger.warning(f"✅ Stability Check Done. Checked: {len(updates)}")
+    return {"checked": len(updates)}

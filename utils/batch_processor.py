@@ -55,7 +55,6 @@ class BatchProcessor:
         start_time = asyncio.get_event_loop().time()
         queue = asyncio.Queue()
         
-        # Fill queue
         for idx, item in enumerate(items):
             await queue.put((idx, item))
         
@@ -115,7 +114,6 @@ class BatchProcessor:
                 finally:
                     queue.task_done()
         
-        # Start progress updater
         progress_task = None
         if on_progress:
             async def progress_updater():
@@ -136,7 +134,6 @@ class BatchProcessor:
                                 stats["failed"]
                             )
                         
-                        # If all tasks completed, exit progress loop
                         if stats["completed"] >= len(items):
                             break
                             
@@ -148,7 +145,6 @@ class BatchProcessor:
             
             progress_task = asyncio.create_task(progress_updater())
         
-        # Start workers
         workers = [
             asyncio.create_task(worker()) 
             for _ in range(min(self.worker_count, len(items)))
@@ -211,7 +207,6 @@ class SmartBatchProcessor(BatchProcessor):
             original_func = process_func
             
             async def adaptive_func(item):
-                # Add delay if too many errors
                 if self.error_count > self.max_errors // 2:
                     delay = min(2.0, self.error_count / 20)
                     await asyncio.sleep(delay)

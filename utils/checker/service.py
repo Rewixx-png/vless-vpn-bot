@@ -17,12 +17,10 @@ from utils.checker.xray import XrayExecutor
 from utils.checker.geoip import GeoIP
 from config import config
 
-# Configure logging
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - CHECKER_SVC - %(levelname)s - %(message)s"
 )
-# Silence network noise in checker too
 logging.getLogger("aiohttp.server").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.access").setLevel(logging.ERROR)
 

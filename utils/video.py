@@ -30,12 +30,10 @@ class VideoManager:
         if not os.path.exists("storage"):
             os.makedirs("storage")
         
-        # If already processed, mark as ready immediately
         if os.path.exists(cls.PROCESSED_PATH):
             cls._ready = True
             return
         
-        # Start preparation in background
         cls._preparation_task = asyncio.create_task(cls._prepare_video())
         logger.info("🎬 Video preparation started in background")
     
@@ -43,11 +41,9 @@ class VideoManager:
     async def _prepare_video(cls):
         """Background video processing"""
         try:
-            # Download if needed
             if not os.path.exists(cls.RAW_PATH):
                 await cls._download_video()
             
-            # Process with ffmpeg
             if os.path.exists(cls.RAW_PATH) and not os.path.exists(cls.PROCESSED_PATH):
                 await cls._process_video()
             
@@ -82,16 +78,15 @@ class VideoManager:
     async def _process_video(cls):
         """Process video with ffmpeg"""
         try:
-            # Use lighter preset for faster processing
             cmd = [
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
-                "-vf", "fps=30,scale=480:-1:flags=lanczos",  # Simpler filter, lower resolution
+                "-vf", "fps=30,scale=480:-1:flags=lanczos",
                 "-c:v", "libx264",
-                "-preset", "ultrafast",  # Fastest preset
-                "-crf", "23",  # Slightly higher CRF for smaller size
+                "-preset", "ultrafast",
+                "-crf", "23",
                 "-c:a", "copy",
-                "-movflags", "+faststart",  # Enable fast start for streaming
+                "-movflags", "+faststart",
                 "-y",
                 cls.PROCESSED_PATH
             ]
@@ -109,22 +104,18 @@ class VideoManager:
                 raise Exception("FFmpeg timeout")
             
             if process.returncode == 0:
-                # Remove raw file to save space
                 if os.path.exists(cls.RAW_PATH):
                     os.remove(cls.RAW_PATH)
                     logger.info("🗑️ Raw video removed")
                 
-                # Get file size
                 size_mb = os.path.getsize(cls.PROCESSED_PATH) / (1024 * 1024)
                 logger.info(f"✅ Video processed: {size_mb:.1f}MB")
             else:
-                # Try to get error message
                 stderr = await process.stderr.read() if process.stderr else b""
                 raise Exception(f"FFmpeg failed: {stderr.decode()[:200]}")
                 
         except Exception as e:
             logger.error(f"❌ Render error: {e}")
-            # Fallback: use raw file if processing failed
             if os.path.exists(cls.RAW_PATH) and not os.path.exists(cls.PROCESSED_PATH):
                 os.rename(cls.RAW_PATH, cls.PROCESSED_PATH)
                 logger.info("⚠️ Using raw video as fallback")
@@ -132,19 +123,15 @@ class VideoManager:
     @classmethod
     def get_file(cls):
         """Get video file (may return None if not ready)"""
-        # Return file_id if uploaded to Telegram
         if cls._file_id:
             return cls._file_id
         
-        # Return processed file if ready
         if os.path.exists(cls.PROCESSED_PATH):
             return FSInputFile(cls.PROCESSED_PATH)
         
-        # Return raw file if available
         if os.path.exists(cls.RAW_PATH):
             return FSInputFile(cls.RAW_PATH)
         
-        # Not ready yet
         return None
     
     @classmethod

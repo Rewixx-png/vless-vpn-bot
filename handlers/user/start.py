@@ -11,12 +11,19 @@ from utils.video import VideoManager
 router = Router()
 
 async def clean_start(message: Message):
+    """Clean up previous messages to keep chat clean"""
     try:
         await message.delete()
     except Exception:
         pass
 
 async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
+    """
+    Universal method to update UI.
+    If video is available -> Edit Media / Send Video.
+    If -> Edit Text / no video or error Send Text.
+    Uses 'blockquote' for consistent styling.
+    """
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
@@ -47,8 +54,6 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                 except TelegramBadRequest as e:
                     if "message is not modified" in str(e):
                         return
-                    raise e 
-
             else:
                 await message.bot.edit_message_caption(
                     chat_id=chat_id,
@@ -90,17 +95,27 @@ async def cmd_start(message: Message, state: FSMContext):
     await clean_start(message)
     await state.clear()
 
-    await UserRepo.add_user(message.from_user.id, message.from_user.username)
+    await UserRepo.add_user(message.from_user.id, message.from_user.username or "Anon")
+    
     stats = await StatsRepo.get_public_stats()
+    user_settings = await UserRepo.get_user(message.from_user.id)
+    
+    limit_display = "♾️ Безлимит"
+    if user_settings and user_settings.subscription_limit > 0:
+        limit_display = f"{user_settings.subscription_limit} шт."
 
     text = (
-        f"👋 <b>Привет, {message.from_user.first_name}!</b>\n\n"
-        f"🌐 <b>VLESS VPN Bot</b> — свобода без границ.\n"
-        f"🚀 <b>Скорость и Анонимность</b> в один клик.\n\n"
-        f"📊 <b>Статус сети:</b>\n"
-        f"🟢 Серверов онлайн: <b>{stats['active']}</b>\n"
-        f"🌍 Доступных стран: <b>{stats['regions']}</b>\n\n"
-        f"👨‍💻 <b>Dev:</b> @RewiX_X"
+        f"<b>🔐 VLESS VPN | DASHBOARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👋 Добро пожаловать, <b>{message.from_user.first_name}</b>!\n\n"
+        f"<b>👤 Информация о профиле:</b>\n"
+        f"🔹 <b>ID:</b> <code>{message.from_user.id}</code>\n"
+        f"🔹 <b>Тариф:</b> Free / {limit_display}\n"
+        f"🔹 <b>Статус:</b> ✅ Активен\n\n"
+        f"<b>🌍 Состояние сети:</b>\n"
+        f"▫️ <b>Онлайн:</b> {stats['active']} серверов\n"
+        f"▫️ <b>Регионов:</b> {stats['regions']} стран\n\n"
+        f"<i>🚀 Выберите действие в меню ниже:</i>"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -118,12 +133,23 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
         await state.update_data(last_msg_id=last_msg_id)
     
     stats = await StatsRepo.get_public_stats()
+    user_settings = await UserRepo.get_user(callback.from_user.id)
+    
+    limit_display = "♾️ Безлимит"
+    if user_settings and user_settings.subscription_limit > 0:
+        limit_display = f"{user_settings.subscription_limit} шт."
+    
     text = (
-        f"👋 <b>Главное меню</b>\n\n"
-        f"🌐 Доступно серверов: <b>{stats['active']}</b>\n"
-        f"🌍 Стран: <b>{stats['regions']}</b>\n\n"
-        f"👇 <i>Выберите действие ниже:</i>\n\n"
-        f"👨‍💻 <b>Dev:</b> @RewiX_X"
+        f"<b>🔐 VLESS VPN | DASHBOARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👋 С возвращением, <b>{callback.from_user.first_name}</b>!\n\n"
+        f"<b>👤 Ваш Профиль:</b>\n"
+        f"🔹 <b>ID:</b> <code>{callback.from_user.id}</code>\n"
+        f"🔹 <b>Лимит:</b> {limit_display}\n\n"
+        f"<b>🌍 Сеть:</b>\n"
+        f"▫️ <b>Серверов:</b> {stats['active']}\n"
+        f"▫️ <b>Локаций:</b> {stats['regions']}\n\n"
+        f"<i>👇 Управление доступом:</i>"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS
@@ -132,17 +158,19 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "user_instruction")
 async def show_instruction(callback: CallbackQuery, state: FSMContext):
     text = (
-        "📚 <b>Как подключиться (Инструкция)</b>\n\n"
-        "1️⃣ <b>Скачайте приложение</b>\n"
-        "Нажмите кнопку «📱 Приложения» и выберите клиент (HAPP, Hiddify, V2RayTun).\n\n"
-        "2️⃣ <b>Получите ссылку</b>\n"
-        "Нажмите кнопку «📥 Моя подписка».\n\n"
-        "3️⃣ <b>Скопируйте ссылку</b>\n"
-        "Она начинается на <code>https://...</code>.\n\n"
-        "4️⃣ <b>Вставьте в приложение</b>\n"
-        "• Откройте приложение.\n"
-        "• Найдите «Subscription Group» или «+».\n"
-        "• Вставьте ссылку и нажмите <b>Update Subscription</b>.\n\n"
-        "🚀 Выберите сервер и нажмите кнопку подключения!"
+        "<b>📚 MANUAL | ИНСТРУКЦИЯ</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>1️⃣ Шаг: Установка</b>\n"
+        "Перейдите в раздел <b>«📱 Приложения»</b> и скачайте клиент для вашего устройства:\n"
+        "▪️ <b>iOS:</b> V2Box, Streisand\n"
+        "▪️ <b>Android:</b> v2rayNG, Hiddify\n"
+        "▪️ <b>PC:</b> Hiddify, NekoRay\n\n"
+        "<b>2️⃣ Шаг: Подключение</b>\n"
+        "1. Нажмите кнопку <b>«🚀 Подключиться»</b>.\n"
+        "2. Скопируйте ссылку (нажмите на неё).\n"
+        "3. Откройте приложение и выберите <b>«Import from Clipboard»</b>.\n\n"
+        "<b>3️⃣ Шаг: Запуск</b>\n"
+        "Выберите любой сервер из списка (например, 🇩🇪 Germany) и нажмите большую кнопку запуска.\n\n"
+        "<i>💡 Если не работает — попробуйте обновить подписку в приложении.</i>"
     )
     await edit_or_answer(callback.message, text, back_to_home(), state)

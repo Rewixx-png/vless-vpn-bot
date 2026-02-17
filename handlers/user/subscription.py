@@ -15,7 +15,6 @@ router = Router()
 async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     
-    # Domain Logic
     db_domain = await SystemRepo.get_config("public_domain")
     domain = db_domain if db_domain else config.public_domain
     
@@ -28,17 +27,14 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     
     sub_url = f"{protocol}://{host}/sub?id={user_id}"
 
-    # Get User Limits
     user = await UserRepo.get_user(user_id)
     limit_txt = "Все доступные (∞)"
     if user and user.subscription_limit > 0:
         limit_txt = f"{user.subscription_limit} лучших"
 
-    # Deep Links
     encoded_url = urllib.parse.quote(sub_url)
     flclash_deep_link = f"clash://install-config?url={encoded_url}&name=VLESS-VPN"
     
-    # HTTPS Warning
     warning = ""
     if protocol == "http":
         warning = (
@@ -70,7 +66,6 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "settings_main")
 async def open_settings_main(callback: CallbackQuery, state: FSMContext):
-    # Preserve message ID logic
     data = await state.get_data()
     last_msg_id = data.get("last_msg_id")
     await state.clear()

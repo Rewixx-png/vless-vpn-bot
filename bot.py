@@ -9,7 +9,6 @@ import traceback
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
-# Configure logging early
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -26,7 +25,6 @@ from utils.sub_server import SubscriptionServer
 from utils.video import VideoManager
 from utils.checker.api import CheckerAPI
 
-# Silence noisy loggers
 loggers_to_silence = [
     "aiogram", 
     "aiogram.event", 
@@ -97,7 +95,6 @@ async def check_services() -> dict:
         "db_error": None
     }
     
-    # Check database
     try:
         from database.repo import StatsRepo
         await StatsRepo.get_public_stats()
@@ -106,14 +103,12 @@ async def check_services() -> dict:
         logger.error(f"Database check failed: {e}")
         results["db_error"] = str(e)
     
-    # Check checker service
     try:
         test_result = await CheckerAPI.check("vless://test@localhost:443?security=none")
         results["checker"] = test_result[4] != "Checker Service Offline"
     except Exception:
         results["checker"] = False
     
-    # Check video
     results["video"] = VideoManager.is_ready()
     
     return results
@@ -124,49 +119,38 @@ async def main():
     
     logger.info("🚀 Starting VLESS VPN Bot...")
     
-    # Initialize database
     logger.info("📦 Initializing database...")
     try:
         await init_db()
     except Exception as e:
         logger.critical(f"🔥 DATABASE INIT FAILED: {e}")
     
-    # Start video preparation in background
     logger.info("🎬 Starting video preparation...")
     await VideoManager.prepare()
     
-    # Create bot and dispatcher
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
     
-    # Setup error logging to Telegram
     tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
     tg_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     logging.getLogger().addHandler(tg_handler)
     
-    # Include routers
     dp.include_router(user_router)
     dp.include_router(admin_router)
     
-    # Start background scheduler
     logger.info("⏰ Starting background scheduler...")
     await BackgroundTasks.start_scheduler()
     
-    # Start subscription server
     logger.info("🌐 Starting subscription server...")
     server_task = asyncio.create_task(SubscriptionServer.start())
     
-    # Wait a bit for services
     await asyncio.sleep(2)
     
-    # Check services
     logger.info("🔍 Checking services...")
     service_status = await check_services()
     
-    # Calculate startup time
     startup_duration = time.time() - start_time
     
-    # Build startup message
     status_emoji = lambda x: "✅" if x else "❌"
     startup_msg = (
         f"🚀 <b>Бот запущен!</b>\n\n"
@@ -194,7 +178,6 @@ async def main():
     await notify_admins(bot, startup_msg)
     logger.info(f"✅ Bot started in {startup_duration:.1f}s")
     
-    # Clear webhook and start polling
     await bot.delete_webhook(drop_pending_updates=True)
     
     try:
