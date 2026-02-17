@@ -130,6 +130,22 @@ python3 bot.py
 *   `utils/sub_server.py` — Веб-сервер для отдачи подписок (порт 2082).
 *   `database/` — Модели и репозитории (SQLAlchemy).
 *   `handlers/` — Логика бота (Aiogram routers).
+*   `MD/` — Документация проекта.
+
+---
+
+## 📖 Документация
+
+Подробная документация доступна в папке [`MD/`](MD/):
+
+| Файл | Описание |
+|------|----------|
+| [MD/README.md](MD/README.md) | Главная страница документации |
+| [MD/ARCHITECTURE.md](MD/ARCHITECTURE.md) | Архитектура системы, компоненты, БД |
+| [MD/API.md](MD/API.md) | API endpoints, форматы подписки |
+| [MD/USER_COMMANDS.md](MD/USER_COMMANDS.md) | Команды для пользователей |
+| [MD/ADMIN_COMMANDS.md](MD/ADMIN_COMMANDS.md) | Команды для администраторов |
+| [MD/TROUBLESHOOTING.md](MD/TROUBLESHOOTING.md) | Устранение неполадок |
 
 ---
 
