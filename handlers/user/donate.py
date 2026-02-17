@@ -21,7 +21,8 @@ async def show_donate_info(callback: CallbackQuery, state: FSMContext):
         "<b>Способы поддержки:</b>\n"
         "💎 <b>Криптовалюта:</b> USDT, TON, BTC (Crypto Pay)\n"
         "💳 <b>Карты РФ:</b> <code>+79121836197</code> (Т-Банк/СБП)\n"
-        "💳 <b>Райффайзен:</b> <code>2200300581247390</code>"
+        "💳 <b>Райффайзен:</b> <code>2200300581247390</code>\n\n"
+        "✉️ <b>Связь с админом:</b> @RewiX_X"
     )
     await edit_or_answer(callback.message, text, donate_selection_kb(), state, media_url="video")
 

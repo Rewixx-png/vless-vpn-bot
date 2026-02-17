@@ -29,14 +29,10 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
     formatted_text = f"<blockquote>{clean_text}</blockquote>"
 
-    # Check length limits
-    # Caption limit: 1024
-    # Text limit: 4096
     is_long_caption = len(formatted_text) > 1000
 
     video_file = VideoManager.get_file()
     
-    # If text is too long for caption, ignore video request and send as text
     if is_long_caption:
         video_file = None
 
@@ -59,12 +55,10 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     return
                 except TelegramBadRequest as e:
-                    # Fallback if media type mismatch or other error
                     if "message is not modified" in str(e):
                         return
                     pass
             else:
-                # Try to edit caption first if it was a media message
                 try:
                     await message.bot.edit_message_caption(
                         chat_id=chat_id,
@@ -75,7 +69,6 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                     )
                     return
                 except TelegramBadRequest:
-                    # If it fails (e.g. was text, not media, or too long), try edit text
                     await message.bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=last_msg_id,
@@ -86,13 +79,11 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                     )
                     return
         except Exception:
-            # If editing fails completely, delete and send new
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
             except:
                 pass
 
-    # Send new message
     if video_file:
         sent_msg = await message.answer_video(
             video=video_file,
@@ -139,7 +130,8 @@ async def cmd_start(message: Message, state: FSMContext):
         f"<b>🌍 Состояние сети:</b>\n"
         f"▫️ <b>Онлайн:</b> {stats['active']} серверов\n"
         f"▫️ <b>Регионов:</b> {stats['regions']} стран\n\n"
-        f"<i>🚀 Выберите действие в меню ниже:</i>"
+        f"<i>🚀 Выберите действие в меню ниже:</i>\n"
+        f"👨‍💻 <b>Admin:</b> @RewiX_X"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -173,7 +165,8 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
         f"<b>🌍 Сеть:</b>\n"
         f"▫️ <b>Серверов:</b> {stats['active']}\n"
         f"▫️ <b>Локаций:</b> {stats['regions']}\n\n"
-        f"<i>👇 Управление доступом:</i>"
+        f"<i>👇 Управление доступом:</i>\n"
+        f"👨‍💻 <b>Admin:</b> @RewiX_X"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS
@@ -194,7 +187,8 @@ async def show_instruction(callback: CallbackQuery, state: FSMContext):
         "2. Скопируйте ссылку (нажмите на неё).\n"
         "3. Откройте приложение и выберите <b>«Import from Clipboard»</b>.\n\n"
         "<b>3️⃣ Шаг: Запуск</b>\n"
-        "Выберите любой сервер из списка (например, 🇩🇪 Germany) и нажмите большую кнопку запуска.\n\n"
-        "<i>💡 Если не работает — попробуйте обновить подписку в приложении.</i>"
+        "Выберите любой сервер из списка (например, 🇩🇪 De) и нажмите большую кнопку запуска.\n\n"
+        "<i>💡 Если возникли проблемы:</i>\n"
+        "✉️ <b>Связь с админом:</b> @RewiX_X"
     )
     await edit_or_answer(callback.message, text, back_to_home(), state)

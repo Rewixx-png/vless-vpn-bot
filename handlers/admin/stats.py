@@ -26,14 +26,12 @@ async def show_stats(callback: CallbackQuery, state: FSMContext):
     try:
         stats = await StatsRepo.get_full_stats()
         
-        # Safe get in case keys are missing during migration
         users = stats.get('users', 0)
         total = stats.get('total_subs', 0)
         active = stats.get('active_subs', 0)
         blacklist = stats.get('blacklist', 0)
         regions = stats.get('regions', 'N/A')
         
-        # Truncate if too long to prevent errors
         if len(regions) > 3000:
             regions = regions[:3000] + "\n... (список обрезан)"
 
@@ -44,7 +42,7 @@ async def show_stats(callback: CallbackQuery, state: FSMContext):
             f"🔑 Ключей в базе: <b>{total}</b>\n"
             f"🟢 Рабочих: <b>{active}</b>\n"
             f"🚫 В черном списке: <b>{blacklist}</b>\n\n"
-            f"<b>🌍 Распределение по странам:</b>\n<pre>{regions}</pre>"
+            f"<b>🌍 Распределение (Code):</b>\n<pre>{regions}</pre>"
             "</blockquote>"
         )
         await admin_edit_or_answer(callback, state, text, reply_markup=stats_kb())

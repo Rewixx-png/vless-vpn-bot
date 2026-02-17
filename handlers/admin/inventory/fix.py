@@ -17,22 +17,28 @@ router = Router()
 
 @router.callback_query(F.data == "admin_fix_regions")
 async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
+    # Explicitly answer first to prevent timeout
+    try:
+        await callback.answer()
+    except:
+        pass
+
     await admin_edit_or_answer(
         callback,
         state,
-        "<blockquote>🌍 <b>Обновление геолокации серверов</b>\n\n"
-        "📡 Определяю регионы по IP-адресам серверов\n"
-        "⚡ Используется пакетная проверка\n"
-        "⏳ Загружаю данные...</blockquote>"
+        "<blockquote>🌍 <b>Нормализация геолокации</b>\n\n"
+        "📡 Перевожу названия стран в формат (De, Us...)\n"
+        "⚡ Проверяю ВСЕ серверы в базе\n"
+        "🔄 Использую мульти-провайдеры (Robust Mode)\n"
+        "⏳ Анализирую хосты...</blockquote>"
     )
 
-    subs = await SubRepo.get_unknown_regions_subs()
+    subs = await SubRepo.get_all_subscriptions_for_check()
     if not subs:
-        await admin_edit_or_answer(
-            callback,
-            state,
-            "<blockquote>✅ <b>Все серверы имеют регион!</b>\n\n"
-            "ℹ️ Нет серверов с неизвестным регионом.</blockquote>",
+        await safe_edit_message(
+            callback.message,
+            "<blockquote>✅ <b>База пуста!</b>\n\n"
+            "ℹ️ Нет серверов для обновления.</blockquote>",
             reply_markup=back_to_admin()
         )
         return
@@ -42,6 +48,8 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
         parsed = VlessChecker.parse_config(sub.vless_key)
         if parsed and parsed.get("host"):
             host = parsed["host"]
+            if host in ["127.0.0.1", "localhost"]:
+                continue
             if host not in host_to_subs:
                 host_to_subs[host] = []
             host_to_subs[host].append(sub)
@@ -49,44 +57,71 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
     unique_hosts = list(host_to_subs.keys())
     total_hosts = len(unique_hosts)
 
+    if total_hosts == 0:
+        await safe_edit_message(
+            callback.message,
+            "<blockquote>⚠️ <b>Не найдено валидных хостов.</b></blockquote>",
+            reply_markup=back_to_admin()
+        )
+        return
+
     await safe_edit_message(
         callback.message,
-        f"<blockquote>🌍 <b>Обновление геолокации</b>\n\n"
-        f"📡 Определено уникальных хостов: <b>{total_hosts}</b>\n"
-        f"⏳ Загружаю данные GeoIP...</blockquote>"
+        f"<blockquote>🌍 <b>Нормализация геолокации</b>\n\n"
+        f"📡 Уникальных IP/Доменов: <b>{total_hosts}</b>\n"
+        f"🔄 Опрашиваю GeoIP базы (это займет время)...\n"
+        f"⚡ 20 потоков...</blockquote>"
     )
 
-    async with aiohttp.ClientSession() as session:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    async with aiohttp.ClientSession(headers=headers) as session:
         results = await VlessChecker.get_regions_batch(unique_hosts, session)
 
     updates = []
     fixed_count = 0
+    failed_hosts = 0
 
-    for host, region in results.items():
-        if "Unknown" not in region and host in host_to_subs:
-            for sub in host_to_subs[host]:
-                updates.append({"id": sub.id, "region": region})
-                fixed_count += 1
+    for host in unique_hosts:
+        region = results.get(host)
+        
+        if region and "Unk" not in region:
+            if host in host_to_subs:
+                for sub in host_to_subs[host]:
+                    if sub.region != region:
+                        updates.append({"id": sub.id, "region": region})
+                        fixed_count += 1
+        else:
+            failed_hosts += 1
 
     if updates:
-        await SubRepo.batch_update_regions(updates)
+        chunk_size = 500
+        for i in range(0, len(updates), chunk_size):
+            chunk = updates[i:i + chunk_size]
+            await SubRepo.batch_update_regions(chunk)
 
-    await admin_edit_or_answer(
-        callback,
-        state,
+    # Use safe_edit_message here instead of admin_edit_or_answer to avoid "query is too old"
+    await safe_edit_message(
+        callback.message,
         f"<blockquote>✅ <b>Геолокация обновлена!</b>\n\n"
-        f"📊 <b>Итоговый отчёт:</b>\n"
+        f"📊 <b>Отчёт:</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📡 Всего хостов: <b>{total_hosts}</b>\n"
-        f"✅ Обновлено регионов: <b>{fixed_count}</b>\n"
+        f"📡 IP проверено: <b>{total_hosts}</b>\n"
+        f"✅ Обновлено записей: <b>{fixed_count}</b>\n"
+        f"⚠️ Не определилось: <b>{failed_hosts}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"ℹ️ <i>Серверы с Unknown регионом оставлены без изменений.</i></blockquote>",
+        f"ℹ️ <i>Теперь названия стран в формате (De, Us).</i></blockquote>",
         reply_markup=back_to_admin()
     )
 
 
 @router.callback_query(F.data == "admin_recheck")
 async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
+    try: await callback.answer()
+    except: pass
+    
     BotState.set_maintenance(True)
     
     msg = await callback.message.answer(
@@ -98,7 +133,6 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
-    await callback.answer()
 
     subs = await SubRepo.get_all_subscriptions_for_check()
     await _run_recheck_process(subs, msg)
@@ -106,6 +140,9 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_recheck_active")
 async def recheck_active_subs(callback: CallbackQuery, state: FSMContext):
+    try: await callback.answer()
+    except: pass
+
     BotState.set_maintenance(True)
     
     msg = await callback.message.answer(
@@ -117,7 +154,6 @@ async def recheck_active_subs(callback: CallbackQuery, state: FSMContext):
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
-    await callback.answer()
 
     subs = await SubRepo.get_active_subscriptions_for_check()
     await _run_recheck_process(subs, msg)
@@ -184,7 +220,7 @@ async def _run_recheck_process(subs: list, msg: Message):
                     "ai_available": ai_avail
                 }
                 
-                if region and "Unknown" not in region:
+                if region and "Unk" not in region:
                     region_upd = {"id": sub.id, "region": region}
                 
                 result_status = "active"

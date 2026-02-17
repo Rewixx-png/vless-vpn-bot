@@ -21,9 +21,9 @@ async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"<b>🌐 Глобальная статистика:</b>\n"
         f"▪️ <b>Серверов онлайн:</b> <code>{stats['active']}</code>\n"
-        f"▪️ <b>Доступных стран:</b> <code>{stats['regions_count']}</code>\n"
+        f"▪️ <b>Локаций:</b> <code>{stats['regions_count']}</code>\n"
         f"▪️ <b>Состояние системы:</b> 🟢 Stable\n\n"
-        "<b>🗺 Карта покрытия:</b>\n"
+        "<b>🗺 Карта покрытия (Code):</b>\n"
         f"<pre>{regions_text}</pre>\n\n"
         "<i>⚡ Обновление данных происходит в реальном времени.</i>"
     )
