@@ -26,7 +26,8 @@ logging.getLogger("aiohttp.access").setLevel(logging.ERROR)
 
 logger = logging.getLogger("CheckerService")
 
-MAX_CONCURRENT_CHECKS = 100
+# INCREASED LIMIT TO 500 FOR HIGH PERFORMANCE
+MAX_CONCURRENT_CHECKS = 500
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
 async def check_handler(request):

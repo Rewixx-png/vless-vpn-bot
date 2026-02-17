@@ -10,3 +10,4 @@ aiohttp-socks==0.8.4
 celery==5.3.6
 redis==5.0.1
 eventlet==0.33.3
+psutil==5.9.8

@@ -49,17 +49,21 @@ async def ask_delete_unknown(callback: CallbackQuery, state: FSMContext):
     await admin_edit_or_answer(
         callback,
         state,
-        f"<blockquote>⚠️ <b>Удаление Unknown</b>\n\n"
-        f"Найдено ключей: <b>{count}</b>\n"
-        "Вы хотите удалить все конфигурации с неопределенным регионом?</blockquote>",
+        f"<blockquote>🚫 <b>Blacklist Unknown</b>\n\n"
+        f"Найдено ключей: <b>{count}</b>\n\n"
+        "<b>Действие:</b>\n"
+        "1. Переместить ключи в черный список.\n"
+        "2. Удалить их из активной базы.\n"
+        "3. Запретить повторный импорт этих ключей.\n\n"
+        "Продолжить?</blockquote>",
         reply_markup=confirm_delete_unknown_kb()
     )
 
 @router.callback_query(F.data == "admin_delete_unknown_confirm")
 async def execute_delete_unknown(callback: CallbackQuery, state: FSMContext):
-    await SubRepo.delete_unknown_subs()
-    await callback.answer("🗑 Unknown ключи удалены!", show_alert=True)
-    await admin_edit_or_answer(callback, state, "<blockquote>✅ База очищена от Unknown регионов.</blockquote>", reply_markup=back_to_admin())
+    count = await SubRepo.move_unknown_to_blacklist()
+    await callback.answer(f"🚫 {count} ключей отправлено в ЧС!", show_alert=True)
+    await admin_edit_or_answer(callback, state, f"<blockquote>✅ <b>Готово!</b>\n\n{count} серверов перемещены в черный список.</blockquote>", reply_markup=back_to_admin())
 
 @router.callback_query(F.data.startswith("ask_delete_country_"))
 async def ask_delete_country(callback: CallbackQuery, state: FSMContext):

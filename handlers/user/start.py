@@ -20,9 +20,7 @@ async def clean_start(message: Message):
 async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
     """
     Universal method to update UI.
-    If video is available -> Edit Media / Send Video.
-    If -> Edit Text / no video or error Send Text.
-    Uses 'blockquote' for consistent styling.
+    Handles 'Message Caption Too Long' by falling back to simple text message.
     """
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
@@ -31,7 +29,16 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
     formatted_text = f"<blockquote>{clean_text}</blockquote>"
 
+    # Check length limits
+    # Caption limit: 1024
+    # Text limit: 4096
+    is_long_caption = len(formatted_text) > 1000
+
     video_file = VideoManager.get_file()
+    
+    # If text is too long for caption, ignore video request and send as text
+    if is_long_caption:
+        video_file = None
 
     if last_msg_id:
         try:
@@ -52,23 +59,40 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     return
                 except TelegramBadRequest as e:
+                    # Fallback if media type mismatch or other error
                     if "message is not modified" in str(e):
                         return
+                    pass
             else:
-                await message.bot.edit_message_caption(
-                    chat_id=chat_id,
-                    message_id=last_msg_id,
-                    caption=formatted_text,
-                    reply_markup=reply_markup,
-                    parse_mode="HTML"
-                )
-                return
+                # Try to edit caption first if it was a media message
+                try:
+                    await message.bot.edit_message_caption(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        caption=formatted_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    return
+                except TelegramBadRequest:
+                    # If it fails (e.g. was text, not media, or too long), try edit text
+                    await message.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        text=formatted_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
+                    )
+                    return
         except Exception:
+            # If editing fails completely, delete and send new
             try:
                 await message.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
             except:
                 pass
 
+    # Send new message
     if video_file:
         sent_msg = await message.answer_video(
             video=video_file,

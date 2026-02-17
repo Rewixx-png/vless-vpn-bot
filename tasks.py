@@ -1,6 +1,3 @@
-"""
-Celery tasks including new Stability Checker.
-"""
 import asyncio
 import logging
 from typing import Dict, Any
@@ -11,25 +8,27 @@ from utils.collector import SubscriptionCollector
 from database.repo import SubRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import SmartBatchProcessor
+from utils.state import BotState
 
 logger = logging.getLogger("Worker")
 
 
 class OptimizedTask(AsyncTask):
-    """Base task with proper async handling"""
     pass
 
 
 @app.task(base=OptimizedTask, bind=True, max_retries=3)
 async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
-    """DEPRECATED"""
     logger.warning("[CHECKER] Checker is disabled")
     return {"status": "disabled"}
 
 
 @app.task(base=OptimizedTask)
 async def run_collector_task() -> Dict[str, Any]:
-    """Collector task - runs 24/7"""
+    if BotState.is_maintenance():
+        logger.warning("⏸️ Collector aborted: Maintenance Mode is Active")
+        return {"status": "skipped", "reason": "maintenance"}
+
     logger.warning("🔄 Starting collection...")
     start_time = asyncio.get_event_loop().time()
     
@@ -43,12 +42,10 @@ async def run_collector_task() -> Dict[str, Any]:
 
 @app.task(base=OptimizedTask)
 async def check_stability_task() -> Dict[str, Any]:
-    """
-    NEW: Stability Check Task
-    Runs every 10 minutes.
-    Checks candidates and stable servers. 
-    Updates streaks and blacklist.
-    """
+    if BotState.is_maintenance():
+        logger.warning("⏸️ Stability Check aborted: Maintenance Mode is Active")
+        return {"status": "skipped", "reason": "maintenance"}
+
     logger.warning("🛡 Starting Stability Check...")
     
     subs = await SubRepo.get_candidates_for_stability()

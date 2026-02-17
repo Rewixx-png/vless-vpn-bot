@@ -14,54 +14,49 @@ router = Router()
 @router.callback_query(F.data == "donate_info")
 async def show_donate_info(callback: CallbackQuery, state: FSMContext):
     text = (
-        "🤝 <b>Поддержка автора</b>\n\n"
-        "Я очень старался сделать этого бота удобным и стабильным, чтобы вам не пришлось нервничать из-за попыток РКН нас ограничить. 💪\n\n"
-        "Бот работает на платном сервере, и я трачу много личного времени на его поддержку и поиск лучших решений для обхода блокировок.\n\n"
-        "Буду благодарен за любую поддержку — это мотивирует развивать проект дальше! ☕️\n\n"
-        "💳 <b>Т-Банк / СБП (по номеру):</b>\n<code>+79121836197</code>\n\n"
-        "💳 <b>Райффайзен (номер карты):</b>\n<code>2200300581247390</code>\n\n"
-        "💎 <b>Криптовалюта:</b>\nНажмите кнопку ниже для оплаты USDT (TRC20/BEP20) или TON."
+        "<b>🤝 SUPPORT | ПОДДЕРЖКА</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Бот работает на платном оборудовании, которое обеспечивает вашу анонимность и свободу.\n\n"
+        "Если вам нравится сервис, вы можете поддержать его развитие любой суммой. Это помогает оплачивать мощные серверы.\n\n"
+        "<b>Способы поддержки:</b>\n"
+        "💎 <b>Криптовалюта:</b> USDT, TON, BTC (Crypto Pay)\n"
+        "💳 <b>Карты РФ:</b> <code>+79121836197</code> (Т-Банк/СБП)\n"
+        "💳 <b>Райффайзен:</b> <code>2200300581247390</code>"
     )
     await edit_or_answer(callback.message, text, donate_selection_kb(), state, media_url="video")
 
 @router.callback_query(F.data == "crypto_selection")
 async def show_crypto_amounts(callback: CallbackQuery, state: FSMContext):
-    await edit_or_answer(
-        callback.message,
-        "💎 <b>Crypto Pay Donation</b>\n\n"
+    text = (
+        "<b>💎 CRYPTO DONATION</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
         "Выберите сумму доната или введите свою.\n"
-        "Система автоматически выставит счет.",
-        crypto_amount_kb(),
-        state,
-        media_url="video"
+        "Счет выставляется автоматически через Crypto Pay."
     )
+    await edit_or_answer(callback.message, text, crypto_amount_kb(), state, media_url="video")
 
 @router.callback_query(F.data == "pay_custom")
 async def ask_custom_amount(callback: CallbackQuery, state: FSMContext):
-    await edit_or_answer(
-        callback.message,
-        "✍️ <b>Введите сумму в USDT:</b>\n\n"
-        "<i>Пример: 1.5</i>",
-        back_to_home(),
-        state,
-        media_url="video"
+    text = (
+        "<b>✍️ CUSTOM AMOUNT</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Введите сумму доната в <b>USDT</b> (например: 1.5):"
     )
+    await edit_or_answer(callback.message, text, back_to_home(), state, media_url="video")
     await state.set_state(UserStates.waiting_for_custom_amount)
 
 @router.message(StateFilter(UserStates.waiting_for_custom_amount))
 async def process_custom_amount(message: Message, state: FSMContext):
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass 
+    try: await message.delete()
+    except: pass 
 
     try:
         amount = float(message.text.replace(",", "."))
         if amount < 0.1:
-            await edit_or_answer(message, "⚠️ <b>Минимум 0.1 USDT.</b> Попробуйте еще раз:", back_to_home(), state, media_url="video")
+            await edit_or_answer(message, "⚠️ Минимум 0.1 USDT.", back_to_home(), state, media_url="video")
             return
     except ValueError:
-        await edit_or_answer(message, "⚠️ <b>Введите число.</b> Пример: 2.5", back_to_home(), state, media_url="video")
+        await edit_or_answer(message, "⚠️ Введите число.", back_to_home(), state, media_url="video")
         return
 
     await state.set_state(None)
@@ -77,16 +72,18 @@ async def create_crypto_invoice(callback: CallbackQuery, state: FSMContext):
     await generate_and_edit_invoice(callback.message, amount, state)
 
 async def generate_and_edit_invoice(message: Message, amount: float, state: FSMContext):
-    await edit_or_answer(message, f"⏳ <b>Создаю счет на {amount} USDT...</b>", None, state, media_url="video")
+    await edit_or_answer(message, f"⏳ Создаю счет на <b>{amount} USDT</b>...", None, state, media_url="video")
 
     invoice = await payment_client.create_invoice(amount=amount, asset="USDT")
 
     if invoice:
         text = (
-            f"🧾 <b>Счет создан!</b>\n"
-            f"💰 Сумма: <b>{amount} USDT</b>\n\n"
-            f"Нажмите кнопку ниже для перехода к оплате.\n"
+            "<b>🧾 INVOICE CREATED</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            f"💰 <b>Сумма:</b> {amount} USDT\n"
+            f"⏳ <b>Статус:</b> Ожидает оплаты\n\n"
+            "Нажмите кнопку ниже для оплаты через CryptoBot."
         )
         await edit_or_answer(message, text, pay_link_kb(invoice.bot_invoice_url), state, media_url="video")
     else:
-        await edit_or_answer(message, "⚠️ Ошибка платежного шлюза.", back_to_home(), state, media_url="video")
+        await edit_or_answer(message, "⚠️ Ошибка создания счета.", back_to_home(), state, media_url="video")

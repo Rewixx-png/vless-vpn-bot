@@ -1,29 +1,40 @@
 from sqlalchemy import select, func, distinct
 from database.core import async_session_factory
-from database.models import User, Subscription
+from database.models import User, Subscription, BlacklistedItem
 import math
+import logging
 
 class StatsRepo:
     @staticmethod
     async def get_full_stats():
-        """Полная статистика для Админа (включая юзеров)"""
+        """Полная статистика для Админа (включая юзеров и ЧС)"""
         async with async_session_factory() as session:
             users_count = await session.scalar(select(func.count(User.id)))
             subs_count = await session.scalar(select(func.count(Subscription.id)))
             active_subs = await session.scalar(select(func.count(Subscription.id)).where(Subscription.is_active == True))
+            blacklist_count = await session.scalar(select(func.count(BlacklistedItem.id)))
 
             regions_stat = await StatsRepo._get_formatted_regions(session)
 
             return {
-                "users": users_count,
-                "total_subs": subs_count,
-                "active_subs": active_subs,
+                "users": users_count or 0,
+                "total_subs": subs_count or 0,
+                "active_subs": active_subs or 0,
+                "blacklist": blacklist_count or 0,
                 "regions": regions_stat
             }
 
     @staticmethod
+    async def get_all_users_detailed():
+        """Get list of all users for export"""
+        async with async_session_factory() as session:
+            stmt = select(User).order_by(User.id)
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
+    @staticmethod
     async def get_network_stats():
-        """Публичная статистика для Юзеров (только серверы и регионы)"""
+        """Публичная статистика для Юзеров"""
         async with async_session_factory() as session:
             active_subs = await session.scalar(select(func.count(Subscription.id)).where(Subscription.is_active == True))
             regions_count = await session.scalar(select(func.count(distinct(Subscription.region))).where(Subscription.is_active == True))
@@ -38,7 +49,7 @@ class StatsRepo:
 
     @staticmethod
     async def get_public_stats():
-        """Краткая статистика для главного меню (без списка)"""
+        """Краткая статистика для главного меню"""
         async with async_session_factory() as session:
             active_subs = await session.scalar(select(func.count(Subscription.id)).where(Subscription.is_active == True))
             regions_count = await session.scalar(select(func.count(distinct(Subscription.region))).where(Subscription.is_active == True))

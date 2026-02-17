@@ -33,7 +33,7 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
         limit_txt = f"{user.subscription_limit} лучших"
 
     encoded_url = urllib.parse.quote(sub_url)
-    flclash_deep_link = f"clash://install-config?url={encoded_url}&name=VLESS-VPN"
+    # Удалена Deep Link логика, так как Telegram не поддерживает clash:// в кнопках
     
     warning = ""
     if protocol == "http":
@@ -59,7 +59,7 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     await edit_or_answer(
         callback.message, 
         text, 
-        sub_action_kb(sub_url, flclash_deep_link),
+        sub_action_kb(sub_url),
         state,
         media_url="video"
     )

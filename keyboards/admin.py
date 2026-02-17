@@ -6,12 +6,13 @@ def main_admin_kb():
     kb.button(text="➕ Добавить ключи", callback_data="admin_add")
     kb.button(text="📂 Управление базой", callback_data="admin_manage")
     kb.button(text="♻️ Force Recheck", callback_data="admin_recheck")
+    kb.button(text="⚡ Recheck Active", callback_data="admin_recheck_active")
     kb.button(text="🌍 Fix Unknowns", callback_data="admin_fix_regions")
     kb.button(text="📊 Статистика", callback_data="admin_stats")
     kb.button(text="⚙️ Настройка домена", callback_data="admin_domain")
     kb.button(text="📢 Рассылка", callback_data="admin_broadcast")
     kb.button(text="↩️ Режим Юзера", callback_data="user_mode")
-    kb.adjust(2, 2, 2, 2)
+    kb.adjust(2, 2, 2, 1, 2)
     return kb.as_markup()
 
 def back_to_admin():
@@ -22,15 +23,14 @@ def back_to_admin():
 def regions_kb(regions: list, prefix: str):
     kb = InlineKeyboardBuilder()
     
-    # Кнопки регионов
     for reg in regions:
         kb.button(text=f"{reg}", callback_data=f"{prefix}_{reg}")
     
-    kb.adjust(2) # Делаем по 2 в ряд для красоты
+    kb.adjust(2) 
     
-    # Специальные действия
     if "manage" in prefix:
-        kb.row(InlineKeyboardButton(text="🗑 Удалить Unknown", callback_data="admin_delete_unknown"))
+        # Changed text to indicate Blacklist action
+        kb.row(InlineKeyboardButton(text="🚫 Blacklist Unknown", callback_data="admin_delete_unknown"))
         kb.row(InlineKeyboardButton(text="🔥 ОЧИСТИТЬ ВСЮ БАЗУ", callback_data="admin_delete_all"))
     
     back_callback = "admin_home" if "manage" in prefix else "home"
@@ -46,7 +46,7 @@ def confirm_delete_all_kb():
 
 def confirm_delete_unknown_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="🗑 ДА, УДАЛИТЬ UNKNOWN", callback_data="admin_delete_unknown_confirm")
+    kb.button(text="🚫 В ЧЕРНЫЙ СПИСОК", callback_data="admin_delete_unknown_confirm")
     kb.button(text="🔙 ОТМЕНА", callback_data="admin_manage")
     kb.adjust(1)
     return kb.as_markup()
@@ -60,8 +60,6 @@ def confirm_delete_country_kb(region: str):
 
 def subs_list_kb(subs: list, region: str):
     kb = InlineKeyboardBuilder()
-    
-    # Кнопка удаления всей страны (Новая фича)
     kb.row(InlineKeyboardButton(text=f"🗑 Удалить все ({region})", callback_data=f"ask_delete_country_{region}"))
 
     for sub in subs:
@@ -69,8 +67,7 @@ def subs_list_kb(subs: list, region: str):
         text = f"{status_icon} #{sub.id} | ⚡️{sub.latency_ms}ms"
         kb.button(text=text, callback_data=f"sub_detail_{sub.id}")
     
-    kb.adjust(1, 2) # Сначала удаление страны, потом список по 2
-    
+    kb.adjust(1, 2)
     kb.row(InlineKeyboardButton(text="🔙 К регионам", callback_data="admin_manage"))
     return kb.as_markup()
 

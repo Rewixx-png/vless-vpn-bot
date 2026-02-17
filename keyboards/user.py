@@ -21,9 +21,9 @@ def user_main_kb(is_admin: bool = False):
     kb.adjust(2, 2, 2, 1, 1) 
     return kb.as_markup()
 
-def sub_action_kb(url: str, deep_link: str = None):
+def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="🌪 Открыть в FlClash", url=deep_link)
+    # Removed Deep Link button because Telegram doesn't support custom schemes in URL buttons
     kb.button(text="⚙️ Настроить фильтры", callback_data="settings_main")
     kb.button(text="🔙 В меню", callback_data="home")
     kb.adjust(1)
@@ -92,11 +92,15 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
     for reg in all_regions:
         is_selected = True if is_all_on else (reg in real_selection)
         status = "☑️" if is_selected else "⬜️"
-        clean_reg = reg.split(" ")[1] if " " in reg else reg
+        
+        # FIXED: Removed the split logic to keep flags (emojis) in the button text
+        # Old: clean_reg = reg.split(" ")[1] if " " in reg else reg
+        # New: Use full region string which includes the flag
+        clean_reg = reg
         
         kb.button(text=f"{status} {clean_reg}", callback_data=f"{prefix}_{reg}")
 
-    kb.adjust(3)
+    kb.adjust(2) # Changed to 2 columns for better visibility of flags
 
     if group_id is None:
         if is_all_on:

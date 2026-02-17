@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy import select, delete, update, func, text, bindparam
 from database.core import async_session_factory
 from database.models import Subscription
+from database.repo.blacklist import BlacklistRepo
 
 logger = logging.getLogger("SubRepo")
 
@@ -47,6 +48,12 @@ class SubRepo:
     async def get_all_subscriptions_for_check():
         async with async_session_factory() as session:
             result = await session.execute(select(Subscription))
+            return result.scalars().all()
+
+    @staticmethod
+    async def get_active_subscriptions_for_check():
+        async with async_session_factory() as session:
+            result = await session.execute(select(Subscription).where(Subscription.is_active == True))
             return result.scalars().all()
 
     @staticmethod
@@ -230,14 +237,43 @@ class SubRepo:
             await session.commit()
     
     @staticmethod
-    async def delete_unknown_subs():
+    async def move_unknown_to_blacklist():
+        """Move all UNKNOWN subs to blacklist table and delete from subs"""
         async with async_session_factory() as session:
-            stmt = delete(Subscription).where(
+            # 1. Get all unknown subs
+            stmt = select(Subscription).where(
                 (Subscription.region.like("%Unknown%")) | 
                 (Subscription.region.like("%UNK%"))
             )
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            subs = result.scalars().all()
+            
+            if not subs:
+                return 0
+                
+            # 2. Add to blacklist repo logic (doing raw here for atomicity)
+            # Need to import BlacklistedItem locally to avoid circular import if any
+            from database.models import BlacklistedItem
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            
+            count = 0
+            for sub in subs:
+                # Insert ignore duplicate
+                ins = pg_insert(BlacklistedItem).values(
+                    vless_key=sub.vless_key, 
+                    reason="Unknown Region (Admin Action)"
+                ).on_conflict_do_nothing()
+                await session.execute(ins)
+                count += 1
+            
+            # 3. Delete from subscriptions
+            del_stmt = delete(Subscription).where(
+                (Subscription.region.like("%Unknown%")) | 
+                (Subscription.region.like("%UNK%"))
+            )
+            await session.execute(del_stmt)
             await session.commit()
+            return count
 
     @staticmethod
     async def delete_subs_by_region(region: str):
@@ -307,26 +343,29 @@ class SubRepo:
 
     @staticmethod
     async def smart_add_subscription(vless_key: str, region: str, latency: int, ai_available: bool = False) -> bool:
-        """Add subscription WITHOUT deleting old ones. Only adds if not duplicate."""
+        """Add subscription if not duplicate and not blacklisted."""
+        
+        # 1. Check Blacklist
+        is_banned = await BlacklistRepo.is_blacklisted(vless_key)
+        if is_banned:
+            logger.debug(f"[ADD] Rejected - Blacklisted: {vless_key[:50]}...")
+            return False
+
         if "Unknown" in region or "UNK" in region:
             logger.warning(f"[ADD] Rejected - Unknown region: {region[:50]}")
             return False
 
         async with async_session_factory() as session:
-            # 1. Check for duplicate
+            # 2. Check for duplicate
             existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))
             if existing:
                 logger.debug(f"[ADD] Rejected - Duplicate: {vless_key[:50]}...")
                 return False
 
-            # 2. Get current count (for logging only)
             count = await session.scalar(
                 select(func.count(Subscription.id)).where(Subscription.region == region)
             )
             count = count or 0
-
-            # 3. NO LIMIT - always add
-            # Previous limit of 500 removed - users want unlimited configs
             
             sub = Subscription(
                 vless_key=vless_key, 
@@ -342,35 +381,4 @@ class SubRepo:
 
     @staticmethod
     async def enforce_limits():
-        """
-        DISABLED: Auto-cleanup is disabled. 
-        This function now only logs statistics without deleting anything.
-        Users want unlimited configs - no automatic deletion.
-        """
         logger.info("[CLEANUP] Auto-cleanup is DISABLED. No configs will be deleted automatically.")
-        
-        async with async_session_factory() as session:
-            try:
-                # Just log statistics, don't delete
-                stats_sql = text("""
-                    SELECT region, COUNT(*) as count, 
-                           SUM(CASE WHEN is_active THEN 1 ELSE 0 END) as active_count
-                    FROM subscriptions 
-                    GROUP BY region 
-                    ORDER BY count DESC
-                """)
-                result = await session.execute(stats_sql)
-                rows = result.fetchall()
-                
-                total = sum(row[1] for row in rows)
-                total_active = sum(row[2] for row in rows)
-                
-                logger.info(f"[STATS] Total subscriptions: {total} (Active: {total_active})")
-                logger.info(f"[STATS] Regions: {len(rows)}")
-                
-                # Log top 5 regions
-                for row in rows[:5]:
-                    logger.info(f"[STATS] {row[0]}: {row[1]} configs ({row[2]} active)")
-                    
-            except Exception as e:
-                logger.error(f"[CLEANUP] Error getting stats: {e}")

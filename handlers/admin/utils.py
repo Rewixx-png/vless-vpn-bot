@@ -33,7 +33,10 @@ async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="H
 
 
 async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text: str, reply_markup=None):
-    """Admin version with video support - edits or sends new message with video, deletes old"""
+    """
+    Admin version with video support. 
+    Handles caption length limits by falling back to text.
+    """
     message = callback.message
     if not message:
         return
@@ -52,8 +55,12 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
     formatted_text = f"<blockquote>{clean_text}</blockquote>"
     
+    is_long_caption = len(formatted_text) > 1000
     video_file = VideoManager.get_file()
     
+    if is_long_caption:
+        video_file = None
+
     if last_msg_id:
         try:
             if video_file:
@@ -73,15 +80,28 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
                 await callback.answer()
                 return
             else:
-                await callback.bot.edit_message_caption(
-                    chat_id=chat_id,
-                    message_id=last_msg_id,
-                    caption=formatted_text,
-                    reply_markup=reply_markup,
-                    parse_mode="HTML"
-                )
-                await callback.answer()
-                return
+                # Try editing caption first
+                try:
+                    await callback.bot.edit_message_caption(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        caption=formatted_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    await callback.answer()
+                    return
+                except TelegramBadRequest:
+                    # Fallback to edit text
+                    await callback.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        text=formatted_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    await callback.answer()
+                    return
         except TelegramBadRequest as e:
             if "message is not modified" in str(e):
                 await callback.answer()

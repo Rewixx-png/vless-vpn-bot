@@ -1,24 +1,19 @@
-"""
-Background scheduler - only collector 24/7.
-"""
 import asyncio
 import logging
 from tasks import run_collector_task
+from utils.state import BotState
 
 logger = logging.getLogger("Scheduler")
 
 
 class BackgroundTasks:
-    """Background task scheduler - collector only"""
-    
     _tasks = []
     _is_running = False
     
-    COLLECT_INTERVAL = 600  # 10 minutes
+    COLLECT_INTERVAL = 600
     
     @classmethod
     async def start_scheduler(cls):
-        """Start background scheduler"""
         if cls._is_running:
             return
         
@@ -31,7 +26,6 @@ class BackgroundTasks:
     
     @classmethod
     async def stop(cls):
-        """Stop background tasks"""
         logger.warning("🛑 Stopping background scheduler...")
         cls._is_running = False
         
@@ -47,11 +41,13 @@ class BackgroundTasks:
     
     @classmethod
     async def _collector_scheduler(cls):
-        """Schedule subscription collection - 24/7"""
         while cls._is_running:
             try:
-                logger.warning("☀️ Running collection...")
-                run_collector_task.delay()
+                if BotState.is_maintenance():
+                    logger.warning("⏸️ Collector skipped due to Maintenance Mode")
+                else:
+                    logger.warning("☀️ Running collection...")
+                    run_collector_task.delay()
             except asyncio.CancelledError:
                 break
             except Exception as e:

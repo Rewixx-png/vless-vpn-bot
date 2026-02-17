@@ -54,6 +54,16 @@ class Subscription(Base):
     def __repr__(self):
         return f"<Subscription(id={self.id}, region='{self.region}')>"
 
+class BlacklistedItem(Base):
+    __tablename__ = "blacklist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vless_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=True)
+    added_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
 class SystemConfig(Base):
     __tablename__ = "system_config"
 

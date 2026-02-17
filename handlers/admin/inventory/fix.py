@@ -1,8 +1,6 @@
-"""
-Optimized fix handlers with batch processing and batch updates.
-"""
 import asyncio
 import aiohttp
+import psutil
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -10,8 +8,9 @@ from aiogram.fsm.context import FSMContext
 from database.repo import SubRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin
-from utils.batch_processor import SmartBatchProcessor
+from utils.batch_processor import SmartBatchProcessor, CpuAdaptiveProcessor
 from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
+from utils.state import BotState
 
 router = Router()
 
@@ -88,30 +87,60 @@ async def fix_unknown_regions(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_recheck")
 async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
+    BotState.set_maintenance(True)
+    
     msg = await callback.message.answer(
-        "<blockquote>🔍 <b>Запуск полной проверки серверов</b>\n\n"
-        "⚡ Используется реальное ядро Xray\n"
-        "💾 <b>Live Update:</b> База обновляется в реальном времени\n"
-        "⏱️ Это может занять несколько минут...</blockquote>",
+        "<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
+        "🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки (ВСЕ)</b>\n"
+        "✋ Фоновые задачи (Collector) остановлены\n"
+        "⚙️ Адаптивная нагрузка на CPU (&lt;85%)\n"
+        "🚀 <b>Turbo Mode:</b> Limit 1000 threads\n"
+        "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
     await callback.answer()
 
     subs = await SubRepo.get_all_subscriptions_for_check()
+    await _run_recheck_process(subs, msg)
+
+
+@router.callback_query(F.data == "admin_recheck_active")
+async def recheck_active_subs(callback: CallbackQuery, state: FSMContext):
+    BotState.set_maintenance(True)
+    
+    msg = await callback.message.answer(
+        "<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
+        "🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки (ТОЛЬКО ACTIVE)</b>\n"
+        "✋ Фоновые задачи (Collector) остановлены\n"
+        "⚙️ Адаптивная нагрузка на CPU (&lt;85%)\n"
+        "🚀 <b>Turbo Mode:</b> Limit 1000 threads\n"
+        "⏱️ Это может занять время...</blockquote>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+    subs = await SubRepo.get_active_subscriptions_for_check()
+    await _run_recheck_process(subs, msg)
+
+
+async def _run_recheck_process(subs: list, msg: Message):
+    """Common logic for recheck process"""
     if not subs:
+        BotState.set_maintenance(False)
         await msg.edit_text(
-            "<blockquote>⚠️ <b>База данных пуста!</b>\n\n"
-            "Сначала добавьте серверы через меню инвентаря.</blockquote>",
+            "<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
             reply_markup=back_to_admin(),
             parse_mode="HTML"
         )
         return
 
     total = len(subs)
-
-    processor = SmartBatchProcessor(
-        worker_count=50,
-        progress_interval=2.0
+    
+    processor = CpuAdaptiveProcessor(
+        initial_workers=100,
+        min_workers=50,
+        max_workers=1000,
+        target_cpu=85.0
     )
 
     update_lock = asyncio.Lock()
@@ -189,38 +218,45 @@ async def recheck_all_subs(callback: CallbackQuery, state: FSMContext):
         except Exception:
             return (False, {"status": "error"})
 
-    async def on_progress(completed: int, total: int, success: int, failed: int):
+    async def on_progress(completed: int, total: int, success: int, failed: int, workers: int):
         elapsed = asyncio.get_event_loop().time() - start_time
         percent = int((completed / total) * 100) if total > 0 else 0
         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
         remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
+        cpu = psutil.cpu_percent()
         
         try:
             await msg.edit_text(
-                f"<blockquote>⚡ <b>Проверка серверов: {percent}%</b>\n\n"
+                f"<blockquote>⚡ <b>ПРИОРИТЕТНАЯ ПРОВЕРКА: {percent}%</b>\n\n"
                 f"📊 <b>{completed} / {total}</b>\n"
+                f"💻 <b>CPU:</b> {cpu}% | 🏗 <b>Workers:</b> {workers}\n"
                 f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🟢 Рабочих: <b>{stats['active']}</b>\n"
                 f"💀 Нерабочих: <b>{stats['died']}</b>\n"
-                f"💾 Сохранено в БД: <b>{stats['saved']}</b>\n"
+                f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔄 Проверяю...</blockquote>",
+                f"🔄 Система оптимизирует нагрузку...</blockquote>",
                 parse_mode="HTML"
             )
         except Exception:
             pass
 
-    await processor.process(
-        items=subs,
-        process_func=process_sub,
-        on_progress=on_progress
-    )
-
-    await flush_buffers()
+    try:
+        await processor.process(
+            items=subs,
+            process_func=process_sub,
+            on_progress=on_progress
+        )
+        await flush_buffers()
+        
+    finally:
+        BotState.set_maintenance(False)
 
     await msg.edit_text(
-        f"<blockquote>✅ <b>Проверка серверов завершена!</b>\n\n"
+        f"<blockquote>✅ <b>Проверка завершена!</b>\n\n"
+        f"🟢 <b>MAINTENANCE MODE DISABLED</b>\n"
+        f"Фоновые задачи возобновлены.\n\n"
         f"📊 <b>Итоговый отчёт:</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📋 Всего проверено: <b>{total}</b>\n"

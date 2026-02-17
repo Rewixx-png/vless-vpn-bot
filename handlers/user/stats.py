@@ -12,6 +12,10 @@ async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
     """Network Statistics Dashboard"""
     stats = await StatsRepo.get_network_stats()
     
+    regions_text = stats['regions_list']
+    if len(regions_text) > 800:
+        regions_text = regions_text[:800] + "\n... и другие"
+
     text = (
         "<b>📊 NETWORK STATUS | СОСТОЯНИЕ</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
@@ -20,7 +24,7 @@ async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
         f"▪️ <b>Доступных стран:</b> <code>{stats['regions_count']}</code>\n"
         f"▪️ <b>Состояние системы:</b> 🟢 Stable\n\n"
         "<b>🗺 Карта покрытия:</b>\n"
-        f"<pre>{stats['regions_list']}</pre>\n\n"
+        f"<pre>{regions_text}</pre>\n\n"
         "<i>⚡ Обновление данных происходит в реальном времени.</i>"
     )
     
