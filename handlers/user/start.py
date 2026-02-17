@@ -132,10 +132,17 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "user_instruction")
 async def show_instruction(callback: CallbackQuery, state: FSMContext):
     text = (
-        "📚 <b>Быстрый старт</b>\n\n"
-        "1️⃣ <b>Скачайте приложение</b> для вашего устройства (кнопка «📱 Приложения»).\n\n"
-        "2️⃣ <b>Получите ключ</b> в этом боте (кнопка «Получить VPN»).\n\n"
-        "3️⃣ <b>Скопируйте ключ</b> (он начинается на <code>vless://</code>).\n\n"
-        "4️⃣ <b>Откройте приложение</b> — оно само предложит добавить ключ из буфера обмена (или нажмите кнопку «+»)."
+        "📚 <b>Как подключиться (Инструкция)</b>\n\n"
+        "1️⃣ <b>Скачайте приложение</b>\n"
+        "Нажмите кнопку «📱 Приложения» и выберите клиент (HAPP, Hiddify, V2RayTun).\n\n"
+        "2️⃣ <b>Получите ссылку</b>\n"
+        "Нажмите кнопку «📥 Моя подписка».\n\n"
+        "3️⃣ <b>Скопируйте ссылку</b>\n"
+        "Она начинается на <code>https://...</code>.\n\n"
+        "4️⃣ <b>Вставьте в приложение</b>\n"
+        "• Откройте приложение.\n"
+        "• Найдите «Subscription Group» или «+».\n"
+        "• Вставьте ссылку и нажмите <b>Update Subscription</b>.\n\n"
+        "🚀 Выберите сервер и нажмите кнопку подключения!"
     )
     await edit_or_answer(callback.message, text, back_to_home(), state)

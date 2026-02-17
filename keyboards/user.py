@@ -73,10 +73,6 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
     kb = InlineKeyboardBuilder()
 
     prefix = "toggle_country" if group_id is None else f"g_toggle_country_{group_id}"
-
-    # Если selected_regions содержит специальный маркер пустоты, показываем всё выключенным
-    # Если None - показываем всё включенным (по умолчанию)
-    # Если список - показываем выбор
     
     real_selection = selected_regions
     if selected_regions == ["__EMPTY__"]:
@@ -99,7 +95,6 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
             kb.row(InlineKeyboardButton(text="✅ Выбрать все", callback_data="set_all_on"))
         kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="settings_main"))
     else:
-        # Для групп кнопки управления
         if is_all_on:
             kb.row(InlineKeyboardButton(text="🧹 Снять все", callback_data=f"g_set_all_off_{group_id}"))
         else:
@@ -137,12 +132,21 @@ def apps_os_kb():
     kb.adjust(2, 2, 1, 1)
     return kb.as_markup()
 
-def apps_links_kb(apps_list: list):
+def apps_cores_kb(os_key: str):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 Sing-Box / Universal", callback_data=f"apps_c_{os_key}_singbox")
+    kb.button(text="☢️ Xray / V2Ray", callback_data=f"apps_c_{os_key}_xray")
+    kb.button(text="🐝 Clash / Meta", callback_data=f"apps_c_{os_key}_clash")
+    kb.button(text="🔙 Выбор ОС", callback_data="apps_menu")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def apps_links_kb(apps_list: list, os_key: str):
     kb = InlineKeyboardBuilder()
     for app in apps_list:
         kb.button(text=f"⬇️ {app['name']}", url=app["url"])
     kb.adjust(1)
-    kb.button(text="🔙 К выбору ОС", callback_data="apps_menu")
+    kb.button(text="🔙 К выбору ядра", callback_data=f"apps_os_{os_key}")
     return kb.as_markup()
 
 def donate_selection_kb():
