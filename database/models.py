@@ -16,7 +16,7 @@ class User(Base):
     tags_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     
     subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
-
+    
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
