@@ -1,25 +1,23 @@
 import aiohttp
 import asyncio
-import random
 
 class GeoIP:
-    GEOIP_PROVIDERS = [
-        {"url": "http://ip-api.com/json/?fields=country,countryCode", "code_key": "countryCode", "name_key": "country"},
-        {"url": "https://ipwho.is/", "code_key": "country_code", "name_key": "country"},
-        {"url": "https://api.ip.sb/geoip", "code_key": "country_code", "name_key": "country"},
-        {"url": "https://ipinfo.io/json", "code_key": "country", "name_key": None},
-        {"url": "https://api.myip.com", "code_key": "cc", "name_key": "country"},
-        {"url": "https://ifconfig.co/json", "code_key": "country_iso", "name_key": "country"},
-        {"url": "https://freeipapi.com/api/json", "code_key": "countryCode", "name_key": "countryName"},
-        {"url": "https://ip.guide/", "code_key": "country", "name_key": None, "nested": "location"}, 
-        {"url": "https://www.iplocate.io/api/lookup/", "code_key": "country_code", "name_key": "country"},
-        {"url": "https://ipapi.co/json/", "code_key": "country_code", "name_key": "country_name"},
-        {"url": "http://www.geoplugin.net/json.gp", "code_key": "geoplugin_countryCode", "name_key": "geoplugin_countryName"},
-        {"url": "https://api.db-ip.com/v2/free/self", "code_key": "countryCode", "name_key": "countryName"},
-        {"url": "https://reallyfreegeoip.org/json/", "code_key": "country_code", "name_key": "country_name"},
-        {"url": "https://api.dazzlepod.com/ip.json", "code_key": "country_code", "name_key": None},
-        {"url": "https://ip-api.io/json", "code_key": "country_code", "name_key": "country_name"}
+    # Используем ip-api.com batch (до 100 IP за запрос - бесплатно)
+    BATCH_API_URL = "http://ip-api.com/json/batch"
+    
+    # Fallback провайдеры для batch failures
+    FALLBACK_PROVIDERS = [
+        {"url": "https://ipwho.is/{ip}", "code_key": "country_code"},
+        {"url": "https://api.ip.sb/geoip", "code_key": "country_code"},
+        {"url": "https://ipapi.co/{ip}/json/", "code_key": "country_code"},
     ]
+    
+    # Semaphore для контроля параллельных запросов
+    CONCURRENCY = 50
+    BATCH_SIZE = 100  # Максимум для ip-api.com batch
+    
+    # Кэш для результатов (чтобы не проверять одни и те же IP)
+    _cache = {}
 
     @staticmethod
     def _get_flag_emoji(country_code: str) -> str:
@@ -28,92 +26,145 @@ class GeoIP:
         return "".join(chr(ord(c.upper()) + 127397) for c in country_code)
 
     @classmethod
-    async def identify_region(cls, session: aiohttp.ClientSession, ip: str = None) -> str:
-        region = "🌍 Unk"
-        
-        # Shuffle providers to distribute load and avoid rate limits
-        providers = cls.GEOIP_PROVIDERS.copy()
-        random.shuffle(providers)
-        
-        for provider in providers:
-            try:
-                if "special_parsing" in provider:
-                    continue
-
-                url = provider["url"]
-                # Append IP to URL if provided and supported by the API structure usually (simplified here)
-                # Most of these APIs support /json/IP or ?ip=IP. 
-                # For simplicity in this robust version, we will try to use the ones that support IP path/query if IP is given.
-                # However, for checking REMOTE servers (not self), we MUST pass the IP.
-                # The previous implementation relied on 'self' check or 'batch'.
-                
-                target_url = url
-                if ip:
-                    # Adaptive URL formatting for common APIs
-                    if "ip-api.com" in url:
-                        target_url = f"http://ip-api.com/json/{ip}?fields=country,countryCode"
-                    elif "ipwho.is" in url:
-                        target_url = f"https://ipwho.is/{ip}"
-                    elif "ipinfo.io" in url:
-                        target_url = f"https://ipinfo.io/{ip}/json"
-                    elif "freeipapi.com" in url:
-                        target_url = f"https://freeipapi.com/api/json/{ip}"
-                    elif "ipapi.co" in url:
-                        target_url = f"https://ipapi.co/{ip}/json/"
-                    elif "db-ip.com" in url:
-                        target_url = f"https://api.db-ip.com/v2/free/{ip}"
-                    else:
-                        # Skip providers that don't easily support IP arg in this simple logic
-                        continue
-
-                async with session.get(target_url, timeout=4.0) as geo_resp:
-                    if geo_resp.status == 200:
-                        data = await geo_resp.json(content_type=None)
-                        
-                        code = None
-                        if provider.get("nested"):
-                            nested = data.get(provider["nested"])
-                            if nested: 
-                                code = nested.get(provider["code_key"])
-                        else:
-                            code = data.get(provider["code_key"])
-                            
-                        if code and len(code) == 2:
-                            code = code.upper()
-                            flag = cls._get_flag_emoji(code)
-                            short_name = code.title()
-                            
-                            region = f"{flag} {short_name}"
-                            return region
-            except Exception: 
-                continue
-                
-        return region
+    def _format_region(cls, country_code: str) -> str:
+        if not country_code or len(country_code) != 2:
+            return "🌍 Unk"
+        flag = cls._get_flag_emoji(country_code)
+        return f"{flag} {country_code.upper().title()}"
 
     @classmethod
     async def get_regions_batch(cls, ips: list[str], session: aiohttp.ClientSession) -> dict[str, str]:
         """
-        Concurrently resolve multiple IPs using rotation of providers.
-        Much more reliable than a single batch API call.
+        Оптимизированная версия с batch API.
+        1. Убираем дубликаты IP
+        2. Используем batch API (до 100 IP за раз)
+        3. Для оставшихся - параллельные fallback запросы
+        4. Маппим результаты обратно на все входящие IP
         """
-        results = {}
-        if not ips: return results
+        if not ips:
+            return {}
         
-        # Semaphore to prevent opening too many connections at once
-        sem = asyncio.Semaphore(20)
-
-        async def resolve_one(ip):
-            async with sem:
-                region = await cls.identify_region(session, ip)
-                if region and "Unk" not in region:
-                    return ip, region
-                return ip, None
-
-        tasks = [resolve_one(ip) for ip in ips]
-        resolved = await asyncio.gather(*tasks)
-
-        for ip, reg in resolved:
-            if reg:
-                results[ip] = reg
+        # Получаем уникальные IP для запроса (исключая локальные)
+        unique_ips = []
+        seen = set()
+        for ip in ips:
+            if ip and ip not in ["127.0.0.1", "localhost"] and ip not in seen:
+                unique_ips.append(ip)
+                seen.add(ip)
+        
+        if not unique_ips:
+            return {}
+        
+        # Проверяем уникальные IP через batch API
+        await cls._batch_lookup(unique_ips, session)
+        
+        # Для неразрешённых - fallback
+        unresolved = [ip for ip in unique_ips if ip not in cls._cache or cls._cache.get(ip) == "🌍 Unk"]
+        if unresolved:
+            await cls._fallback_lookup(unresolved, session)
+        
+        # Маппим результаты обратно на все входящие IP (включая дубликаты)
+        results = {}
+        for ip in ips:
+            if ip in ["127.0.0.1", "localhost"]:
+                results[ip] = "🌍 Unk"
+            elif ip in cls._cache:
+                results[ip] = cls._cache[ip]
+            else:
+                results[ip] = "🌍 Unk"
         
         return results
+
+    @classmethod
+    async def _batch_lookup(cls, ips: list[str], session: aiohttp.ClientSession):
+        """Batch запрос к ip-api.com (до 100 IP за раз)"""
+        
+        # Обрабатываем батчами по 100 IP
+        for i in range(0, len(ips), cls.BATCH_SIZE):
+            batch = ips[i:i + cls.BATCH_SIZE]
+            
+            payload = [{"query": ip} for ip in batch]
+            
+            try:
+                async with session.post(
+                    cls.BATCH_API_URL,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        
+                        if isinstance(data, list):
+                            for item in data:
+                                ip = item.get("query") or item.get("ip")
+                                country_code = item.get("countryCode")
+                                
+                                if ip and country_code:
+                                    region = cls._format_region(country_code)
+                                    cls._cache[ip] = region
+                        elif isinstance(data, dict):
+                            # ip-api может вернуть ошибку batch
+                            if data.get("status") == "fail":
+                                pass  # Обработаем через fallback
+            except Exception:
+                pass
+
+    @classmethod
+    async def _fallback_lookup(cls, ips: list[str], session: aiohttp.ClientSession):
+        """Fallback параллельные запросы для неразрешённых IP"""
+        if not ips:
+            return
+        
+        sem = asyncio.Semaphore(cls.CONCURRENCY)
+        
+        async def resolve_one(ip: str):
+            async with sem:
+                for provider in cls.FALLBACK_PROVIDERS:
+                    try:
+                        url = provider["url"].format(ip=ip)
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json(content_type=None)
+                                code = data.get(provider["code_key"])
+                                
+                                if code and len(code) == 2:
+                                    region = cls._format_region(code)
+                                    cls._cache[ip] = region
+                                    return
+                    except Exception:
+                        continue
+                
+                # Если ничего не помогло
+                cls._cache[ip] = "🌍 Unk"
+        
+        # Запускаем всё параллельно
+        await asyncio.gather(*[resolve_one(ip) for ip in ips], return_exceptions=True)
+
+    @classmethod
+    async def identify_region(cls, session: aiohttp.ClientSession, ip: str = None) -> str:
+        """Определение региона для одного IP (для обратной совместимости)"""
+        if not ip or ip in ["127.0.0.1", "localhost"]:
+            return "🌍 Unk"
+        
+        # Проверяем кэш
+        if ip in cls._cache:
+            return cls._cache[ip]
+        
+        # Используем fallback провайдеры
+        for provider in cls.FALLBACK_PROVIDERS:
+            try:
+                url = provider["url"].format(ip=ip)
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        code = data.get(provider["code_key"])
+                        
+                        if code and len(code) == 2:
+                            region = cls._format_region(code)
+                            cls._cache[ip] = region
+                            return region
+            except Exception:
+                continue
+        
+        cls._cache[ip] = "🌍 Unk"
+        return "🌍 Unk"

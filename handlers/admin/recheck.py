@@ -45,7 +45,7 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
         f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
         "✋ Фоновые задачи (Collector) остановлены\n"
-        "⚙️ Адаптивная нагрузка на CPU (<85%)\n"
+        "⚙️ Адаптивная нагрузка на CPU (&lt;85%)\n"
         "🚀 <b>Turbo Mode:</b> Limit 1000 threads\n"
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
