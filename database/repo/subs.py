@@ -2,7 +2,7 @@ import time
 import logging
 from functools import lru_cache
 from typing import List, Dict, Any, Optional
-from sqlalchemy import select, delete, update, func, text, bindparam
+from sqlalchemy import select, delete, update, func, text, bindparam, desc
 from database.core import async_session_factory
 from database.models import Subscription
 from database.repo.blacklist import BlacklistRepo
@@ -54,6 +54,25 @@ class SubRepo:
     async def get_active_subscriptions_for_check():
         async with async_session_factory() as session:
             result = await session.execute(select(Subscription).where(Subscription.is_active == True))
+            return result.scalars().all()
+
+    @staticmethod
+    async def get_dead_subscriptions_for_check():
+        """Get only inactive subscriptions for recheck"""
+        async with async_session_factory() as session:
+            result = await session.execute(select(Subscription).where(Subscription.is_active == False))
+            return result.scalars().all()
+
+    @staticmethod
+    async def get_candidates_for_stability(limit: int = 100):
+        """Get active subscriptions ordered by stability streak"""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Subscription)
+                .where(Subscription.is_active == True)
+                .order_by(desc(Subscription.stability_streak))
+                .limit(limit)
+            )
             return result.scalars().all()
 
     @staticmethod
@@ -112,6 +131,10 @@ class SubRepo:
                         (Subscription.vless_key.like("%security=reality%")) | 
                         (Subscription.vless_key.like("%flow=xtls-rprx-vision%"))
                     )
+                
+                if 'stable' in tags:
+                    # Assume stable means streak > 144 (approx 24 hours if checked every 10 min)
+                    stmt = stmt.where(Subscription.stability_streak >= 144)
 
             stmt = stmt.order_by(Subscription.latency_ms.asc())
 
@@ -222,6 +245,35 @@ class SubRepo:
             await session.execute(sql)
             await session.commit()
             _invalidate_cache("subscription")
+
+    @staticmethod
+    async def batch_update_stability(updates: List[Dict[str, Any]]):
+        """Batch update stability streaks"""
+        if not updates:
+            return
+
+        async with async_session_factory() as session:
+            case_streak = []
+            ids = []
+            
+            for upd in updates:
+                sub_id = upd["id"]
+                ids.append(sub_id)
+                is_alive = upd["is_alive"]
+                # Logic: If alive, increment streak. If dead, reset to 0.
+                if is_alive:
+                    case_streak.append(f"WHEN {sub_id} THEN stability_streak + 1")
+                else:
+                    case_streak.append(f"WHEN {sub_id} THEN 0")
+
+            sql = text(f"""
+                UPDATE subscriptions
+                SET stability_streak = CASE id {' '.join(case_streak)} END
+                WHERE id IN ({','.join(map(str, ids))})
+            """)
+            
+            await session.execute(sql)
+            await session.commit()
 
     @staticmethod
     async def delete_sub(sub_id: int):

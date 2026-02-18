@@ -5,7 +5,7 @@ from typing import Dict, Any
 from celery_app import app
 from utils.async_celery import AsyncTask
 from utils.collector import SubscriptionCollector
-from database.repo import SubRepo
+from database.repo import SubRepo, SystemRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import SmartBatchProcessor
 from utils.state import BotState
@@ -28,6 +28,12 @@ async def run_collector_task() -> Dict[str, Any]:
     if BotState.is_maintenance():
         logger.warning("⏸️ Collector aborted: Maintenance Mode is Active")
         return {"status": "skipped", "reason": "maintenance"}
+
+    # Check database config for collector switch
+    enabled_str = await SystemRepo.get_config("collector_enabled")
+    if enabled_str == "false":
+        logger.warning("⏸️ Collector aborted: Disabled by Admin")
+        return {"status": "skipped", "reason": "admin_disabled"}
 
     logger.warning("🔄 Starting collection...")
     start_time = asyncio.get_event_loop().time()

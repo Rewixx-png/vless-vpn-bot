@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from database.core import async_session_factory
 from database.models import User
 
@@ -17,6 +17,20 @@ class UserRepo:
         async with async_session_factory() as session:
             result = await session.execute(select(User.id))
             return result.scalars().all()
+
+    @staticmethod
+    async def get_users_paginated(limit: int, offset: int) -> list[User]:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(User).order_by(User.id).limit(limit).offset(offset)
+            )
+            return result.scalars().all()
+            
+    @staticmethod
+    async def get_users_count() -> int:
+        async with async_session_factory() as session:
+            count = await session.scalar(select(func.count(User.id)))
+            return count or 0
 
     @staticmethod
     async def get_user(user_id: int) -> User | None:
