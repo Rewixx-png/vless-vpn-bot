@@ -14,26 +14,27 @@ class VlessChecker:
 
     @staticmethod
     async def process_subscription(config_url: str) -> tuple[bool, str, int, bool, str]:
-        """
-        Основной метод проверки. 
-        Пытается использовать микросервис.
-        Если микросервис недоступен, фоллбэк на локальный запуск (но лучше запустить сервис!)
-        """
         # Попытка через API сервиса
         success, region, latency, ai, err = await CheckerAPI.check(config_url)
         
         if not success and err == "Checker Service Offline":
-            # FALLBACK: Если сервис лежит, пробуем локально (но с риском загрузить CPU)
-            # Это на случай если юзер забыл запустить сервис
-            # logger.warning("Checker Service is offline! Using local check (High Load Risk).")
-            # Временно возвращаем ошибку, чтобы принудить юзера запустить сервис
-            return False, "", 0, False, "Checker Service Offline (Start utils/checker/service.py)"
+            return False, "", 0, False, "Checker Service Offline"
             
         return success, region, latency, ai, err
 
     @classmethod
-    async def get_regions_batch(cls, ips: list[str], session: aiohttp.ClientSession) -> dict[str, str]:
-        return await GeoIP.get_regions_batch(ips, session)
+    async def get_regions_batch(cls, hosts_data: list[tuple[str, str]], session: aiohttp.ClientSession) -> dict[str, str]:
+        """
+        Wrapper for GeoIP batch lookup.
+        Args:
+            hosts_data: List of tuples (host, remark)
+            session: aiohttp session
+        """
+        # Backwards compatibility: if list of strings passed instead of tuples
+        if hosts_data and isinstance(hosts_data[0], str):
+            hosts_data = [(h, "") for h in hosts_data]
+            
+        return await GeoIP.get_regions_batch(hosts_data, session)
 
     @staticmethod
     async def verify_domain(domain: str) -> tuple[bool, str]:

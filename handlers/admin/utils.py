@@ -7,29 +7,43 @@ from utils.video import VideoManager
 
 
 async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="HTML"):
-    """Safely edit admin message; fallback to caption or new message if needed"""
+    """Safely edit admin message; robust handling for media/text types"""
     if not message:
         return
     try:
+        # Сначала пробуем edit_text (для обычных сообщений)
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
     except TelegramBadRequest as e:
         err = str(e)
-        if "no text in the message to edit" in err or "message is not modified" in err or "message content type" in err:
+        # Если сообщение не изменилось - игнорируем
+        if "message is not modified" in err:
+            return
+            
+        # Если ошибка связана с тем, что сообщение имеет медиа (видео/фото)
+        # "There is no text in the message to edit" или "Message content type mismatch"
+        if "no text in the message to edit" in err or "message content type" in err or "media caption" in err:
             try:
-                await message.edit_caption(text, reply_markup=reply_markup, parse_mode=parse_mode)
+                # Пробуем изменить подпись
+                await message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
                 return
             except TelegramBadRequest:
+                # Если и капшн не меняется (например, ошибка формата), 
+                # или мы пытаемся превратить медиа в текст (невозможно напрямую)
                 pass
+        
+        # Если ничего не помогло, удаляем и шлем новое (как крайняя мера)
+        try:
+            await message.delete()
+        except:
+            pass
+        
         try:
             await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception:
+        except:
             pass
     except Exception:
-        try:
-            await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception:
-            pass
+        pass
 
 
 async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text: str, reply_markup=None):
@@ -46,11 +60,7 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
     except Exception:
         pass
     
-    # Determine which message ID to edit.
-    # Priority: The message the user clicked on (callback.message).
-    # This fixes the issue where the bot edits an old message from history.
     target_msg_id = message.message_id
-    
     chat_id = message.chat.id
     
     clean_text = text.replace("<blockquote>", "").replace("</blockquote>", "").strip()
@@ -80,18 +90,14 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
                     if hasattr(edited_msg, 'video') and edited_msg.video and not isinstance(video_file, str):
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     
-                    # Update state with this valid message ID
                     if state:
                         await state.update_data(last_msg_id=target_msg_id)
                     return
                 except TelegramBadRequest as e:
-                    # If we can't edit media (e.g. invalid type change), fall through to text edit logic
-                    # But first, check if it's just "not modified"
                     if "message is not modified" in str(e):
                         return
                     pass
 
-            # Try editing caption first (if message has media)
             try:
                 await callback.bot.edit_message_caption(
                     chat_id=chat_id,
@@ -104,9 +110,6 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
                     await state.update_data(last_msg_id=target_msg_id)
                 return
             except TelegramBadRequest:
-                # Fallback to edit text (if message is text only or we are replacing media with text)
-                # Note: Telegram doesn't allow editing a Photo message into Text message directly via edit_message_text usually, 
-                # but let's try. If it fails, we delete and send new.
                 try:
                     await callback.bot.edit_message_text(
                         chat_id=chat_id,
@@ -146,7 +149,6 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
                 disable_web_page_preview=True
             )
         
-        # Delete the old message to keep chat clean
         try:
             await message.delete()
         except:

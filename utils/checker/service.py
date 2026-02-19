@@ -87,6 +87,9 @@ async def check_handler(request):
                     if https_ok:
                         result["success"] = True
                         
+                        # Определяем регион через GeoIP (локальная база теперь)
+                        result["region"] = await GeoIP.identify_region(proxy_session)
+                        
                         if result["latency"] < 2000:
                             try:
                                 ai_timeout = aiohttp.ClientTimeout(total=1.5)
@@ -105,8 +108,6 @@ async def check_handler(request):
                                     result["ai"] = True
                             except: pass
 
-                            result["region"] = await GeoIP.identify_region(proxy_session)
-
             except Exception as e:
                 result["error"] = str(e)
             finally:
@@ -121,12 +122,24 @@ async def check_handler(request):
 async def health_check(request):
     return web.Response(text="OK")
 
+async def init_geoip():
+    """Фоновая загрузка GeoIP при старте"""
+    await GeoIP.initialize()
+
 def main():
+    # Запуск инициализации GeoIP до старта сервера (или параллельно)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Сначала скачиваем базу, если её нет
+    loop.run_until_complete(GeoIP.initialize())
+    
     app = web.Application()
     app.router.add_post('/check', check_handler)
     app.router.add_get('/', health_check)
     
     print(f"🚀 Checker Service running on port {config.CHECKER_PORT} with limit {MAX_CONCURRENT_CHECKS}")
+    
     web.run_app(app, port=config.CHECKER_PORT, print=None)
 
 if __name__ == "__main__":

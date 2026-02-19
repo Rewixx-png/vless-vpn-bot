@@ -37,6 +37,7 @@ def recheck_menu_kb():
     kb.button(text="♻️ Full Recheck (Все)", callback_data="admin_recheck_run_all")
     kb.button(text="⚡ Active Recheck (Живые)", callback_data="admin_recheck_run_active")
     kb.button(text="💀 Dead Recheck (Мертвые)", callback_data="admin_recheck_run_dead")
+    kb.button(text="🌍 Recheck Regions (GeoIP)", callback_data="admin_recheck_regions_force")
     kb.button(text="🔙 Назад", callback_data="admin_home")
     kb.adjust(1)
     return kb.as_markup()
@@ -55,7 +56,7 @@ def users_list_kb(users: list, offset: int, total: int):
     if offset + limit < total:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_users_list_{offset + limit}"))
         
-    kb.adjust(2) # User buttons 2 per row
+    kb.adjust(2) 
     
     if nav_row:
         kb.row(*nav_row)
@@ -65,13 +66,11 @@ def users_list_kb(users: list, offset: int, total: int):
 
 def user_detail_kb(user_id: int, back_offset: int):
     kb = InlineKeyboardBuilder()
-    # Add actions if needed later (e.g., Ban)
     kb.button(text="🔙 Назад к списку", callback_data=f"admin_users_list_{back_offset}")
     return kb.as_markup()
 
 def stable_list_kb(candidates: list):
     kb = InlineKeyboardBuilder()
-    # No interaction needed for now, just view
     kb.button(text="🔄 Обновить", callback_data="admin_stable_list")
     kb.button(text="🔙 Назад", callback_data="admin_home")
     kb.adjust(1)
@@ -119,17 +118,35 @@ def confirm_delete_country_kb(region: str):
     kb.adjust(1)
     return kb.as_markup()
 
-def subs_list_kb(subs: list, region: str):
+def subs_list_kb(subs: list, region: str, page: int, total_pages: int):
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"🗑 Удалить все ({region})", callback_data=f"ask_delete_country_{region}"))
+    
+    # 1. Action Buttons for the region
+    kb.row(InlineKeyboardButton(text=f"🗑 Удалить ВСЕ ({region})", callback_data=f"ask_delete_country_{region}"))
 
+    # 2. List of subs (Paginated)
     for sub in subs:
         status_icon = "🟢" if sub.is_active else "🔴"
-        text = f"{status_icon} #{sub.id} | ⚡️{sub.latency_ms}ms"
+        # Truncate latency to save space
+        lat = sub.latency_ms if sub.latency_ms < 9999 else "Dead"
+        text = f"{status_icon} #{sub.id} | ⚡️{lat}"
         kb.button(text=text, callback_data=f"sub_detail_{sub.id}")
     
-    kb.adjust(1, 2)
+    kb.adjust(1, 2) # Delete button full width, subs 2 per row
+    
+    # 3. Pagination Controls
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"manage_region_{region}:{page - 1}"))
+    
+    nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+    
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"manage_region_{region}:{page + 1}"))
+    
+    kb.row(*nav_buttons)
     kb.row(InlineKeyboardButton(text="🔙 К регионам", callback_data="admin_manage"))
+    
     return kb.as_markup()
 
 def sub_control_kb(sub_id: int, is_active: bool, region: str):
