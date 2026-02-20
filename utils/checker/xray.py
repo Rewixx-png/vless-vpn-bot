@@ -3,11 +3,9 @@ import asyncio
 import os
 import random
 import logging
-import signal
 from utils.parser import LinkParser
 
 logger = logging.getLogger("XrayCore")
-logger.setLevel(logging.INFO)
 
 class XrayExecutor:
     XRAY_BIN = "/usr/local/bin/xray"
@@ -18,13 +16,18 @@ class XrayExecutor:
         if encryption == 'auto':
             encryption = 'none'
         
+        # Fix for some Reality configs needing flow
+        flow = parsed.get('flow', '')
+        if parsed['security'] == 'reality' and not flow and parsed['type'] == 'tcp':
+             flow = 'xtls-rprx-vision'
+
         outbound = {
             "protocol": "vless",
             "settings": {
                 "vnext": [{
                     "address": parsed['server'],
                     "port": parsed['port'],
-                    "users": [{"id": parsed['uuid'], "encryption": encryption, "flow": parsed.get('flow', '')}]
+                    "users": [{"id": parsed['uuid'], "encryption": encryption, "flow": flow}]
                 }]
             },
             "streamSettings": {
@@ -35,16 +38,21 @@ class XrayExecutor:
         stream = outbound["streamSettings"]
         
         if parsed['security'] in ['tls', 'reality']:
+            # Fingerprint randomization to avoid being detected as a bot
+            fp = parsed.get('fp', '')
+            if not fp or fp == 'random':
+                fp = random.choice(['chrome', 'firefox', 'edge'])
+                
             tls_settings = {
-                "serverName": parsed.get('sni') or parsed.get('host', ''),
-                "fingerprint": parsed.get('fp', 'chrome'),
-                "allowInsecure": True
+                "serverName": parsed.get('sni') or parsed.get('host') or parsed['server'],
+                "fingerprint": fp,
+                "allowInsecure": True  # Crucial for some self-signed certs
             }
             if parsed['security'] == 'reality':
                 tls_settings['show'] = False
                 tls_settings['publicKey'] = parsed.get('pbk', '')
                 tls_settings['shortId'] = parsed.get('sid', '')
-                tls_settings['spiderX'] = "/"
+                tls_settings['spiderX'] = parsed.get('spx', '/')
                 stream['realitySettings'] = tls_settings
             else:
                 stream['tlsSettings'] = tls_settings
@@ -59,13 +67,6 @@ class XrayExecutor:
                 "serviceName": parsed.get('serviceName', ''), 
                 "multiMode": (parsed.get('mode') == 'multi')
             }
-        elif parsed['type'] == 'tcp' and parsed.get('type') == 'http':
-             stream['tcpSettings'] = {
-                 "header": {
-                     "type": "http", 
-                     "request": {"headers": {"Host": [parsed.get('host', '')]}}
-                 }
-             }
 
         return {
             "log": {"loglevel": "none"},
@@ -78,15 +79,13 @@ class XrayExecutor:
             "outbounds": [outbound, {"protocol": "freedom", "tag": "direct"}]
         }
 
-    XRAY_STARTUP_TIMEOUT = 1.5
-    
     @classmethod
     async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
-            return None, 0, "Invalid Link"
+            return None, 0, "Invalid Link Format"
 
-        local_port = random.randint(20000, 55000)
+        local_port = random.randint(20000, 60000)
         config_path = f"/tmp/xray_check_{local_port}.json"
 
         try:
@@ -101,14 +100,14 @@ class XrayExecutor:
                 start_new_session=True
             )
             
+            # Brief wait to catch immediate crashes (e.g. invalid config)
             try:
-                # Wait briefly to ensure it didn't crash immediately
-                await asyncio.wait_for(process.wait(), timeout=cls.XRAY_STARTUP_TIMEOUT)
-                # If we are here, it finished/crashed. Bad.
+                await asyncio.wait_for(process.wait(), timeout=0.5)
+                # If we get here, process exited immediately -> Crash
                 cls._cleanup_file(config_path)
-                return None, 0, "Xray failed startup (crashed)"
+                return None, 0, "Xray Crashed on Start"
             except asyncio.TimeoutError:
-                # Timeout means it's running fine
+                # Timeout means it's still running -> Good
                 pass
 
             return process, local_port, config_path
@@ -128,10 +127,12 @@ class XrayExecutor:
     async def cleanup(cls, process, config_path):
         if process:
             try:
-                # Aggressive kill
                 if process.returncode is None:
-                    process.kill()
-                    # No wait to avoid hanging if zombie
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        process.kill()
             except Exception:
                 pass
         

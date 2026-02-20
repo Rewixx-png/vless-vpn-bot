@@ -1,19 +1,16 @@
-"""
-Optimized broadcast handler with async batch sending and rate limiting.
-"""
 import asyncio
+import time
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 
 from config import config
 from database.repo import UserRepo
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
-from utils.async_celery import RateLimiter
-from handlers.admin.utils import admin_edit_or_answer
+from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
 router = Router()
 
@@ -31,82 +28,95 @@ async def ask_broadcast(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(AdminStates.waiting_for_broadcast), F.from_user.id.in_(config.ADMIN_IDS))
 async def do_broadcast(message: Message, state: FSMContext):
+    # Получаем пользователей
     users = await UserRepo.get_all_users()
     total = len(users)
     
-    # Send initial progress message
-    progress_msg = await message.answer(
+    if total == 0:
+        await message.answer("Нет пользователей для рассылки.")
+        await state.clear()
+        return
+
+    # Отправляем стартовое сообщение
+    status_msg = await message.answer(
         f"<blockquote>🚀 Начинаю рассылку на {total} пользователей...\n"
         f"📊 Прогресс: 0/{total} (0%)</blockquote>",
         parse_mode="HTML"
     )
     
-    # Rate limiter: 25 messages per second (well below Telegram limits)
-    rate_limiter = RateLimiter(max_calls=25, period=1.0)
-    
     sent_count = 0
     failed_count = 0
-    last_update = 0
+    blocked_count = 0
+    last_update_time = time.time()
     
-    async def send_to_user(user_id: int):
-        """Send message to single user with rate limiting"""
-        nonlocal sent_count, failed_count
-        
+    # ID чата и ID сообщения для копирования
+    from_chat_id = message.chat.id
+    message_id = message.message_id
+    
+    # Цикл по всем пользователям
+    for index, user_id in enumerate(users, 1):
         try:
-            await rate_limiter.acquire()
-            await message.copy_to(chat_id=user_id)
+            # Пытаемся отправить копию сообщения
+            # Используем wait_for чтобы избежать вечного зависания API
+            await asyncio.wait_for(
+                message.bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=from_chat_id,
+                    message_id=message_id
+                ),
+                timeout=5.0
+            )
             sent_count += 1
-            return True
+            
+            # Небольшая пауза, чтобы не превысить лимиты Telegram (макс 30/сек, делаем ~20/сек)
+            await asyncio.sleep(0.05)
+            
+        except TelegramForbiddenError:
+            # Пользователь заблокировал бота
+            blocked_count += 1
         except TelegramRetryAfter as e:
-            # Hit rate limit, wait and retry
-            await asyncio.sleep(e.retry_after)
-            return await send_to_user(user_id)
+            # Лимит превышен, ждем и пробуем снова (один раз)
+            try:
+                await asyncio.sleep(e.retry_after)
+                await message.bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=from_chat_id,
+                    message_id=message_id
+                )
+                sent_count += 1
+            except Exception:
+                failed_count += 1
         except Exception:
+            # Любая другая ошибка (таймаут, удаленный аккаунт и т.д.)
             failed_count += 1
-            return False
-    
-    async def update_progress():
-        """Update progress message periodically"""
-        nonlocal last_update
-        processed = sent_count + failed_count
         
-        # Update every 5% or every 50 users
-        if processed - last_update >= 50 or (total > 0 and (processed / total) * 100 % 5 < 1):
-            percent = int((processed / total) * 100) if total > 0 else 0
+        # Обновляем прогресс-бар (не чаще чем раз в 2 секунды или каждые 20 юзеров)
+        # Это предотвращает "зависание" на этапе редактирования сообщения
+        current_time = time.time()
+        if (current_time - last_update_time > 2.0) or (index == total):
+            percent = int((index / total) * 100)
             await safe_edit_message(
-                progress_msg,
+                status_msg,
                 f"<blockquote>🚀 Рассылка в процессе...\n"
-                f"📊 Прогресс: {processed}/{total} ({percent}%)\n"
-                f"✅ Отправлено: {sent_count}\n"
+                f"📊 Прогресс: {index}/{total} ({percent}%)\n"
+                f"✅ Успешно: {sent_count}\n"
+                f"🚫 Бот заблокирован: {blocked_count}\n"
                 f"❌ Ошибок: {failed_count}</blockquote>",
                 parse_mode="HTML"
             )
-            last_update = processed
-    
-    # Process in batches with limited concurrency
-    semaphore = asyncio.Semaphore(20)  # Max 20 concurrent sends
-    
-    async def process_user(user_id: int):
-        async with semaphore:
-            result = await send_to_user(user_id)
-            await update_progress()
-            return result
-    
-    # Create all tasks
-    tasks = [process_user(uid) for uid in users]
-    
-    # Process with progress
-    await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Final update
+            last_update_time = current_time
+
+    # Финальный отчет
     final_percent = int((sent_count / total) * 100) if total > 0 else 0
+    
     await safe_edit_message(
-        progress_msg,
-        f"<blockquote>✅ Рассылка завершена!\n\n"
+        status_msg,
+        f"<blockquote>✅ <b>Рассылка завершена!</b>\n\n"
         f"📊 Всего пользователей: {total}\n"
         f"✅ Успешно доставлено: {sent_count}\n"
-        f"❌ Ошибок: {failed_count}\n"
-        f"📈 Процент доставки: {final_percent}%</blockquote>",
+        f"🚫 Бот заблокирован: {blocked_count}\n"
+        f"❌ Ошибок отправки: {failed_count}\n"
+        f"📈 Доставляемость: {final_percent}%</blockquote>",
         reply_markup=back_to_admin(),
         parse_mode="HTML"
     )
