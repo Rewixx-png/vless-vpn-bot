@@ -70,7 +70,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    links = re.findall(r'(vless://[^\s\n]+)', text_content)
+    links = re.findall(r'(vless://[^\s\n<>"]+)', text_content)
     links = [link.strip() for link in links if link.strip()]
 
     if not links:
@@ -89,101 +89,68 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     )
 
     results_log = []
+    
+    # Use SmartBatchProcessor for reliable parallel checking
+    start_time = asyncio.get_event_loop().time()
+    
+    processor = SmartBatchProcessor(
+        worker_count=20, # Keep conservative for manual import
+        progress_interval=3.0,
+        rate_limit=50
+    )
+
+    async def process_link(link: str):
+        try:
+            is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
+            if is_alive:
+                added = await SubRepo.smart_add_subscription(
+                    vless_key=link,
+                    region=region,
+                    latency=latency,
+                    speed_mbps=speed_mbps,
+                    ai_available=ai_avail
+                )
+                if added:
+                    return (True, {"status": "added", "region": region, "speed_mbps": speed_mbps})
+                else:
+                    return (True, {"status": "limited", "region": region})
+            else:
+                return (False, {"status": "failed", "error": err})
+        except Exception as e:
+            return (False, {"status": "error", "error": str(e)})
+
+    async def on_progress(completed: int, total: int, success: int, failed: int, workers: int):
+        elapsed = asyncio.get_event_loop().time() - start_time
+        percent = int((completed / total) * 100)
+        
+        await safe_edit_message(
+            msg,
+            f"<blockquote>⚡ <b>Массовая проверка</b>\n\n"
+            f"📊 <b>{completed} / {total}</b> | <b>{percent}%</b>\n"
+            f"✅ Добавлено: <b>{success}</b>\n"
+            f"❌ Отклонено: <b>{failed}</b>\n"
+            f"🔄 Проверяю...</blockquote>"
+        )
+
+    result = await processor.process(
+        items=links,
+        process_func=process_link,
+        on_progress=on_progress
+    )
+
     added_count = 0
-    failed_count = 0
-
-    if len(links) < 20:
-        for i, link in enumerate(links, 1):
-            try:
-                if i % 5 == 0 or i == 1:
-                    await safe_edit_message(
-                        msg,
-                        f"<blockquote>🔍 <b>Проверка ({i}/{len(links)})</b>\n\n"
-                        f"✅ Добавлено: {added_count}\n"
-                        f"❌ Ошибок: {failed_count}</blockquote>"
-                    )
-
-                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
-
-                if is_alive:
-                    added = await SubRepo.smart_add_subscription(
-                        vless_key=link,
-                        region=region,
-                        latency=latency,
-                        speed_mbps=speed_mbps,
-                        ai_available=ai_avail
-                    )
-                    if added:
-                        added_count += 1
-                        results_log.append(f"✅ {region} ({speed_mbps}Mb/s)")
-                    else:
-                        failed_count += 1
-                        results_log.append(f"⚠️ Skip: {region}")
-                else:
-                    failed_count += 1
-                    results_log.append(f"❌ Dead: {err[:20]}")
-
-            except Exception as e:
-                failed_count += 1
-                results_log.append(f"❌ Error: {str(e)[:20]}")
-    else:
-        start_time = asyncio.get_event_loop().time()
-        
-        processor = SmartBatchProcessor(
-            worker_count=15,
-            progress_interval=3.0,
-            rate_limit=50
-        )
-
-        async def process_link(link: str):
-            try:
-                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
-                if is_alive:
-                    added = await SubRepo.smart_add_subscription(
-                        vless_key=link,
-                        region=region,
-                        latency=latency,
-                        speed_mbps=speed_mbps,
-                        ai_available=ai_avail
-                    )
-                    if added:
-                        return (True, {"status": "added", "region": region, "speed_mbps": speed_mbps})
-                    else:
-                        return (True, {"status": "limited", "region": region})
-                else:
-                    return (False, {"status": "failed", "error": err})
-            except Exception as e:
-                return (False, {"status": "error", "error": str(e)})
-
-        async def on_progress(completed: int, total: int, success: int, failed: int, workers: int):
-            elapsed = asyncio.get_event_loop().time() - start_time
-            percent = int((completed / total) * 100)
-            
-            await safe_edit_message(
-                msg,
-                f"<blockquote>⚡ <b>Массовая проверка</b>\n\n"
-                f"📊 <b>{completed} / {total}</b> | <b>{percent}%</b>\n"
-                f"✅ Добавлено: <b>{success}</b>\n"
-                f"❌ Отклонено: <b>{failed}</b>\n"
-                f"🔄 Проверяю...</blockquote>"
-            )
-
-        result = await processor.process(
-            items=links,
-            process_func=process_link,
-            on_progress=on_progress
-        )
-
-        added_count = sum(1 for item in result.items if item["result"] and item["result"].get("status") == "added")
-        failed_count = result.failed
-        
-        for item in result.items[-10:]:
-            res = item.get("result", {})
-            if isinstance(res, dict):
-                status = res.get("status")
-                if status == "added":
-                    results_log.append(f"✅ {res.get('region')} ({res.get('speed_mbps')}Mb/s)")
-                elif status == "failed":
+    failed_count = result.failed
+    
+    for item in result.items:
+        res = item.get("result", {})
+        if isinstance(res, dict):
+            status = res.get("status")
+            if status == "added":
+                added_count += 1
+                results_log.append(f"✅ {res.get('region')} ({res.get('speed_mbps')}Mb/s)")
+            elif status == "failed":
+                # Only log detailed failures if few items
+                if len(links) < 50:
                     results_log.append(f"❌ {res.get('error')}")
 
     final_text = (
@@ -194,7 +161,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         f"❌ Отклонено/Недействительно: <b>{failed_count}</b>\n"
         f"📋 Всего обработано: <b>{len(links)}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"<b>🔝 Лог (последние):</b>\n" + "\n".join(results_log[-10:]) + "</blockquote>"
+        f"<b>🔝 Лог (последние 10):</b>\n" + "\n".join(results_log[-10:]) + "</blockquote>"
     )
     
     if len(final_text) > 4000:

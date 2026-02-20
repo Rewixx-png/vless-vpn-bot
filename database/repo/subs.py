@@ -1,6 +1,6 @@
 import time
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy import select, delete, update, func, text, desc, or_
 from database.core import async_session_factory
 from database.models import Subscription
@@ -405,8 +405,8 @@ class SubRepo:
         if is_banned:
             return False
 
-        if not region or "unk" in region.lower() or region == "":
-            return False
+        if not region or region.strip() == "":
+            region = "🌍 Unk"
 
         async with async_session_factory() as session:
             existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))

@@ -6,18 +6,18 @@ logger = logging.getLogger("CheckerAPI")
 
 class CheckerAPI:
     @staticmethod
-    async def check(config_url: str) -> tuple[bool, str, int, float, bool, str]:
+    async def check(config_url: str) -> tuple:
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=60.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{config.CHECKER_URL}/check",
-                    json={"config": config_url},
-                    timeout=15
+                    json={"config": config_url}
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         if "error" in data and not "success" in data:
-                             return False, "", 0, 0.0, False, data["error"]
+                             return False, "", 0, 0.0, False, data
                              
                         return (
                             data.get("success", False),
@@ -31,5 +31,7 @@ class CheckerAPI:
                         return False, "", 0, 0.0, False, f"Service Error: {resp.status}"
         except aiohttp.ClientConnectorError:
             return False, "", 0, 0.0, False, "Checker Service Offline"
+        except asyncio.TimeoutError:
+            return False, "", 0, 0.0, False, "Checker Service Timeout"
         except Exception as e:
             return False, "", 0, 0.0, False, f"API Error: {str(e)}"

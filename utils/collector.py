@@ -3,11 +3,11 @@ import asyncio
 import base64
 import re
 import logging
-from typing import List, Set, Optional
+from typing import List
 
 from database.repo import SubRepo
 from utils.checker import VlessChecker
-from utils.batch_processor import SmartBatchProcessor
+from utils.batch_processor import CpuAdaptiveProcessor
 
 logger = logging.getLogger("Collector")
 
@@ -51,12 +51,11 @@ SUBSCRIPTION_SOURCES = [
 ]
 
 class SubscriptionCollector:
-    MAX_LINKS_PER_BATCH = 100000 
-    WORKER_COUNT = 100
+    MAX_LINKS_PER_BATCH = 150000 
     
     @classmethod
     async def run_collection(cls) -> dict:
-        logger.warning(f"🚀 Starting AGGRESSIVE collection from {len(SUBSCRIPTION_SOURCES)} sources...")
+        logger.warning(f"🚀 Starting SMART AGGRESSIVE collection from {len(SUBSCRIPTION_SOURCES)} sources...")
         
         async with aiohttp.ClientSession() as session:
             tasks = [cls._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
@@ -71,7 +70,8 @@ class SubscriptionCollector:
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
         
-        found_links = re.findall(r'(vless://[a-zA-Z0-9\-_.!~*\'()&=+$%@:/?#\[\]]+)', full_text)
+        # SUPER GREEDY REGEX: Capture anything starting with vless:// until whitespace
+        found_links = re.findall(r'vless://[^\s]+', full_text)
         found_links = list(set(found_links))
         del full_text
         
@@ -86,7 +86,7 @@ class SubscriptionCollector:
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Xray Recheck ({cls.WORKER_COUNT} threads)...")
+        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Smart Adaptive Check...")
         return await cls._check_and_add_batch(unique_links)
     
     @classmethod
@@ -95,15 +95,18 @@ class SubscriptionCollector:
         failed_count = 0
         region_stats = {}
         
-        processor = SmartBatchProcessor(
-            worker_count=cls.WORKER_COUNT,
-            rate_limit=None 
+        processor = CpuAdaptiveProcessor(
+            initial_workers=50,
+            min_workers=20,
+            max_workers=500,
+            target_cpu=85.0
         )
 
         async def process_link(link: str):
             try:
-                if not cls._parse_vless(link):
-                    return False, "parse_error"
+                # Basic pre-validation
+                if "vless://" not in link or "@" not in link or ":" not in link:
+                    return False, "invalid_format"
 
                 is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
                 
@@ -126,9 +129,15 @@ class SubscriptionCollector:
             except Exception as e:
                 return False, str(e)
 
+        async def on_progress(completed, total, success, failed, workers):
+            if completed % 50 == 0:
+                percent = int((completed / total) * 100) if total > 0 else 0
+                logger.info(f"📊 Progress: {percent}% ({completed}/{total}) | 🏗 Workers: {workers} (Adaptive) | ✅ +{success}")
+
         result = await processor.process(
             items=links,
-            process_func=process_link
+            process_func=process_link,
+            on_progress=on_progress
         )
 
         for item in result.items:
@@ -153,26 +162,6 @@ class SubscriptionCollector:
         }
     
     @staticmethod
-    def _parse_vless(link: str) -> dict | None:
-        try:
-            if not link.startswith("vless://"):
-                return None
-            
-            rest = link[8:]
-            if "#" in rest: rest = rest.split("#")[0]
-            if "?" in rest: rest = rest.split("?")[0]
-            rest = rest.rstrip("/")
-            
-            if "@" not in rest: return None
-            userinfo, host_port = rest.split("@", 1)
-            
-            if ":" not in host_port: return None
-            
-            return {"link": link}
-        except:
-            return None
-    
-    @staticmethod
     async def _fetch_url(session: aiohttp.ClientSession, url: str) -> str:
         try:
             if "github.com" in url and "/blob/" in url:
@@ -182,13 +171,13 @@ class SubscriptionCollector:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             
-            timeout = aiohttp.ClientTimeout(total=10, connect=3)
+            timeout = aiohttp.ClientTimeout(total=15, connect=5)
             
             async with session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:
                     content = await resp.read()
-                    if len(content) > 5 * 1024 * 1024:
-                        content = content[:5 * 1024 * 1024]
+                    if len(content) > 10 * 1024 * 1024:
+                        content = content[:10 * 1024 * 1024]
                     return content.decode('utf-8', errors='ignore')
         except:
             pass
@@ -196,16 +185,30 @@ class SubscriptionCollector:
     
     @staticmethod
     def _try_decode(text: str) -> str:
-        if not text or "://" in text:
-            return ""
-        try:
-            clean_text = re.sub(r'\s+', '', text)
-            missing_padding = len(clean_text) % 4
-            if missing_padding:
-                clean_text += '=' * (4 - missing_padding)
-            decoded = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
-            if "://" in decoded:
-                return decoded
-        except:
-            pass
-        return ""
+        if not text: return ""
+        decoded_parts = []
+        
+        lines = text.replace(',', '\n').splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line or "://" in line: continue
+            try:
+                pad = len(line) % 4
+                if pad: line += '=' * (4 - pad)
+                dec = base64.b64decode(line).decode('utf-8', errors='ignore')
+                if "vless://" in dec:
+                    decoded_parts.append(dec)
+            except:
+                pass
+        
+        if not decoded_parts:
+            try:
+                clean_text = re.sub(r'\s+', '', text)
+                pad = len(clean_text) % 4
+                if pad: clean_text += '=' * (4 - pad)
+                dec = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
+                decoded_parts.extend(re.findall(r'vless://[^\s]+', dec))
+            except:
+                pass
+            
+        return "\n".join(decoded_parts)

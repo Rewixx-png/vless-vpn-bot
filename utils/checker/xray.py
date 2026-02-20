@@ -8,10 +8,6 @@ from utils.parser import LinkParser
 
 logger = logging.getLogger("XrayCore")
 logger.setLevel(logging.INFO)
-formatter = logging.Formatter('Current: %(current)d/%(total)d - %(message)s')
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
 class XrayExecutor:
     XRAY_BIN = "/usr/local/bin/xray"
@@ -54,20 +50,35 @@ class XrayExecutor:
                 stream['tlsSettings'] = tls_settings
 
         if parsed['type'] == 'ws':
-            stream['wsSettings'] = {"path": parsed.get('path', '/'), "headers": {"Host": parsed.get('host') or parsed.get('sni', '')}}
+            stream['wsSettings'] = {
+                "path": parsed.get('path', '/'), 
+                "headers": {"Host": parsed.get('host') or parsed.get('sni', '')}
+            }
         elif parsed['type'] == 'grpc':
-            stream['grpcSettings'] = {"serviceName": parsed.get('serviceName', ''), "multiMode": (parsed.get('mode') == 'multi')}
+            stream['grpcSettings'] = {
+                "serviceName": parsed.get('serviceName', ''), 
+                "multiMode": (parsed.get('mode') == 'multi')
+            }
         elif parsed['type'] == 'tcp' and parsed.get('type') == 'http':
-             stream['tcpSettings'] = {"header": {"type": "http", "request": {"headers": {"Host": [parsed.get('host', '')]}}}}
+             stream['tcpSettings'] = {
+                 "header": {
+                     "type": "http", 
+                     "request": {"headers": {"Host": [parsed.get('host', '')]}}
+                 }
+             }
 
         return {
             "log": {"loglevel": "none"},
-            "inbounds": [{"port": local_port, "protocol": "socks", "settings": {"auth": "noauth", "udp": True}, "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}}],
+            "inbounds": [{
+                "port": local_port, 
+                "protocol": "socks", 
+                "settings": {"auth": "noauth", "udp": True}, 
+                "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
+            }],
             "outbounds": [outbound, {"protocol": "freedom", "tag": "direct"}]
         }
 
-    XRAY_STARTUP_TIMEOUT = 0.5
-    XRAY_MAX_LIFETIME = 10.0
+    XRAY_STARTUP_TIMEOUT = 1.5
     
     @classmethod
     async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
@@ -91,10 +102,13 @@ class XrayExecutor:
             )
             
             try:
+                # Wait briefly to ensure it didn't crash immediately
                 await asyncio.wait_for(process.wait(), timeout=cls.XRAY_STARTUP_TIMEOUT)
+                # If we are here, it finished/crashed. Bad.
                 cls._cleanup_file(config_path)
-                return None, 0, "Xray failed startup (crashed immediately)"
+                return None, 0, "Xray failed startup (crashed)"
             except asyncio.TimeoutError:
+                # Timeout means it's running fine
                 pass
 
             return process, local_port, config_path
@@ -114,17 +128,10 @@ class XrayExecutor:
     async def cleanup(cls, process, config_path):
         if process:
             try:
-                # Force kill - use terminate first, then kill
+                # Aggressive kill
                 if process.returncode is None:
-                    try:
-                        process.terminate()
-                        await asyncio.wait_for(process.wait(), timeout=0.3)
-                    except:
-                        try:
-                            process.kill()
-                            await asyncio.wait_for(process.wait(), timeout=0.2)
-                        except:
-                            pass
+                    process.kill()
+                    # No wait to avoid hanging if zombie
             except Exception:
                 pass
         

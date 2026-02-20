@@ -1,19 +1,23 @@
 import os
-import re
 import aiohttp
 import asyncio
 import logging
 import socket
 import ipaddress
 import geoip2.database
-from typing import Optional, List, Tuple
+from typing import Optional, List
 import redis.asyncio as redis
 from config import config
 
 logger = logging.getLogger("GeoIP")
 
 class GeoIP:
-    MMDB_URL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+    # Надежные зеркала MMDB
+    MMDB_URLS = [
+        "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
+        "https://git.io/GeoLite2-Country.mmdb",
+        "https://mmdbcdn.issrc.com/ip/GeoLite2-Country.mmdb"
+    ]
     DB_PATH = "utils/checker/mmdb/Country.mmdb"
     
     _reader: Optional[geoip2.database.Reader] = None
@@ -22,42 +26,22 @@ class GeoIP:
     _cache = {}
     _dns_cache = {}
     
+    # API провайдеры (Fallback). 
     PROVIDERS = [
         {
-            "name": "ip-api.com",
-            "url": "http://ip-api.com/json/{ip}",
-            "key": "countryCode",
-            "headers": {}
-        },
-        {
-            "name": "ipwho.is",
             "url": "http://ipwho.is/{ip}",
             "key": "country_code",
-            "headers": {"User-Agent": "Mozilla/5.0"}
+            "timeout": 5
         },
         {
-            "name": "api.ip.sb",
+            "url": "http://ip-api.com/json/{ip}?fields=countryCode",
+            "key": "countryCode",
+            "timeout": 3
+        },
+        {
             "url": "https://api.ip.sb/geoip/{ip}",
             "key": "country_code",
-            "headers": {"User-Agent": "Mozilla/5.0"}
-        },
-        {
-            "name": "ipapi.co",
-            "url": "https://ipapi.co/{ip}/json/",
-            "key": "country_code",
-            "headers": {"User-Agent": "Mozilla/5.0"}
-        },
-        {
-            "name": "ipinfo.io",
-            "url": "https://ipinfo.io/{ip}/json",
-            "key": "country",
-            "headers": {}
-        },
-        {
-            "name": "freeipapi.com",
-            "url": "https://freeipapi.com/api/json/{ip}",
-            "key": "countryCode",
-            "headers": {}
+            "timeout": 5
         }
     ]
 
@@ -100,7 +84,7 @@ class GeoIP:
         ".ru": "🇷🇺 Russia", ".rf": "🇷🇺 Russia", ".su": "🇷🇺 Russia",
         ".de": "🇩🇪 Germany", ".nl": "🇳🇱 Netherlands", ".fi": "🇫🇮 Finland",
         ".fr": "🇫🇷 France", ".uk": "🇬🇧 United Kingdom", ".gb": "🇬🇧 United Kingdom",
-        ".us": "🇺🇸 United States", ".gov": "🇺🇸 United States", ".edu": "🇺🇸 United States",
+        ".us": "🇺🇸 United States", ".gov": "🇺🇸 United States",
         ".ca": "🇨🇦 Canada", ".cn": "🇨🇳 China", ".ir": "🇮🇷 Iran",
         ".tr": "🇹🇷 Turkey", ".ua": "🇺🇦 Ukraine", ".kz": "🇰🇿 Kazakhstan",
         ".by": "🇧🇾 Belarus", ".pl": "🇵🇱 Poland", ".it": "🇮🇹 Italy",
@@ -108,35 +92,6 @@ class GeoIP:
         ".in": "🇮🇳 India", ".br": "🇧🇷 Brazil", ".se": "🇸🇪 Sweden",
         ".ch": "🇨🇭 Switzerland", ".no": "🇳🇴 Norway", ".ae": "🇦🇪 UAE",
         ".sg": "🇸🇬 Singapore", ".hk": "🇭🇰 Hong Kong", ".au": "🇦🇺 Australia"
-    }
-
-    IATA_MAP = {
-        "fra": "🇩🇪 Germany", "muc": "🇩🇪 Germany", "ber": "🇩🇪 Germany", "dus": "🇩🇪 Germany",
-        "ams": "🇳🇱 Netherlands", "rtm": "🇳🇱 Netherlands",
-        "lon": "🇬🇧 United Kingdom", "lhr": "🇬🇧 United Kingdom", "lgw": "🇬🇧 United Kingdom", "man": "🇬🇧 United Kingdom",
-        "par": "🇫🇷 France", "cdg": "🇫🇷 France", "ory": "🇫🇷 France", "mrs": "🇫🇷 France",
-        "hel": "🇫🇮 Finland",
-        "sto": "🇸🇪 Sweden", "arn": "🇸🇪 Sweden",
-        "osl": "🇳🇴 Norway",
-        "waw": "🇵🇱 Poland",
-        "mad": "🇪🇸 Spain", "bcn": "🇪🇸 Spain",
-        "rom": "🇮🇹 Italy", "fco": "🇮🇹 Italy", "mxp": "🇮🇹 Italy",
-        "zrh": "🇨🇭 Switzerland", "gva": "🇨🇭 Switzerland",
-        "vie": "🇦🇹 Austria",
-        "sgp": "🇸🇬 Singapore", "sin": "🇸🇬 Singapore",
-        "tyo": "🇯🇵 Japan", "hnd": "🇯🇵 Japan", "nrt": "🇯🇵 Japan", "osa": "🇯🇵 Japan",
-        "sel": "🇰🇷 South Korea", "icn": "🇰🇷 South Korea",
-        "hkg": "🇭🇰 Hong Kong",
-        "tpe": "🇹🇼 Taiwan",
-        "dxb": "🇦🇪 UAE",
-        "nyc": "🇺🇸 United States", "jfk": "🇺🇸 United States", "ewr": "🇺🇸 United States",
-        "lax": "🇺🇸 United States", "sfo": "🇺🇸 United States", "sjc": "🇺🇸 United States",
-        "chi": "🇺🇸 United States", "ord": "🇺🇸 United States",
-        "mia": "🇺🇸 United States", "dal": "🇺🇸 United States", "sea": "🇺🇸 United States",
-        "tor": "🇨🇦 Canada", "yyz": "🇨🇦 Canada", "yul": "🇨🇦 Canada", "yvr": "🇨🇦 Canada",
-        "sao": "🇧🇷 Brazil", "gru": "🇧🇷 Brazil",
-        "syd": "🇦🇺 Australia", "mel": "🇦🇺 Australia",
-        "jnb": "🇿🇦 South Africa"
     }
 
     NAME_KEYWORDS = {
@@ -150,7 +105,7 @@ class GeoIP:
         "turkey": "🇹🇷 Turkey", "istanbul": "🇹🇷 Turkey",
         "iran": "🇮🇷 Iran", "tehran": "🇮🇷 Iran",
         "poland": "🇵🇱 Poland", "warsaw": "🇵🇱 Poland",
-        "ukraine": "🇺🇦 Ukraine", "kiev": "🇺🇦 Ukraine", "kyiv": "🇺🇦 Ukraine",
+        "ukraine": "🇺🇦 Ukraine", "kiev": "🇺🇦 Ukraine",
         "kazakhstan": "🇰🇿 Kazakhstan",
         "canada": "🇨🇦 Canada",
         "china": "🇨🇳 China",
@@ -164,72 +119,68 @@ class GeoIP:
 
     @classmethod
     async def initialize(cls):
+        """Initialize Redis, Cloudflare IP ranges, and download MMDB"""
         if cls._redis is None:
             try:
                 cls._redis = redis.from_url(config.REDIS_URL, decode_responses=True)
             except Exception as e:
                 logger.error(f"Redis init failed: {e}")
-            
+        
+        # Cloudflare Ranges
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get("https://api.cloudflare.com/client/v4/ips", timeout=10) as resp:
+                async with session.get("https://api.cloudflare.com/client/v4/ips", timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        ipv4_cidrs = data.get("result", {}).get("ipv4_cidrs", [])
-                        ipv6_cidrs = data.get("result", {}).get("ipv6_cidrs", [])
-                        
-                        cls._cf_cidrs = []
-                        for cidr in ipv4_cidrs + ipv6_cidrs:
-                            try:
-                                cls._cf_cidrs.append(ipaddress.ip_network(cidr))
-                            except ValueError:
-                                pass
+                        ipv4 = data.get("result", {}).get("ipv4_cidrs", [])
+                        ipv6 = data.get("result", {}).get("ipv6_cidrs", [])
+                        cls._cf_cidrs = [ipaddress.ip_network(cidr) for cidr in ipv4 + ipv6]
         except Exception:
             pass
 
-        if not os.path.exists(os.path.dirname(cls.DB_PATH)):
-            os.makedirs(os.path.dirname(cls.DB_PATH))
-            
-        if not os.path.exists(cls.DB_PATH):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(cls.MMDB_URL, timeout=120) as resp:
-                        if resp.status == 200:
-                            with open(cls.DB_PATH, 'wb') as f:
-                                while True:
-                                    chunk = await resp.content.read(8192)
-                                    if not chunk: break
-                                    f.write(chunk)
-            except Exception:
-                pass
+        # Check and Download MMDB
+        dir_path = os.path.dirname(cls.DB_PATH)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+        if not os.path.exists(cls.DB_PATH) or os.path.getsize(cls.DB_PATH) < 1000000:
+            logger.info("📥 Downloading GeoLite2 Database...")
+            async with aiohttp.ClientSession() as session:
+                for url in cls.MMDB_URLS:
+                    try:
+                        async with session.get(url, timeout=30) as resp:
+                            if resp.status == 200:
+                                with open(cls.DB_PATH, 'wb') as f:
+                                    f.write(await resp.read())
+                                logger.info(f"✅ Downloaded MMDB from {url}")
+                                break
+                    except Exception:
+                        continue
 
         try:
             cls._reader = geoip2.database.Reader(cls.DB_PATH)
         except Exception:
-            pass
+            cls._reader = None
 
     @classmethod
     def _is_cloudflare(cls, ip_str: str) -> bool:
-        if not cls._cf_cidrs:
-            return False
+        if not cls._cf_cidrs: return False
         try:
             ip = ipaddress.ip_address(ip_str)
             for cidr in cls._cf_cidrs:
-                if ip in cidr:
-                    return True
-        except ValueError:
-            pass
+                if ip in cidr: return True
+        except ValueError: pass
         return False
 
     @classmethod
     async def _resolve_host(cls, host: str) -> str | None:
-        if host in cls._dns_cache:
-            return cls._dns_cache[host]
+        if host in cls._dns_cache: return cls._dns_cache[host]
         try:
-            socket.inet_aton(host)
+            ipaddress.ip_address(host)
             return host
-        except:
+        except ValueError:
             pass
+            
         try:
             loop = asyncio.get_running_loop()
             info = await loop.getaddrinfo(host, 80, type=socket.SOCK_STREAM)
@@ -241,58 +192,101 @@ class GeoIP:
 
     @classmethod
     def _format_result(cls, code: str) -> str:
-        if not code or len(code) != 2:
-            return "🌍 Unk"
+        if not code or len(code) != 2: return "🌍 Unk"
         flag = cls.FLAGS.get(code.upper(), "🌍")
         return f"{flag} {code.upper().title()}"
 
     @classmethod
     def _get_from_db(cls, ip: str) -> str | None:
-        if not cls._reader:
-            return None
+        if not cls._reader: return None
         try:
             response = cls._reader.country(ip)
             code = response.country.iso_code
-            if code:
-                return cls._format_result(code)
-        except Exception:
-            return None
+            if code: return cls._format_result(code)
+        except Exception: pass
         return None
 
     @classmethod
-    async def _fetch_from_provider(cls, session: aiohttp.ClientSession, provider: dict, ip: str) -> str | None:
-        try:
-            url = provider["url"].format(ip=ip)
-            headers = provider.get("headers", {})
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with session.get(url, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    if provider["name"] == "ipwho.is" and not data.get("success"): return None
-                    if provider["name"] == "ip-api.com" and data.get("status") == "fail": return None
-                    code = data.get(provider["key"])
-                    if code and len(code) == 2:
-                        return cls._format_result(code)
-        except Exception:
-            pass
-        return None
-        
+    async def identify_region(cls, session: aiohttp.ClientSession, host: str = None, remark: str = None, proxy_ip: str = None) -> str:
+        target_ip = proxy_ip
+        if not target_ip and host:
+            target_ip = await cls._resolve_host(host)
+
+        # 1. Cache
+        if target_ip:
+            if target_ip in cls._cache and "Unk" not in cls._cache[target_ip]:
+                return cls._cache[target_ip]
+            if cls._redis:
+                try:
+                    cached = await cls._redis.get(f"geoip:{target_ip}")
+                    if cached and "Unk" not in cached:
+                        cls._cache[target_ip] = cached
+                        return cached
+                except: pass
+
+        # 2. Local MMDB
+        if target_ip and not cls._is_cloudflare(target_ip):
+            if not cls._reader: await cls.initialize()
+            local_res = cls._get_from_db(target_ip)
+            if local_res:
+                cls._cache[target_ip] = local_res
+                if cls._redis: await cls._redis.setex(f"geoip:{target_ip}", 604800, local_res)
+                return local_res
+
+        # 3. API Fallback
+        if target_ip and not cls._is_cloudflare(target_ip):
+            for provider in cls.PROVIDERS:
+                try:
+                    url = provider["url"].format(ip=target_ip)
+                    async with session.get(url, timeout=provider["timeout"]) as resp:
+                        if resp.status == 200:
+                            if "json" in url or "ipwho.is" in url:
+                                data = await resp.json(content_type=None)
+                                if "success" in data and not data["success"]: continue
+                                code = data.get(provider["key"])
+                            else:
+                                code = await resp.text()
+                            
+                            if code:
+                                code = code.strip()[:2]
+                                res = cls._format_result(code)
+                                if "Unk" not in res:
+                                    cls._cache[target_ip] = res
+                                    if cls._redis: await cls._redis.setex(f"geoip:{target_ip}", 604800, res)
+                                    return res
+                except Exception:
+                    continue
+
+        # 4. Heuristics
+        if remark:
+            guess = cls._guess_by_name(remark)
+            if guess: return guess
+
+        if host:
+            guess = cls._guess_by_tld(host)
+            if guess: return guess
+            
+            host_lower = host.lower()
+            for iata in ["fra", "ams", "lon", "nyc", "lax", "sgp", "jpn"]:
+                if f"{iata}." in host_lower or f"-{iata}" in host_lower:
+                    if iata == "fra": return "🇩🇪 Germany"
+                    if iata == "ams": return "🇳🇱 Netherlands"
+                    if iata == "lon": return "🇬🇧 United Kingdom"
+                    if iata == "nyc": return "🇺🇸 United States"
+                    if iata == "lax": return "🇺🇸 United States"
+                    if iata == "sgp": return "🇸🇬 Singapore"
+
+        if target_ip:
+            cls._cache[target_ip] = "🌍 Unk"
+            if cls._redis: await cls._redis.setex(f"geoip:{target_ip}", 60, "🌍 Unk")
+
+        return "🌍 Unk"
+
     @classmethod
     def _guess_by_tld(cls, host: str) -> str | None:
         host = host.lower().strip()
         for tld, region in cls.TLD_MAP.items():
-            if host.endswith(tld):
-                if host == tld[1:] or host.endswith(tld):
-                     return region
-        return None
-
-    @classmethod
-    def _guess_by_iata(cls, host: str) -> str | None:
-        parts = host.lower().split('.')
-        for part in parts:
-            for iata, region in cls.IATA_MAP.items():
-                if iata in part:
-                    return region
+            if host.endswith(tld): return region
         return None
 
     @classmethod
@@ -300,169 +294,23 @@ class GeoIP:
         if not name: return None
         name_lower = name.lower()
         for keyword, region in cls.NAME_KEYWORDS.items():
-            if keyword in name_lower:
-                return region
+            if keyword in name_lower: return region
         return None
 
-    @classmethod
-    async def identify_region(cls, session: aiohttp.ClientSession, host: str = None, remark: str = None) -> str:
-        if not host: return "🌍 Unk"
-        
-        ip = await cls._resolve_host(host)
-        
-        if ip and not cls._is_cloudflare(ip) and ip not in ["127.0.0.1", "localhost", "0.0.0.0"]:
-            if ip in cls._cache: return cls._cache[ip]
-            
-            if cls._redis:
-                try:
-                    cached = await cls._redis.get(f"geoip:{ip}")
-                    if cached:
-                        cls._cache[ip] = cached
-                        return cached
-                except Exception:
-                    pass
-
-            if not cls._reader: await cls.initialize()
-            local_result = cls._get_from_db(ip)
-            if local_result:
-                cls._cache[ip] = local_result
-                if cls._redis:
-                    try:
-                        await cls._redis.setex(f"geoip:{ip}", 604800, local_result)
-                    except Exception:
-                        pass
-                return local_result
-
-            tasks = []
-            for provider in cls.PROVIDERS:
-                tasks.append(asyncio.create_task(cls._fetch_from_provider(session, provider, ip)))
-            try:
-                active_tasks = set(tasks)
-                while active_tasks:
-                    done, pending = await asyncio.wait(active_tasks, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        result = task.result()
-                        if result:
-                            for p in pending: p.cancel()
-                            cls._cache[ip] = result
-                            if host != ip: cls._cache[host] = result
-                            if cls._redis:
-                                try:
-                                    await cls._redis.setex(f"geoip:{ip}", 604800, result)
-                                except Exception:
-                                    pass
-                            return result
-                    active_tasks = pending
-            except Exception:
-                pass
-            for t in tasks:
-                if not t.done(): t.cancel()
-        
-        iata_guess = cls._guess_by_iata(host)
-        if iata_guess:
-            cls._cache[host] = iata_guess
-            if ip: cls._cache[ip] = iata_guess
-            return iata_guess
-
-        if remark:
-            name_guess = cls._guess_by_name(remark)
-            if name_guess:
-                return name_guess
-
-        tld_guess = cls._guess_by_tld(host)
-        if tld_guess:
-            cls._cache[host] = tld_guess
-            return tld_guess
-
-        cls._cache[host] = "🌍 Unk"
-        if ip: cls._cache[ip] = "🌍 Unk"
-        return "🌍 Unk"
-
+    # THE MISSING METHOD
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:
-        if not cls._reader:
-            await cls.initialize()
-            
+        """Batch processing for Admin Recheck"""
+        if not cls._reader: await cls.initialize()
         results = {}
-        host_remark_map = {h: r for h, r in hosts_data}
-        unique_hosts = set(host_remark_map.keys())
         
-        resolved_map = {} 
-        unresolved_hosts = []
+        sem = asyncio.Semaphore(50) 
         
-        sem_dns = asyncio.Semaphore(50)
-        async def resolve_worker(h):
-            async with sem_dns:
-                ip = await cls._resolve_host(h)
-                if ip:
-                    resolved_map[h] = ip
-                else:
-                    unresolved_hosts.append(h)
+        async def resolve_and_identify(host, remark):
+            async with sem:
+                res = await cls.identify_region(session, host=host, remark=remark)
+                results[host] = res
 
-        await asyncio.gather(*[resolve_worker(h) for h in unique_hosts])
-
-        unknown_ips = set()
-        for host, ip in resolved_map.items():
-            if ip in ["127.0.0.1", "localhost", "0.0.0.0"] or cls._is_cloudflare(ip):
-                results[host] = "🌍 Unk"
-                continue
-                
-            if cls._redis:
-                try:
-                    cached = await cls._redis.get(f"geoip:{ip}")
-                    if cached:
-                        results[host] = cached
-                        continue
-                except Exception:
-                    pass
-
-            local = cls._get_from_db(ip)
-            if local:
-                results[host] = local
-                if cls._redis:
-                    try:
-                        await cls._redis.setex(f"geoip:{ip}", 604800, local)
-                    except Exception:
-                        pass
-            else:
-                unknown_ips.add(ip)
-
-        if unknown_ips:
-            sem_api = asyncio.Semaphore(5)
-            ip_results = {}
-            async def resolve_ip_race(target_ip):
-                async with sem_api:
-                    res = await cls.identify_region(session, target_ip)
-                    ip_results[target_ip] = res
-            await asyncio.gather(*[resolve_ip_race(ip) for ip in unknown_ips])
-            
-            for host, ip in resolved_map.items():
-                if host not in results and ip in ip_results:
-                    region = ip_results[ip]
-                    if "Unk" in region:
-                        iata = cls._guess_by_iata(host)
-                        if iata: results[host] = iata
-                        else:
-                            remark = host_remark_map.get(host)
-                            name_g = cls._guess_by_name(remark)
-                            if name_g: results[host] = name_g
-                            else:
-                                tld = cls._guess_by_tld(host)
-                                if tld: results[host] = tld
-                                else: results[host] = region
-                    else:
-                        results[host] = region
-
-        for h in unresolved_hosts:
-            iata = cls._guess_by_iata(h)
-            if iata: results[h] = iata
-            else:
-                remark = host_remark_map.get(h)
-                name_g = cls._guess_by_name(remark)
-                if name_g: results[h] = name_g
-                else:
-                    tld = cls._guess_by_tld(h)
-                    if tld: results[h] = tld
-                    else: results[h] = "🌍 Unk"
-
+        tasks = [resolve_and_identify(h, r) for h, r in hosts_data]
+        await asyncio.gather(*tasks)
         return results
