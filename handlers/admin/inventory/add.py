@@ -1,7 +1,3 @@
-"""
-Optimized batch add handler.
-Uses simple processing for small batches and batch processor for large ones.
-"""
 import io
 import re
 import asyncio
@@ -20,7 +16,6 @@ from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
 router = Router()
 
-
 @router.callback_query(F.data == "admin_add")
 async def start_add_subs(callback: CallbackQuery, state: FSMContext):
     await admin_edit_or_answer(
@@ -32,7 +27,6 @@ async def start_add_subs(callback: CallbackQuery, state: FSMContext):
         reply_markup=back_to_admin()
     )
     await state.set_state(AdminStates.waiting_for_subs)
-
 
 @router.message(StateFilter(AdminStates.waiting_for_subs), F.from_user.id.in_(config.ADMIN_IDS))
 async def process_batch(message: Message, state: FSMContext, bot: Bot):
@@ -76,8 +70,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    # Extract VLESS links
-    # Improved regex to handle complex URLs
     links = re.findall(r'(vless://[^\s\n]+)', text_content)
     links = [link.strip() for link in links if link.strip()]
 
@@ -100,11 +92,9 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     added_count = 0
     failed_count = 0
 
-    # -------- FAST PATH FOR SMALL BATCHES (< 20) --------
     if len(links) < 20:
         for i, link in enumerate(links, 1):
             try:
-                # Update status every 5 links or first link
                 if i % 5 == 0 or i == 1:
                     await safe_edit_message(
                         msg,
@@ -113,18 +103,19 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                         f"❌ Ошибок: {failed_count}</blockquote>"
                     )
 
-                is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
+                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
 
                 if is_alive:
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
                         latency=latency,
+                        speed_mbps=speed_mbps,
                         ai_available=ai_avail
                     )
                     if added:
                         added_count += 1
-                        results_log.append(f"✅ {region} ({latency}ms)")
+                        results_log.append(f"✅ {region} ({speed_mbps}Mb/s)")
                     else:
                         failed_count += 1
                         results_log.append(f"⚠️ Skip: {region}")
@@ -135,8 +126,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
             except Exception as e:
                 failed_count += 1
                 results_log.append(f"❌ Error: {str(e)[:20]}")
-    
-    # -------- BATCH PROCESSOR FOR LARGE LISTS --------
     else:
         start_time = asyncio.get_event_loop().time()
         
@@ -148,16 +137,17 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
         async def process_link(link: str):
             try:
-                is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
+                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
                 if is_alive:
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
                         latency=latency,
+                        speed_mbps=speed_mbps,
                         ai_available=ai_avail
                     )
                     if added:
-                        return (True, {"status": "added", "region": region, "latency": latency})
+                        return (True, {"status": "added", "region": region, "speed_mbps": speed_mbps})
                     else:
                         return (True, {"status": "limited", "region": region})
                 else:
@@ -169,7 +159,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
             elapsed = asyncio.get_event_loop().time() - start_time
             percent = int((completed / total) * 100)
             
-            # Rate limit GUI updates
             await safe_edit_message(
                 msg,
                 f"<blockquote>⚡ <b>Массовая проверка</b>\n\n"
@@ -188,17 +177,15 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         added_count = sum(1 for item in result.items if item["result"] and item["result"].get("status") == "added")
         failed_count = result.failed
         
-        # Collect logs from batch result
         for item in result.items[-10:]:
             res = item.get("result", {})
             if isinstance(res, dict):
                 status = res.get("status")
                 if status == "added":
-                    results_log.append(f"✅ {res.get('region')} ({res.get('latency')}ms)")
+                    results_log.append(f"✅ {res.get('region')} ({res.get('speed_mbps')}Mb/s)")
                 elif status == "failed":
                     results_log.append(f"❌ {res.get('error')}")
 
-    # -------- FINAL REPORT --------
     final_text = (
         f"<blockquote>🏁 <b>Импорт завершён!</b>\n\n"
         f"📊 <b>Итоговый отчёт:</b>\n"

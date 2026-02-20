@@ -4,26 +4,20 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def main_admin_kb(collector_active: bool = True):
     kb = InlineKeyboardBuilder()
     
-    # 1. Manage & Inventory
     kb.button(text="➕ Добавить ключи", callback_data="admin_add")
     kb.button(text="📂 Управление базой", callback_data="admin_manage")
     
-    # 2. Checks & Maintenance (Grouped)
     kb.button(text="📡 Menu Recheck", callback_data="admin_recheck_menu")
     kb.button(text="🌍 Fix Unknowns", callback_data="admin_fix_regions")
     
-    # 3. Users & Stats
     kb.button(text="👥 Меню Юзеров", callback_data="admin_users_list_0")
     kb.button(text="📊 Статистика", callback_data="admin_stats")
     
-    # 4. Special Features
     kb.button(text="🛡 Stable List", callback_data="admin_stable_list")
     
-    # Collector Toggle
     coll_text = "🟢 Collector ON" if collector_active else "🔴 Collector OFF"
     kb.button(text=coll_text, callback_data="toggle_collector")
     
-    # Misc
     kb.button(text="⚙️ Домен", callback_data="admin_domain")
     kb.button(text="📢 Рассылка", callback_data="admin_broadcast")
     
@@ -121,20 +115,16 @@ def confirm_delete_country_kb(region: str):
 def subs_list_kb(subs: list, region: str, page: int, total_pages: int):
     kb = InlineKeyboardBuilder()
     
-    # 1. Action Buttons for the region
     kb.row(InlineKeyboardButton(text=f"🗑 Удалить ВСЕ ({region})", callback_data=f"ask_delete_country_{region}"))
 
-    # 2. List of subs (Paginated)
     for sub in subs:
         status_icon = "🟢" if sub.is_active else "🔴"
-        # Truncate latency to save space
-        lat = sub.latency_ms if sub.latency_ms < 9999 else "Dead"
-        text = f"{status_icon} #{sub.id} | ⚡️{lat}"
+        lat = sub.speed_mbps if hasattr(sub, 'speed_mbps') and sub.speed_mbps > 0 else 0
+        text = f"{status_icon} #{sub.id} | ⚡️{lat:.1f}Mb/s"
         kb.button(text=text, callback_data=f"sub_detail_{sub.id}")
     
-    kb.adjust(1, 2) # Delete button full width, subs 2 per row
+    kb.adjust(1, 2) 
     
-    # 3. Pagination Controls
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"manage_region_{region}:{page - 1}"))
@@ -163,5 +153,14 @@ def domain_error_kb(domain: str):
     safe_domain = domain[:40] 
     kb.button(text="⚠️ Всё равно сохранить", callback_data=f"force_save_domain:{safe_domain}")
     kb.button(text="🔙 Отмена", callback_data="admin_domain")
+    kb.adjust(1)
+    return kb.as_markup()
+
+def stats_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📥 Список Юзеров (.txt)", callback_data="admin_dl_users")
+    kb.button(text="🗑 Очистить ЧС", callback_data="admin_clear_blacklist_confirm")
+    kb.button(text="🔄 Обновить", callback_data="admin_stats")
+    kb.button(text="🔙 Назад", callback_data="admin_home")
     kb.adjust(1)
     return kb.as_markup()

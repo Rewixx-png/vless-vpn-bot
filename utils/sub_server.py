@@ -17,15 +17,13 @@ logger = logging.getLogger("SubServer")
 class SubscriptionServer:
     _external_cache = {"ts": 0.0, "links": []}
     @staticmethod
-    def _format_name(region_name: str, count: int, latency_ms: Optional[int], ai_available: bool, whitelist: bool) -> str:
+    def _format_name(region_name: str, count: int, speed_mbps: float, ai_available: bool, whitelist: bool) -> str:
         parts = [region_name, f"{count:02d}"]
 
-        if latency_ms is not None and latency_ms > 0:
-            parts.append(f"{latency_ms}ms")
+        if speed_mbps > 0:
+            parts.append(f"⚡ {speed_mbps:.1f}Mb/s")
 
         tags = []
-        if latency_ms is not None and latency_ms < 100:
-            tags.append("Fast")
         if ai_available:
             tags.append("AI")
         if whitelist:
@@ -120,7 +118,6 @@ class SubscriptionServer:
             user_id_raw = request.query.get('id')
             format_param = request.query.get('format', '').lower()
             types_param = request.query.get('types', '').lower()
-            # Check for different client types
             is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
             is_v2raytun = 'v2raytun' in user_agent
             is_happ = 'happ' in user_agent.lower()
@@ -190,7 +187,7 @@ class SubscriptionServer:
                 final_name = SubscriptionServer._format_name(
                     region_name=region_name,
                     count=count,
-                    latency_ms=sub.latency_ms,
+                    speed_mbps=sub.speed_mbps,
                     ai_available=sub.ai_available,
                     whitelist=is_wl
                 )
@@ -218,8 +215,6 @@ class SubscriptionServer:
             external_links = await SubscriptionServer._get_external_links(allowed_schemes)
             combined_links = renamed_links + external_links
 
-            # Default to plain text for most clients (Happ, V2RayTun, etc.)
-            # Only Clash clients get YAML
             if format_param in ["clash", "yaml", "yml"] or is_clash:
                 parsed_configs = []
                 for k in combined_links:
@@ -239,7 +234,6 @@ class SubscriptionServer:
                 filename = "config.txt"
                 content_type = "text/plain; charset=utf-8"
             else:
-                # Default: return plain text for compatibility
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"

@@ -11,11 +11,9 @@ ITEMS_PER_PAGE = 20
 
 @router.callback_query(F.data.startswith("manage_region_"))
 async def list_subs_in_region(callback: CallbackQuery, state: FSMContext):
-    # Parse data: manage_region_{REGION_NAME} or manage_region_{REGION_NAME}:{PAGE}
     data_part = callback.data.split("manage_region_")[1]
     
     if ":" in data_part:
-        # Splitting from right to handle colons in region names safely (unlikely but robust)
         region, page_str = data_part.rsplit(":", 1)
         try:
             page = int(page_str)
@@ -25,17 +23,13 @@ async def list_subs_in_region(callback: CallbackQuery, state: FSMContext):
         region = data_part
         page = 0
 
-    # Get all subs (Optimized: we could add pagination to Repo, 
-    # but slicing a list of <5000 items is acceptable for now)
     all_subs = await SubRepo.get_subs_by_region(region)
     total_items = len(all_subs)
     
     if total_items == 0:
         await callback.answer("В этом регионе нет ключей", show_alert=True)
-        # Optional: redirect back or show empty list
         return
 
-    # Calculate Pagination
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     
     if page >= total_pages:
@@ -78,7 +72,6 @@ async def show_sub_details(callback: CallbackQuery, state: FSMContext):
     status_emoji = "🟢 АКТИВЕН" if sub.is_active else "🔴 ОТКЛЮЧЕН"
     ai_status = "✅ Есть" if sub.ai_available else "❌ Нет"
     
-    # Format config to prevent massive messages
     short_config = sub.vless_key
     if len(short_config) > 50:
         short_config = short_config[:25] + "..." + short_config[-25:]
@@ -87,7 +80,7 @@ async def show_sub_details(callback: CallbackQuery, state: FSMContext):
         f"<blockquote>🆔 ID: <code>{sub.id}</code>\n"
         f"🌍 Страна: {sub.region}\n"
         f"📶 Статус: <b>{status_emoji}</b>\n"
-        f"⚡️ Пинг: {sub.latency_ms} ms\n"
+        f"⚡️ Скорость: {sub.speed_mbps:.1f} Mbps\n"
         f"🤖 AI доступ: {ai_status}\n\n"
         f"🔑 <b>Конфиг (Full):</b>\n<pre>{sub.vless_key}</pre></blockquote>"
     )
@@ -109,8 +102,6 @@ async def toggle_sub(callback: CallbackQuery, state: FSMContext):
     sub = await SubRepo.get_sub_by_id(sub_id)
     if sub:
         await SubRepo.toggle_active(sub_id, sub.is_active)
-        # Refresh the detail view
-        # We construct a fake callback data to reuse show_sub_details logic
         callback.data = f"sub_detail_{sub_id}"
         await show_sub_details(callback, state)
     else:

@@ -114,18 +114,17 @@ class XrayExecutor:
     async def cleanup(cls, process, config_path):
         if process:
             try:
+                # Force kill - use terminate first, then kill
                 if process.returncode is None:
                     try:
-                        os.kill(process.pid, signal.SIGKILL)
-                        await asyncio.wait_for(process.wait(), timeout=0.1)
-                    except (ProcessLookupError, OSError):
-                        pass
-                    except asyncio.TimeoutError:
-                        pass
-                    except Exception:
+                        process.terminate()
+                        await asyncio.wait_for(process.wait(), timeout=0.3)
+                    except:
                         try:
                             process.kill()
-                        except: pass
+                            await asyncio.wait_for(process.wait(), timeout=0.2)
+                        except:
+                            pass
             except Exception:
                 pass
         

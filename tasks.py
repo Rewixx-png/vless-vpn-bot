@@ -29,7 +29,6 @@ async def run_collector_task() -> Dict[str, Any]:
         logger.warning("⏸️ Collector aborted: Maintenance Mode is Active")
         return {"status": "skipped", "reason": "maintenance"}
 
-    # Check database config for collector switch
     enabled_str = await SystemRepo.get_config("collector_enabled")
     if enabled_str == "false":
         logger.warning("⏸️ Collector aborted: Disabled by Admin")
@@ -40,8 +39,10 @@ async def run_collector_task() -> Dict[str, Any]:
     
     try:
         result = await SubscriptionCollector.run_collection()
+        cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
+        logger.warning(f"🧹 Cleaned up {cleaned} dead subscriptions.")
         duration = asyncio.get_event_loop().time() - start_time
-        return {"success": True, "duration": duration, "result": result}
+        return {"success": True, "duration": duration, "result": result, "cleaned": cleaned}
     except Exception as e:
         logger.error(f"[COLLECTOR TASK] Collection failed: {e}")
         raise
@@ -67,10 +68,10 @@ async def check_stability_task() -> Dict[str, Any]:
     
     async def check_one(sub):
         try:
-            is_alive, _, _, _, _ = await VlessChecker.process_subscription(sub.vless_key)
-            return (True, {"id": sub.id, "is_alive": is_alive})
+            is_alive, _, latency, speed_mbps, _, _ = await VlessChecker.process_subscription(sub.vless_key)
+            return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
         except:
-            return (True, {"id": sub.id, "is_alive": False})
+            return (True, {"id": sub.id, "is_alive": False, "latency": 9999, "speed_mbps": 0.0})
 
     batch_res = await processor.process(
         items=subs,
@@ -85,12 +86,16 @@ async def check_stability_task() -> Dict[str, Any]:
             {
                 "id": u["id"], 
                 "is_active": u["is_alive"], 
-                "latency_ms": 9999 if not u["is_alive"] else 100, 
+                "latency_ms": u["latency"],
+                "speed_mbps": u["speed_mbps"],
                 "ai_available": False
             } 
             for u in updates
         ]
         await SubRepo.batch_update_status(status_updates)
+        
+        cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
+        logger.warning(f"🧹 Cleaned up {cleaned} dead subscriptions after stability check.")
 
     logger.warning(f"✅ Stability Check Done. Checked: {len(updates)}")
     return {"checked": len(updates)}

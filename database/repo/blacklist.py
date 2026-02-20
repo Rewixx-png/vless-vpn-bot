@@ -1,4 +1,4 @@
-from sqlalchemy import select, insert, delete
+from sqlalchemy import select, insert, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from database.core import async_session_factory
 from database.models import BlacklistedItem
@@ -26,11 +26,16 @@ class BlacklistRepo:
     @staticmethod
     async def get_count() -> int:
         async with async_session_factory() as session:
-            from sqlalchemy import func
             return await session.scalar(select(func.count(BlacklistedItem.id))) or 0
     
     @staticmethod
     async def clear_blacklist():
+        async with async_session_factory() as session:
+            await session.execute(delete(BlacklistedItem))
+            await session.commit()
+            
+    @staticmethod
+    async def clear_all():
         async with async_session_factory() as session:
             await session.execute(delete(BlacklistedItem))
             await session.commit()

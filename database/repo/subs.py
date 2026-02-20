@@ -1,20 +1,17 @@
 import time
 import logging
-from functools import lru_cache
-from typing import List, Dict, Any, Optional
-from sqlalchemy import select, delete, update, func, text, bindparam, desc
+from typing import List, Dict, Any
+from sqlalchemy import select, delete, update, func, text, desc, or_
 from database.core import async_session_factory
 from database.models import Subscription
 from database.repo.blacklist import BlacklistRepo
 
 logger = logging.getLogger("SubRepo")
 
-# Simple in-memory cache with TTL
 _cache = {}
 _cache_ttl = {}
 
 def _get_cached(key: str, ttl: int = 300):
-    """Get cached value if not expired"""
     now = time.time()
     if key in _cache and key in _cache_ttl:
         if now < _cache_ttl[key]:
@@ -25,12 +22,10 @@ def _get_cached(key: str, ttl: int = 300):
     return None
 
 def _set_cached(key: str, value: Any, ttl: int = 300):
-    """Set cached value with TTL"""
     _cache[key] = value
     _cache_ttl[key] = time.time() + ttl
 
 def _invalidate_cache(pattern: str = None):
-    """Invalidate cache entries matching pattern"""
     global _cache, _cache_ttl
     if pattern is None:
         _cache.clear()
@@ -41,7 +36,6 @@ def _invalidate_cache(pattern: str = None):
             del _cache[k]
             if k in _cache_ttl:
                 del _cache_ttl[k]
-
 
 class SubRepo:
     @staticmethod
@@ -58,19 +52,17 @@ class SubRepo:
 
     @staticmethod
     async def get_dead_subscriptions_for_check():
-        """Get only inactive subscriptions for recheck"""
         async with async_session_factory() as session:
             result = await session.execute(select(Subscription).where(Subscription.is_active == False))
             return result.scalars().all()
 
     @staticmethod
-    async def get_candidates_for_stability(limit: int = 100):
-        """Get active subscriptions ordered by stability streak"""
+    async def get_candidates_for_stability(limit: int = 200):
         async with async_session_factory() as session:
             result = await session.execute(
                 select(Subscription)
                 .where(Subscription.is_active == True)
-                .order_by(desc(Subscription.stability_streak))
+                .order_by(desc(Subscription.stability_streak), desc(Subscription.speed_mbps))
                 .limit(limit)
             )
             return result.scalars().all()
@@ -81,35 +73,39 @@ class SubRepo:
             result = await session.execute(
                 select(Subscription)
                 .where(
-                    (Subscription.region.like("%Unknown%")) | 
-                    (Subscription.region.like("%UNK%"))
+                    or_(
+                        Subscription.region.ilike("%unk%"),
+                        Subscription.region.ilike("%unknown%"),
+                        Subscription.region == "",
+                        Subscription.region.is_(None)
+                    )
                 )
             )
             return result.scalars().all()
 
     @staticmethod
-    async def get_all_active_keys() -> list[str]:
+    async def get_all_active_keys() -> list:
         async with async_session_factory() as session:
             stmt = (
                 select(Subscription.vless_key)
                 .where(Subscription.is_active == True)
-                .order_by(Subscription.latency_ms)
+                .order_by(Subscription.speed_mbps.desc())
             )
             result = await session.execute(stmt)
             return result.scalars().all()
 
     @staticmethod
-    async def get_all_keys_set() -> set[str]:
+    async def get_all_keys_set() -> set:
         async with async_session_factory() as session:
             result = await session.execute(select(Subscription.vless_key))
             return set(result.scalars().all())
 
     @staticmethod
     async def get_smart_keys(
-        regions: list[str] | None, 
-        tags: list[str] | None = None,
+        regions: list | None, 
+        tags: list | None = None,
         limit: int = 0
-    ) -> list[Subscription]:
+    ) -> list:
         async with async_session_factory() as session:
             stmt = (
                 select(Subscription)
@@ -117,14 +113,17 @@ class SubRepo:
             )
 
             if regions:
-                stmt = stmt.where(Subscription.region.in_(regions))
+                if "__NONE__" in regions:
+                    stmt = stmt.where(1 == 0)
+                else:
+                    stmt = stmt.where(Subscription.region.in_(regions))
             
             if tags:
                 if 'ai' in tags:
                     stmt = stmt.where(Subscription.ai_available == True)
                 
                 if 'fast' in tags:
-                    stmt = stmt.where(Subscription.latency_ms < 100)
+                    stmt = stmt.where(Subscription.speed_mbps > 10.0)
                 
                 if 'wl' in tags:
                     stmt = stmt.where(
@@ -133,10 +132,9 @@ class SubRepo:
                     )
                 
                 if 'stable' in tags:
-                    # Assume stable means streak > 144 (approx 24 hours if checked every 10 min)
                     stmt = stmt.where(Subscription.stability_streak >= 144)
 
-            stmt = stmt.order_by(Subscription.latency_ms.asc())
+            stmt = stmt.order_by(Subscription.speed_mbps.desc())
 
             if limit > 0:
                 stmt = stmt.limit(limit)
@@ -146,9 +144,8 @@ class SubRepo:
 
     @staticmethod
     async def get_regions(protocol: str = None):
-        """Get unique regions with caching"""
         cache_key = f"regions_{protocol}"
-        cached = _get_cached(cache_key, ttl=60)  # Cache for 60 seconds
+        cached = _get_cached(cache_key, ttl=60)
         if cached is not None:
             return cached
             
@@ -164,7 +161,7 @@ class SubRepo:
     async def get_subs_by_region(region: str):
         async with async_session_factory() as session:
             stmt = select(Subscription).where(Subscription.region == region)
-            stmt = stmt.order_by(Subscription.latency_ms)
+            stmt = stmt.order_by(Subscription.speed_mbps.desc())
             result = await session.execute(stmt)
             return result.scalars().all()
 
@@ -175,7 +172,6 @@ class SubRepo:
     
     @staticmethod
     async def get_subs_by_ids(sub_ids: List[int]) -> List[Subscription]:
-        """Fetch multiple subscriptions by IDs in one query"""
         if not sub_ids:
             return []
         async with async_session_factory() as session:
@@ -185,14 +181,13 @@ class SubRepo:
     
     @staticmethod
     async def batch_update_status(updates: List[Dict[str, Any]]):
-        """Batch update subscription status - reduces N queries to 1"""
         if not updates:
             return
         
         async with async_session_factory() as session:
-            logger.info(f"[DB] batch_update_status: {len(updates)} ids")
             case_active = []
             case_latency = []
+            case_speed = []
             case_ai = []
             case_death = []
             ids = []
@@ -201,15 +196,19 @@ class SubRepo:
                 ids.append(upd["id"])
                 case_active.append(f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}")
                 case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
+                case_speed.append(f"WHEN {upd['id']} THEN {upd.get('speed_mbps', 0.0)}")
                 case_ai.append(f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}")
-                death_count = upd.get("death_count", 0)
-                case_death.append(f"WHEN {upd['id']} THEN {death_count}")
+                if not upd['is_active']:
+                    case_death.append(f"WHEN {upd['id']} THEN death_count + 1")
+                else:
+                    case_death.append(f"WHEN {upd['id']} THEN 0")
             
             sql = text(f"""
                 UPDATE subscriptions
                 SET 
                     is_active = CASE id {' '.join(case_active)} END,
                     latency_ms = CASE id {' '.join(case_latency)} END,
+                    speed_mbps = CASE id {' '.join(case_speed)} END,
                     ai_available = CASE id {' '.join(case_ai)} END,
                     death_count = CASE id {' '.join(case_death)} END
                 WHERE id IN ({','.join(map(str, ids))})
@@ -221,18 +220,15 @@ class SubRepo:
     
     @staticmethod
     async def batch_update_regions(updates: List[Dict[str, Any]]):
-        """Batch update subscription regions"""
         if not updates:
             return
         
         async with async_session_factory() as session:
-            logger.info(f"[DB] batch_update_regions: {len(updates)} ids")
             case_regions = []
             ids = []
             
             for upd in updates:
                 ids.append(upd["id"])
-                # Escape single quotes in region names
                 region = upd["region"].replace("'", "''")
                 case_regions.append(f"WHEN {upd['id']} THEN '{region}'")
             
@@ -248,7 +244,6 @@ class SubRepo:
 
     @staticmethod
     async def batch_update_stability(updates: List[Dict[str, Any]]):
-        """Batch update stability streaks"""
         if not updates:
             return
 
@@ -260,7 +255,6 @@ class SubRepo:
                 sub_id = upd["id"]
                 ids.append(sub_id)
                 is_alive = upd["is_alive"]
-                # Logic: If alive, increment streak. If dead, reset to 0.
                 if is_alive:
                     case_streak.append(f"WHEN {sub_id} THEN stability_streak + 1")
                 else:
@@ -287,15 +281,25 @@ class SubRepo:
         async with async_session_factory() as session:
             await session.execute(delete(Subscription))
             await session.commit()
+            
+    @staticmethod
+    async def cleanup_dead_subs(max_deaths: int = 5) -> int:
+        async with async_session_factory() as session:
+            stmt = delete(Subscription).where(Subscription.death_count >= max_deaths)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
     
     @staticmethod
     async def move_unknown_to_blacklist():
-        """Move all UNKNOWN subs to blacklist table and delete from subs"""
         async with async_session_factory() as session:
-            # 1. Get all unknown subs
             stmt = select(Subscription).where(
-                (Subscription.region.like("%Unknown%")) | 
-                (Subscription.region.like("%UNK%"))
+                or_(
+                    Subscription.region.ilike("%unk%"),
+                    Subscription.region.ilike("%unknown%"),
+                    Subscription.region == "",
+                    Subscription.region.is_(None)
+                )
             )
             result = await session.execute(stmt)
             subs = result.scalars().all()
@@ -303,14 +307,11 @@ class SubRepo:
             if not subs:
                 return 0
                 
-            # 2. Add to blacklist repo logic (doing raw here for atomicity)
-            # Need to import BlacklistedItem locally to avoid circular import if any
             from database.models import BlacklistedItem
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             
             count = 0
             for sub in subs:
-                # Insert ignore duplicate
                 ins = pg_insert(BlacklistedItem).values(
                     vless_key=sub.vless_key, 
                     reason="Unknown Region (Admin Action)"
@@ -318,10 +319,13 @@ class SubRepo:
                 await session.execute(ins)
                 count += 1
             
-            # 3. Delete from subscriptions
             del_stmt = delete(Subscription).where(
-                (Subscription.region.like("%Unknown%")) | 
-                (Subscription.region.like("%UNK%"))
+                or_(
+                    Subscription.region.ilike("%unk%"),
+                    Subscription.region.ilike("%unknown%"),
+                    Subscription.region == "",
+                    Subscription.region.is_(None)
+                )
             )
             await session.execute(del_stmt)
             await session.commit()
@@ -342,11 +346,12 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
-    async def update_sub_status(sub_id: int, is_active: bool, latency: int, ai_available: bool = False):
+    async def update_sub_status(sub_id: int, is_active: bool, latency: int, speed_mbps: float, ai_available: bool = False):
         async with async_session_factory() as session:
             stmt = update(Subscription).where(Subscription.id == sub_id).values(
                 is_active=is_active,
                 latency_ms=latency,
+                speed_mbps=speed_mbps,
                 ai_available=ai_available
             )
             await session.execute(stmt)
@@ -360,7 +365,7 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
-    async def add_subscription(vless_key: str, region: str, latency: int, ai_available: bool = False):
+    async def add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False):
         async with async_session_factory() as session:
             existing = await session.scalar(select(Subscription).where(Subscription.vless_key == vless_key))
             if not existing:
@@ -368,6 +373,7 @@ class SubRepo:
                     vless_key=vless_key, 
                     region=region, 
                     latency_ms=latency,
+                    speed_mbps=speed_mbps,
                     ai_available=ai_available
                 )
                 session.add(sub)
@@ -387,50 +393,38 @@ class SubRepo:
             stmt = (
                 select(Subscription)
                 .where(Subscription.region == region)
-                .order_by(Subscription.is_active.asc(), Subscription.latency_ms.desc())
+                .order_by(Subscription.is_active.asc(), Subscription.speed_mbps.asc())
                 .limit(1)
             )
             result = await session.execute(stmt)
             return result.scalars().first()
 
     @staticmethod
-    async def smart_add_subscription(vless_key: str, region: str, latency: int, ai_available: bool = False) -> bool:
-        """Add subscription if not duplicate and not blacklisted."""
-        
-        # 1. Check Blacklist
+    async def smart_add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False) -> bool:
         is_banned = await BlacklistRepo.is_blacklisted(vless_key)
         if is_banned:
-            logger.debug(f"[ADD] Rejected - Blacklisted: {vless_key[:50]}...")
             return False
 
-        if "Unknown" in region or "UNK" in region:
-            logger.warning(f"[ADD] Rejected - Unknown region: {region[:50]}")
+        if not region or "unk" in region.lower() or region == "":
             return False
 
         async with async_session_factory() as session:
-            # 2. Check for duplicate
             existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))
             if existing:
-                logger.debug(f"[ADD] Rejected - Duplicate: {vless_key[:50]}...")
                 return False
 
-            count = await session.scalar(
-                select(func.count(Subscription.id)).where(Subscription.region == region)
-            )
-            count = count or 0
-            
             sub = Subscription(
                 vless_key=vless_key, 
                 region=region, 
                 latency_ms=latency,
+                speed_mbps=speed_mbps,
                 ai_available=ai_available
             )
             session.add(sub)
             await session.commit()
             
-            logger.info(f"[ADD] SUCCESS - Region: {region}, Count: {count+1}, Latency: {latency}ms, AI: {ai_available}")
             return True
 
     @staticmethod
     async def enforce_limits():
-        logger.info("[CLEANUP] Auto-cleanup is DISABLED. No configs will be deleted automatically.")
+        pass

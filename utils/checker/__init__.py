@@ -13,24 +13,16 @@ class VlessChecker:
         return LinkParser.parse_vless(config_url)
 
     @staticmethod
-    async def process_subscription(config_url: str) -> tuple[bool, str, int, bool, str]:
-        # Попытка через API сервиса
-        success, region, latency, ai, err = await CheckerAPI.check(config_url)
+    async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str]:
+        success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
         
         if not success and err == "Checker Service Offline":
-            return False, "", 0, False, "Checker Service Offline"
+            return False, "", 0, 0.0, False, "Checker Service Offline"
             
-        return success, region, latency, ai, err
+        return success, region, latency, speed_mbps, ai, err
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list[tuple[str, str]], session: aiohttp.ClientSession) -> dict[str, str]:
-        """
-        Wrapper for GeoIP batch lookup.
-        Args:
-            hosts_data: List of tuples (host, remark)
-            session: aiohttp session
-        """
-        # Backwards compatibility: if list of strings passed instead of tuples
         if hosts_data and isinstance(hosts_data[0], str):
             hosts_data = [(h, "") for h in hosts_data]
             

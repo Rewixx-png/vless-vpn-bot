@@ -23,7 +23,6 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
-    # Removed Deep Link button because Telegram doesn't support custom schemes in URL buttons
     kb.button(text="⚙️ Настроить фильтры", callback_data="settings_main")
     kb.button(text="🔙 В меню", callback_data="home")
     kb.adjust(1)
@@ -50,9 +49,8 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
         return f"{status} {label}"
     
     kb.button(text=get_btn("stable", "🛡 Stable (24h Uptime)"), callback_data=f"{prefix}_stable")
-    
     kb.button(text=get_btn("ai", "AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
-    kb.button(text=get_btn("fast", "Low Latency (<100ms)"), callback_data=f"{prefix}_fast")
+    kb.button(text=get_btn("fast", "High Speed (>10Mbps)"), callback_data=f"{prefix}_fast")
     kb.button(text=get_btn("wl", "Reality / Vision (Stealth)"), callback_data=f"{prefix}_wl")
     
     kb.adjust(1)
@@ -92,15 +90,10 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
     for reg in all_regions:
         is_selected = True if is_all_on else (reg in real_selection)
         status = "☑️" if is_selected else "⬜️"
-        
-        # FIXED: Removed the split logic to keep flags (emojis) in the button text
-        # Old: clean_reg = reg.split(" ")[1] if " " in reg else reg
-        # New: Use full region string which includes the flag
         clean_reg = reg
-        
         kb.button(text=f"{status} {clean_reg}", callback_data=f"{prefix}_{reg}")
 
-    kb.adjust(2) # Changed to 2 columns for better visibility of flags
+    kb.adjust(2) 
 
     if group_id is None:
         if is_all_on:

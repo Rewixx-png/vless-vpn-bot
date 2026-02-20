@@ -33,7 +33,6 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
         limit_txt = f"{user.subscription_limit} лучших"
 
     encoded_url = urllib.parse.quote(sub_url)
-    # Удалена Deep Link логика, так как Telegram не поддерживает clash:// в кнопках
     
     warning = ""
     if protocol == "http":
@@ -104,7 +103,7 @@ async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
         "Выберите типы серверов, которые вам нужны:\n\n"
         "🛡 <b>Stable (Elite):</b> Серверы с аптаймом 24ч+ без единого сбоя.\n"
         "▫️ <b>AI Ready:</b> Разблокирует ChatGPT, Gemini, Claude.\n"
-        "▫️ <b>Low Latency:</b> Серверы с пингом &lt; 100ms.\n"
+        "▫️ <b>High Speed:</b> Серверы со скоростью &gt; 10 Mbps.\n"
         "▫️ <b>Reality/Vision:</b> Высокая скрытность от блокировок.\n\n"
         "<i>✅ - Включено в подписку\n⬜️ - Обычные серверы</i>"
     )
@@ -142,7 +141,7 @@ async def open_settings_limit(callback: CallbackQuery, state: FSMContext):
         "━━━━━━━━━━━━━━━━━━\n\n"
         "Ограничьте количество серверов в подписке, если ваше приложение тормозит от большого списка.\n\n"
         f"<b>Текущий лимит:</b> {'♾️ Безлимит' if limit == 0 else str(limit)}\n\n"
-        "<i>Бот автоматически подберет лучшие серверы по пингу.</i>"
+        "<i>Бот автоматически подберет лучшие серверы по скорости.</i>"
     )
     
     await edit_or_answer(
@@ -233,7 +232,9 @@ async def toggle_country(callback: CallbackQuery):
         else:
             new_filter.append(region)
 
-    if not new_filter or set(new_filter) == set(all_regions):
+    if not new_filter:
+        new_filter = ["__EMPTY__"]
+    elif set(new_filter) == set(all_regions):
         new_filter = None
 
     await UserRepo.update_user_filter(user_id, new_filter)
@@ -248,6 +249,6 @@ async def set_all_on(callback: CallbackQuery):
 @router.callback_query(F.data == "set_all_off")
 async def set_all_off(callback: CallbackQuery):
     all_regions = await SubRepo.get_regions()
-    empty_filter = ["__EMPTY__"] 
+    empty_filter = ["__EMPTY__"]
     await UserRepo.update_user_filter(callback.from_user.id, empty_filter)
     await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, empty_filter))

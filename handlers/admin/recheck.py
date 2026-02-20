@@ -62,7 +62,6 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
     await _run_recheck_process(subs, msg)
 
 async def _run_recheck_process(subs: list, msg: Message):
-    """Common logic for recheck process"""
     if not subs:
         BotState.set_maintenance(False)
         await msg.edit_text(
@@ -105,7 +104,7 @@ async def _run_recheck_process(subs: list, msg: Message):
 
     async def process_sub(sub):
         try:
-            is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
+            is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
             
             status_upd = None
             region_upd = None
@@ -119,6 +118,7 @@ async def _run_recheck_process(subs: list, msg: Message):
                     "id": sub.id,
                     "is_active": True,
                     "latency_ms": latency,
+                    "speed_mbps": speed_mbps,
                     "ai_available": ai_avail
                 }
                 
@@ -134,6 +134,7 @@ async def _run_recheck_process(subs: list, msg: Message):
                     "id": sub.id,
                     "is_active": False,
                     "latency_ms": 9999,
+                    "speed_mbps": 0.0,
                     "ai_available": False
                 }
                 result_status = "dead"
@@ -187,6 +188,7 @@ async def _run_recheck_process(subs: list, msg: Message):
             on_progress=on_progress
         )
         await flush_buffers()
+        await SubRepo.cleanup_dead_subs(max_deaths=3)
         
     finally:
         BotState.set_maintenance(False)

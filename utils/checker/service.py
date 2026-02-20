@@ -10,6 +10,7 @@ import logging
 import json
 import time
 import aiohttp
+import subprocess
 from aiohttp import web
 from aiohttp_socks import ProxyConnector
 
@@ -26,9 +27,17 @@ logging.getLogger("aiohttp.access").setLevel(logging.ERROR)
 
 logger = logging.getLogger("CheckerService")
 
-# INCREASED LIMIT TO 500 FOR HIGH PERFORMANCE
-MAX_CONCURRENT_CHECKS = 500
+MAX_CONCURRENT_CHECKS = 50
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
+
+async def cleanup_zombie_xrays():
+    """Periodically kill zombie xray processes and clean temp files"""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            subprocess.run("pkill -9 -f 'xray -c /tmp/xray_check' 2>/dev/null; rm -f /tmp/xray_check_*.json 2>/dev/null", shell=True, capture_output=True)
+        except Exception:
+            pass
 
 async def check_handler(request):
     try:
@@ -48,12 +57,13 @@ async def check_handler(request):
                 })
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
-            timeout = aiohttp.ClientTimeout(total=5.0, connect=2.5)
+            timeout = aiohttp.ClientTimeout(total=8.0, connect=3.0)
             
             result = {
                 "success": False,
                 "region": "🌍 UNK",
                 "latency": 9999,
+                "speed_mbps": 0.0,
                 "ai": False,
                 "error": "OK"
             }
@@ -85,12 +95,26 @@ async def check_handler(request):
                         raise Exception(f"HTTPS SSL Failed: {e}")
 
                     if https_ok:
+                        speed_mbps = 0.0
+                        try:
+                            st_start = time.monotonic()
+                            async with proxy_session.get('http://speed.cloudflare.com/__down?bytes=150000', timeout=aiohttp.ClientTimeout(total=4.0)) as st_resp:
+                                if st_resp.status == 200:
+                                    content = await st_resp.read()
+                                    duration = time.monotonic() - st_start
+                                    if duration > 0:
+                                        speed_mbps = round((len(content) * 8) / (duration * 1000000), 2)
+                                else:
+                                    raise Exception("Speedtest bad status")
+                        except Exception as e:
+                            raise Exception(f"Speedtest Failed (Dead): {e}")
+                        
+                        result["speed_mbps"] = speed_mbps
                         result["success"] = True
                         
-                        # Определяем регион через GeoIP (локальная база теперь)
                         result["region"] = await GeoIP.identify_region(proxy_session)
                         
-                        if result["latency"] < 2000:
+                        if speed_mbps > 0.5:
                             try:
                                 ai_timeout = aiohttp.ClientTimeout(total=1.5)
                                 openai_ok = False
@@ -123,16 +147,16 @@ async def health_check(request):
     return web.Response(text="OK")
 
 async def init_geoip():
-    """Фоновая загрузка GeoIP при старте"""
     await GeoIP.initialize()
 
 def main():
-    # Запуск инициализации GeoIP до старта сервера (или параллельно)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    # Сначала скачиваем базу, если её нет
     loop.run_until_complete(GeoIP.initialize())
+    
+    # Start watchdog for zombie cleanup
+    loop.create_task(cleanup_zombie_xrays())
     
     app = web.Application()
     app.router.add_post('/check', check_handler)

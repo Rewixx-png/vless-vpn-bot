@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, String, Boolean, Integer, DateTime, Text, ForeignKey
+from sqlalchemy import BigInteger, String, Boolean, Integer, DateTime, Text, ForeignKey, Float
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 import datetime
@@ -43,6 +43,7 @@ class Subscription(Base):
     vless_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     region: Mapped[str] = mapped_column(String, nullable=False, index=True)
     latency_ms: Mapped[int] = mapped_column(Integer, default=9999)
+    speed_mbps: Mapped[float] = mapped_column(Float, default=0.0)
     ai_available: Mapped[bool] = mapped_column(Boolean, default=False)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

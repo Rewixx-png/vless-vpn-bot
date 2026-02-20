@@ -7,19 +7,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.repo import StatsRepo
-from keyboards.admin import back_to_admin
+from database.repo.blacklist import BlacklistRepo
+from keyboards.admin import back_to_admin, stats_kb
 from handlers.admin.utils import admin_edit_or_answer
 
 router = Router()
 logger = logging.getLogger("AdminStats")
-
-def stats_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📥 Список Юзеров (.txt)", callback_data="admin_dl_users")
-    kb.button(text="🔄 Обновить", callback_data="admin_stats")
-    kb.button(text="🔙 Назад", callback_data="admin_home")
-    kb.adjust(1)
-    return kb.as_markup()
 
 @router.callback_query(F.data == "admin_stats")
 async def show_stats(callback: CallbackQuery, state: FSMContext):
@@ -49,6 +42,22 @@ async def show_stats(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error in stats: {e}", exc_info=True)
         await callback.answer(f"Ошибка статистики: {str(e)}", show_alert=True)
+
+@router.callback_query(F.data == "admin_clear_blacklist_confirm")
+async def clear_blacklist_action(callback: CallbackQuery, state: FSMContext):
+    try:
+        count = await BlacklistRepo.get_count()
+        if count == 0:
+            await callback.answer("Черный список уже пуст!", show_alert=True)
+            return
+
+        await BlacklistRepo.clear_all()
+        await callback.answer(f"✅ Удалено {count} записей из ЧС", show_alert=True)
+        
+        # Обновляем статистику
+        await show_stats(callback, state)
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
 
 @router.callback_query(F.data == "admin_dl_users")
 async def download_users_list(callback: CallbackQuery):

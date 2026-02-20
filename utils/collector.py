@@ -105,13 +105,14 @@ class SubscriptionCollector:
                 if not cls._parse_vless(link):
                     return False, "parse_error"
 
-                is_alive, region, latency, ai_avail, err = await VlessChecker.process_subscription(link)
+                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
                 
                 if is_alive:
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
                         latency=latency,
+                        speed_mbps=speed_mbps,
                         ai_available=ai_avail
                     )
                     
