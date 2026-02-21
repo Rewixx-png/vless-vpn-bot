@@ -1,6 +1,7 @@
 import time
 import logging
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete, update, func, text, desc, or_
 from database.core import async_session_factory
 from database.models import Subscription
@@ -104,13 +105,18 @@ class SubRepo:
     async def get_smart_keys(
         regions: list | None, 
         tags: list | None = None,
-        limit: int = 0
+        limit: int = 0,
+        auto_clean: bool = False
     ) -> list:
         async with async_session_factory() as session:
             stmt = (
                 select(Subscription)
                 .where(Subscription.is_active == True)
             )
+            
+            if auto_clean:
+                time_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
+                stmt = stmt.where(Subscription.last_checked_at >= time_threshold)
 
             if regions:
                 if "__NONE__" in regions:
@@ -210,7 +216,8 @@ class SubRepo:
                     latency_ms = CASE id {' '.join(case_latency)} END,
                     speed_mbps = CASE id {' '.join(case_speed)} END,
                     ai_available = CASE id {' '.join(case_ai)} END,
-                    death_count = CASE id {' '.join(case_death)} END
+                    death_count = CASE id {' '.join(case_death)} END,
+                    last_checked_at = NOW()
                 WHERE id IN ({','.join(map(str, ids))})
             """)
             
@@ -352,7 +359,8 @@ class SubRepo:
                 is_active=is_active,
                 latency_ms=latency,
                 speed_mbps=speed_mbps,
-                ai_available=ai_available
+                ai_available=ai_available,
+                last_checked_at=func.now()
             )
             await session.execute(stmt)
             await session.commit()

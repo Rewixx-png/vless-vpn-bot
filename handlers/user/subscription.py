@@ -8,6 +8,7 @@ from keyboards.user import settings_countries_kb, back_to_home, settings_main_kb
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
 from config import config
+from utils.qr import QRGenerator
 
 router = Router()
 
@@ -63,6 +64,29 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
         media_url="video"
     )
 
+@router.callback_query(F.data == "sub_qr_main")
+async def show_main_qr(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    db_domain = await SystemRepo.get_config("public_domain")
+    domain = db_domain if db_domain else config.public_domain
+    
+    if domain:
+        protocol = "https"
+        host = domain
+    else:
+        protocol = "http"
+        host = f"{config.PUBLIC_IP}:{config.WEB_PORT}"
+    
+    sub_url = f"{protocol}://{host}/sub?id={user_id}"
+    qr_file = QRGenerator.generate(sub_url)
+    
+    await callback.message.answer_photo(
+        photo=qr_file,
+        caption="<b>📱 Ваш QR-код для подключения</b>\nОтсканируйте его в приложении (v2rayNG, V2Box, FlClash и др.)",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
 @router.callback_query(F.data == "settings_main")
 async def open_settings_main(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -73,6 +97,7 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
 
     user = await UserRepo.get_user(callback.from_user.id)
     limit = user.subscription_limit if user else 0
+    use_fragment = user.use_fragment if user else False
     
     text = (
         "<b>⚙️ CONFIGURATION | НАСТРОЙКИ</b>\n"
@@ -82,16 +107,25 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
         "<b>Доступные опции:</b>\n"
         "🌍 <b>Страны:</b> Выберите конкретные регионы.\n"
         "⚡ <b>Теги:</b> Фильтр для AI, Игр или Reality.\n"
-        "🔢 <b>Лимит:</b> Ограничить кол-во серверов (для старых телефонов)."
+        "🔢 <b>Лимит:</b> Ограничить кол-во серверов (для старых телефонов).\n"
+        "🛡 <b>Фрагментация:</b> Обход жесткого DPI (в РФ/Иране)."
     )
     
     await edit_or_answer(
         callback.message,
         text,
-        settings_main_kb(limit),
+        settings_main_kb(limit, use_fragment),
         state,
         media_url="video"
     )
+
+@router.callback_query(F.data == "toggle_fragment")
+async def toggle_fragment_action(callback: CallbackQuery, state: FSMContext):
+    user = await UserRepo.get_user(callback.from_user.id)
+    if user:
+        new_state = not user.use_fragment
+        await UserRepo.update_fragment_setting(user.id, new_state)
+    await open_settings_main(callback, state)
 
 @router.callback_query(F.data == "settings_tags")
 async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
@@ -186,7 +220,7 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
         await edit_or_answer(
             message, 
             f"✅ Лимит установлен: <b>{limit}</b>",
-            settings_main_kb(limit),
+            settings_main_kb(limit, True), # Passing dummy True as user.use_fragment will update on next open
             state,
             media_url="video"
         )

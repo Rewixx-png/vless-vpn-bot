@@ -23,18 +23,21 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
+    kb.button(text="📱 Показать QR-код", callback_data="sub_qr_main")
     kb.button(text="⚙️ Настроить фильтры", callback_data="settings_main")
     kb.button(text="🔙 В меню", callback_data="home")
     kb.adjust(1)
     return kb.as_markup()
 
-def settings_main_kb(current_limit: int):
+def settings_main_kb(current_limit: int, use_fragment: bool = False):
     kb = InlineKeyboardBuilder()
     limit_text = "♾️ Безлимит" if current_limit == 0 else f"{current_limit} шт."
+    frag_text = "✅ Вкл" if use_fragment else "❌ Выкл"
     
     kb.button(text="🌍 Фильтр стран", callback_data="settings_countries")
     kb.button(text="⚡ Тип серверов", callback_data="settings_tags")
     kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
+    kb.button(text=f"🛡 Фрагментация (DPI): {frag_text}", callback_data="toggle_fragment")
     kb.button(text="🔙 Назад", callback_data="home")
     kb.adjust(1)
     return kb.as_markup()
@@ -121,6 +124,7 @@ def groups_list_kb(groups: list):
 
 def group_view_kb(group_id: int, url: str):
     kb = InlineKeyboardBuilder()
+    kb.button(text="📱 Показать QR-код", callback_data=f"group_qr_{group_id}")
     kb.button(text="🌍 Выбор стран", callback_data=f"group_edit_countries_{group_id}")
     kb.button(text="⚡ Настройка тегов", callback_data=f"group_edit_tags_{group_id}")
     kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}")

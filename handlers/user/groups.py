@@ -9,6 +9,7 @@ from keyboards.user import groups_list_kb, back_to_home, settings_countries_kb, 
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
 from config import config
+from utils.qr import QRGenerator
 
 router = Router()
 
@@ -116,7 +117,26 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
     
     await edit_or_answer(callback.message, text, group_view_kb(group.id, link_url), state, media_url="video")
 
-# --- COUNTRIES EDITING ---
+@router.callback_query(F.data.startswith("group_qr_"))
+async def show_group_qr(callback: CallbackQuery):
+    group_id = int(callback.data.split("group_qr_")[1])
+    groups = await GroupRepo.get_user_groups(callback.from_user.id)
+    group = next((g for g in groups if g.id == group_id), None)
+    
+    if not group:
+        await callback.answer("Группа не найдена", show_alert=True)
+        return
+        
+    base = await get_base_url()
+    link_url = f"{base}/sub?id={callback.from_user.id}/{group.name}"
+    
+    qr_file = QRGenerator.generate(link_url)
+    await callback.message.answer_photo(
+        photo=qr_file,
+        caption=f"<b>📱 QR-код для группы: {group.name}</b>\nОтсканируйте его в приложении.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("group_edit_countries_"))
 async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
@@ -183,7 +203,7 @@ async def toggle_group_country(callback: CallbackQuery):
 async def group_set_all_on(callback: CallbackQuery):
     group_id = int(callback.data.split("_")[-1])
     all_regions = await SubRepo.get_regions()
-    await GroupRepo.update_group_countries(group_id, None) # None = All
+    await GroupRepo.update_group_countries(group_id, None) 
     await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, None, group_id))
 
 @router.callback_query(F.data.startswith("g_set_all_off_"))
@@ -192,8 +212,6 @@ async def group_set_all_off(callback: CallbackQuery):
     all_regions = await SubRepo.get_regions()
     await GroupRepo.update_group_countries(group_id, ["__EMPTY__"])
     await callback.message.edit_reply_markup(reply_markup=settings_countries_kb(all_regions, ["__EMPTY__"], group_id))
-
-# --- TAGS EDITING ---
 
 @router.callback_query(F.data.startswith("group_edit_tags_"))
 async def edit_group_tags(callback: CallbackQuery, state: FSMContext):
@@ -221,7 +239,7 @@ async def edit_group_tags(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("g_toggle_tag_"))
 async def toggle_group_tag(callback: CallbackQuery):
     prefix = "g_toggle_tag_"
-    data = callback.data[len(prefix):] # {id}_{tag}
+    data = callback.data[len(prefix):] 
     try:
         group_id_str, tag = data.split("_", 1)
         group_id = int(group_id_str)

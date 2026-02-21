@@ -75,3 +75,17 @@ class UserRepo:
             stmt = update(User).where(User.id == user_id).values(subscription_limit=limit)
             await session.execute(stmt)
             await session.commit()
+
+    @staticmethod
+    async def update_fragment_setting(user_id: int, state: bool):
+        async with async_session_factory() as session:
+            stmt = update(User).where(User.id == user_id).values(use_fragment=state)
+            await session.execute(stmt)
+            await session.commit()
+
+    @staticmethod
+    async def get_users_with_region(region: str) -> list[int]:
+        async with async_session_factory() as session:
+            stmt = select(User.id).where(User.country_filter.like(f"%{region}%"))
+            result = await session.execute(stmt)
+            return result.scalars().all()

@@ -16,6 +16,8 @@ class User(Base):
     tags_filter: Mapped[str] = mapped_column(Text, nullable=True, default=None)
     
     subscription_limit: Mapped[int] = mapped_column(Integer, default=0)
+    language: Mapped[str] = mapped_column(String, default="ru")
+    use_fragment: Mapped[bool] = mapped_column(Boolean, default=False)
     
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -49,12 +51,28 @@ class Subscription(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     death_count: Mapped[int] = mapped_column(Integer, default=0)
     stability_streak: Mapped[int] = mapped_column(Integer, default=0)
+    
+    last_checked_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     added_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     def __repr__(self):
         return f"<Subscription(id={self.id}, region='{self.region}')>"
+
+class SubscriptionSource(Base):
+    __tablename__ = "subscription_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    added_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 class BlacklistedItem(Base):
     __tablename__ = "blacklist"

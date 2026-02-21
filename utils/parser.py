@@ -11,7 +11,6 @@ class LinkParser:
                 return None
                 
             full_link = link
-            # Убираем пробелы и переносы
             link = link.strip()
             rest = link[8:]
             
@@ -34,7 +33,6 @@ class LinkParser:
             if ":" in host_port:
                 server, port_str = host_port.rsplit(":", 1)
                 
-                # IPv6 fix
                 if server.startswith("[") and server.endswith("]"):
                     server = server[1:-1]
                 
@@ -68,6 +66,7 @@ class LinkParser:
                 "serviceName": get_p("serviceName", ""),
                 "mode": get_p("mode", ""),
                 "encryption": get_p("encryption", "none"),
+                "fragment": get_p("fragment", ""),
                 "ps": remarks,
                 "name": remarks,
                 "full_config": full_link,

@@ -2,7 +2,7 @@ import logging
 import aiohttp
 from utils.parser import LinkParser
 from utils.checker.api import CheckerAPI
-from utils.checker.geoip import GeoIP
+from utils.checker.geo_ip import GeoIP
 from utils.checker.xray import XrayExecutor
 
 logger = logging.getLogger("Checker")

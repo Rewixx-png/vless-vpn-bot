@@ -3,6 +3,7 @@ import asyncio
 import os
 import random
 import logging
+import uuid
 from utils.parser import LinkParser
 
 logger = logging.getLogger("XrayCore")
@@ -86,7 +87,9 @@ class XrayExecutor:
             return None, 0, "Invalid Link Format"
 
         local_port = random.randint(20000, 60000)
-        config_path = f"/tmp/xray_check_{local_port}.json"
+        # Use UUID to prevent collision between workers
+        unique_id = uuid.uuid4().hex
+        config_path = f"/tmp/xray_{unique_id}.json"
 
         try:
             xray_conf = cls._generate_config(parsed, local_port)

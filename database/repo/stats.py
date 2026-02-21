@@ -5,7 +5,6 @@ import math
 import logging
 
 class StatsRepo:
-    # Mapping for normalizing legacy full names to 2-letter codes
     COUNTRY_MAP = {
         "germany": "De", "deutschland": "De", "de": "De",
         "netherlands": "Nl", "the netherlands": "Nl", "nl": "Nl",
@@ -84,7 +83,6 @@ class StatsRepo:
 
     @staticmethod
     async def get_full_stats():
-        """Полная статистика для Админа (включая юзеров и ЧС)"""
         async with async_session_factory() as session:
             users_count = await session.scalar(select(func.count(User.id)))
             subs_count = await session.scalar(select(func.count(Subscription.id)))
@@ -103,7 +101,6 @@ class StatsRepo:
 
     @staticmethod
     async def get_all_users_detailed():
-        """Get list of all users for export"""
         async with async_session_factory() as session:
             stmt = select(User).order_by(User.id)
             result = await session.execute(stmt)
@@ -111,7 +108,6 @@ class StatsRepo:
 
     @staticmethod
     async def get_network_stats():
-        """Публичная статистика для Юзеров"""
         async with async_session_factory() as session:
             active_subs = await session.scalar(select(func.count(Subscription.id)).where(Subscription.is_active == True))
             regions_count = await session.scalar(select(func.count(distinct(Subscription.region))).where(Subscription.is_active == True))
@@ -126,7 +122,6 @@ class StatsRepo:
 
     @staticmethod
     async def get_public_stats():
-        """Краткая статистика для главного меню"""
         async with async_session_factory() as session:
             active_subs = await session.scalar(select(func.count(Subscription.id)).where(Subscription.is_active == True))
             regions_count = await session.scalar(select(func.count(distinct(Subscription.region))).where(Subscription.is_active == True))
@@ -136,8 +131,17 @@ class StatsRepo:
             }
 
     @staticmethod
+    async def get_regions_counts() -> dict[str, int]:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Subscription.region, func.count(Subscription.id))
+                .where(Subscription.is_active == True)
+                .group_by(Subscription.region)
+            )
+            return {row[0]: row[1] for row in result.all() if row[0]}
+
+    @staticmethod
     async def _get_formatted_regions(session):
-        """Вспомогательный метод для форматирования списка стран в 2 колонки"""
         regions_data = await session.execute(
             select(Subscription.region, func.count(Subscription.id))
             .where(Subscription.is_active == True)
@@ -162,12 +166,9 @@ class StatsRepo:
             if short_code:
                 final_name = f"{flag} {short_code}"
             else:
-                # Fallback logic for unmapped countries
                 if len(name) == 2:
                      final_name = f"{flag} {name.title()}"
                 elif len(name) > 15:
-                    # If very long and not in map, try to take first 2 chars
-                    # This is risky but better than breaking layout
                     final_name = f"{flag} {name[:2].title()}"
                 else:
                      final_name = f"{flag} {name.title()}"
@@ -190,7 +191,6 @@ class StatsRepo:
         col1 = rows[:mid_index]
         col2 = rows[mid_index:]
 
-        # Minimal padding
         max_width = max(len(s) for s in col1) + 2 if col1 else 0
 
         lines = []

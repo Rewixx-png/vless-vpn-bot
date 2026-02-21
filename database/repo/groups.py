@@ -55,3 +55,12 @@ class GroupRepo:
             stmt = update(UserGroup).where(UserGroup.id == group_id).values(tags_filter=tags_str)
             await session.execute(stmt)
             await session.commit()
+
+    @staticmethod
+    async def get_users_with_group_region(region: str) -> list[int]:
+        async with async_session_factory() as session:
+            # Ищем группы, у которых в фильтре есть этот регион
+            stmt = select(UserGroup.user_id).where(UserGroup.country_filter.like(f"%{region}%"))
+            result = await session.execute(stmt)
+            # Возвращаем список уникальных user_id
+            return list(set(result.scalars().all()))

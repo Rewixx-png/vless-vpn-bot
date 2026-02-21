@@ -5,13 +5,14 @@ import re
 import logging
 from typing import List
 
-from database.repo import SubRepo
+from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
 
 logger = logging.getLogger("Collector")
 
-SUBSCRIPTION_SOURCES = [
+# Базовые источники (fallback)
+DEFAULT_SOURCES = [
     "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
     "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
     "https://github.com/V2RayRoot/V2RayConfig/blob/main/Config/vless.txt",
@@ -55,10 +56,16 @@ class SubscriptionCollector:
     
     @classmethod
     async def run_collection(cls) -> dict:
-        logger.warning(f"🚀 Starting SMART AGGRESSIVE collection from {len(SUBSCRIPTION_SOURCES)} sources...")
+        # Получаем пользовательские источники из БД
+        db_sources = await SourceRepo.get_enabled_urls()
+        
+        # Объединяем с дефолтными
+        all_sources = list(set(DEFAULT_SOURCES + db_sources))
+        
+        logger.warning(f"🚀 Starting SMART AGGRESSIVE collection from {len(all_sources)} sources ({len(db_sources)} custom)...")
         
         async with aiohttp.ClientSession() as session:
-            tasks = [cls._fetch_url(session, url) for url in SUBSCRIPTION_SOURCES]
+            tasks = [cls._fetch_url(session, url) for url in all_sources]
             results = await asyncio.gather(*tasks, return_exceptions=True)
         
         all_content = [r for r in results if isinstance(r, str) and r]
@@ -70,7 +77,6 @@ class SubscriptionCollector:
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
         
-        # SUPER GREEDY REGEX: Capture anything starting with vless:// until whitespace
         found_links = re.findall(r'vless://[^\s]+', full_text)
         found_links = list(set(found_links))
         del full_text
@@ -86,7 +92,7 @@ class SubscriptionCollector:
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Smart Adaptive Check...")
+        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Turbo Check (Target 90% CPU)...")
         return await cls._check_and_add_batch(unique_links)
     
     @classmethod
@@ -95,16 +101,16 @@ class SubscriptionCollector:
         failed_count = 0
         region_stats = {}
         
+        # TURBO SETTINGS
         processor = CpuAdaptiveProcessor(
-            initial_workers=50,
-            min_workers=20,
-            max_workers=500,
-            target_cpu=85.0
+            initial_workers=300,  # Стартуем сразу с 300 потоков
+            min_workers=100,
+            max_workers=2500,     # Разрешаем разгон до 2500
+            target_cpu=90.0       # Цель 90% CPU
         )
 
         async def process_link(link: str):
             try:
-                # Basic pre-validation
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "invalid_format"
 
@@ -130,9 +136,9 @@ class SubscriptionCollector:
                 return False, str(e)
 
         async def on_progress(completed, total, success, failed, workers):
-            if completed % 50 == 0:
+            if completed % 200 == 0:
                 percent = int((completed / total) * 100) if total > 0 else 0
-                logger.info(f"📊 Progress: {percent}% ({completed}/{total}) | 🏗 Workers: {workers} (Adaptive) | ✅ +{success}")
+                logger.info(f"📊 Progress: {percent}% ({completed}/{total}) | 🏗 Workers: {workers} | ✅ +{success}")
 
         result = await processor.process(
             items=links,

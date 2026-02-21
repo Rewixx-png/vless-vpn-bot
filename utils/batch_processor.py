@@ -166,22 +166,19 @@ class SmartBatchProcessor(BatchProcessor):
         self.max_errors = 50
     
     async def process(self, items, process_func, on_progress=None, on_complete=None):
-        # We can add adaptive rate limiting here if needed
-        # For now, delegating to the robust base implementation
         return await super().process(items, process_func, on_progress, on_complete)
 
 
 class CpuAdaptiveProcessor(BatchProcessor):
     """
-    Processor that adjusts concurrency based on system CPU usage.
+    Processor that aggressively adjusts concurrency based on CPU usage.
     """
-    def __init__(self, initial_workers: int = 50, min_workers: int = 10, max_workers: int = 500, target_cpu: float = 85.0):
+    def __init__(self, initial_workers: int = 200, min_workers: int = 50, max_workers: int = 2000, target_cpu: float = 90.0):
         super().__init__(worker_count=initial_workers)
         self.min_workers = min_workers
         self.max_workers = max_workers
         self.target_cpu = target_cpu
         self.current_concurrency = initial_workers
-        # Note: We don't use self.semaphore from base class here, we implement custom logic
         
     async def process(
         self,
@@ -214,9 +211,9 @@ class CpuAdaptiveProcessor(BatchProcessor):
                 except asyncio.QueueEmpty:
                     break
                 
-                # Dynamic semaphore logic: wait until we are allowed to run
+                # Dynamic semaphore logic
                 while active_tasks_count >= self.current_concurrency:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.05) # Быстрая проверка
                 
                 active_tasks_count += 1
                 
@@ -224,7 +221,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     try:
                         success, result = await asyncio.wait_for(
                             process_func(item), 
-                            timeout=45.0
+                            timeout=30.0
                         )
                     except asyncio.TimeoutError:
                         success = False
@@ -248,17 +245,23 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     active_tasks_count -= 1
                     queue.task_done()
 
-        # CPU Monitor
+        # Aggressive CPU Monitor
         async def cpu_monitor():
             while not self._cancelled and stats["completed"] < len(items):
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.0) # Проверяем каждую секунду
                 try:
                     cpu_usage = psutil.cpu_percent(interval=None)
                     
-                    if cpu_usage < self.target_cpu - 10:
-                        self.current_concurrency = min(self.max_workers, self.current_concurrency + 20)
-                    elif cpu_usage > self.target_cpu:
-                        self.current_concurrency = max(self.min_workers, self.current_concurrency - 20)
+                    # Агрессивный рост (геометрическая прогрессия)
+                    if cpu_usage < self.target_cpu - 15:
+                        # Если CPU < 75%, увеличиваем на 50% сразу
+                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency * 1.5))
+                    elif cpu_usage < self.target_cpu:
+                        # Если CPU близко к цели, добавляем линейно
+                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 50))
+                    elif cpu_usage > self.target_cpu + 5:
+                        # Если перегрев, сбрасываем плавно
+                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency * 0.8))
                         
                     if on_progress:
                          if asyncio.iscoroutinefunction(on_progress):
@@ -270,9 +273,8 @@ class CpuAdaptiveProcessor(BatchProcessor):
                          
         monitor_task = asyncio.create_task(cpu_monitor())
         
-        # Start workers. We start a fixed number of "runner" coroutines that pull from queue
-        # They will throttle themselves based on `active_tasks_count` vs `current_concurrency`
-        num_runners = 200 
+        # Start workers. We start A LOT of runners to consume the queue rapidly
+        num_runners = self.max_workers + 100 
         runners = [asyncio.create_task(worker()) for _ in range(num_runners)]
         
         await asyncio.gather(*runners, return_exceptions=True)

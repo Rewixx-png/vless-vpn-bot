@@ -1,15 +1,13 @@
 import os
 import aiohttp
 import logging
-import ipaddress
 import geoip2.database
-from typing import Optional, List
+from typing import Optional
 from config import config
 
 logger = logging.getLogger("GeoIP")
 
 class GeoIP:
-    # Backup MMDB
     MMDB_URLS = [
         "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
         "https://git.io/GeoLite2-Country.mmdb"
@@ -55,7 +53,6 @@ class GeoIP:
 
     @classmethod
     async def initialize(cls):
-        """Download and init MMDB as fallback"""
         dir_path = os.path.dirname(cls.DB_PATH)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
@@ -78,15 +75,41 @@ class GeoIP:
             cls._reader = None
 
     @classmethod
+    async def update_database(cls) -> bool:
+        logger.info("🔄 Force updating GeoLite2 MMDB...")
+        dir_path = os.path.dirname(cls.DB_PATH)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            
+        success = False
+        try:
+            async with aiohttp.ClientSession() as session:
+                for url in cls.MMDB_URLS:
+                    async with session.get(url, timeout=30) as resp:
+                        if resp.status == 200:
+                            with open(cls.DB_PATH, 'wb') as f:
+                                f.write(await resp.read())
+                            success = True
+                            break
+        except Exception as e:
+            logger.error(f"❌ Failed to update GeoIP database: {e}")
+            
+        if success:
+            logger.info("✅ GeoIP database updated.")
+            try:
+                cls._reader = geoip2.database.Reader(cls.DB_PATH)
+            except:
+                pass
+        return success
+
+    @classmethod
     def code_to_region(cls, code: str) -> str:
-        """Convert ISO code (e.g. DE) to 🇩🇪 Germany"""
         if not code or len(code) != 2:
             return "🌍 UNK"
         
         code = code.upper()
         flag = cls.FLAGS.get(code, "🌍")
         
-        # Hardcoded friendly names for common countries
         names = {
             "DE": "Germany", "US": "USA", "NL": "Netherlands", "RU": "Russia",
             "FI": "Finland", "FR": "France", "GB": "UK", "UA": "Ukraine",
@@ -100,8 +123,6 @@ class GeoIP:
 
     @classmethod
     async def identify_region(cls, session=None, host: str = None, remark: str = None) -> str:
-        """Legacy method needed for Admin Fix. Tries heuristic."""
-        # 1. Heuristics from name
         if remark:
             remark = remark.lower()
             if "germany" in remark or "de" in remark: return "🇩🇪 Germany"
@@ -109,7 +130,6 @@ class GeoIP:
             if "russia" in remark or "ru" in remark: return "🇷🇺 Russia"
             if "nl" in remark or "netherlands" in remark: return "🇳🇱 Netherlands"
 
-        # 2. Heuristics from Host TLD
         if host:
             if host.endswith(".ru"): return "🇷🇺 Russia"
             if host.endswith(".de"): return "🇩🇪 Germany"
@@ -119,6 +139,4 @@ class GeoIP:
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:
-        """For Admin Mass Recheck"""
-        # Since we can't probe without the full config, this is just a best-effort DNS check
         return {}

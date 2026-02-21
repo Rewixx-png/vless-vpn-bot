@@ -5,23 +5,23 @@ from typing import Dict, Any
 from celery_app import app
 from utils.async_celery import AsyncTask
 from utils.collector import SubscriptionCollector
-from database.repo import SubRepo, SystemRepo
+from database.repo import SubRepo, SystemRepo, StatsRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import SmartBatchProcessor
 from utils.state import BotState
+from utils.smart_alerts import SmartAlerts
+# FIX: Правильный импорт из geo_ip (с подчеркиванием)
+from utils.checker.geo_ip import GeoIP
 
 logger = logging.getLogger("Worker")
 
-
 class OptimizedTask(AsyncTask):
     pass
-
 
 @app.task(base=OptimizedTask, bind=True, max_retries=3)
 async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
     logger.warning("[CHECKER] Checker is disabled")
     return {"status": "disabled"}
-
 
 @app.task(base=OptimizedTask)
 async def run_collector_task() -> Dict[str, Any]:
@@ -38,8 +38,13 @@ async def run_collector_task() -> Dict[str, Any]:
     start_time = asyncio.get_event_loop().time()
     
     try:
+        old_counts = await StatsRepo.get_regions_counts()
         result = await SubscriptionCollector.run_collection()
         cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
+        new_counts = await StatsRepo.get_regions_counts()
+        
+        await SmartAlerts.process_changes(old_counts, new_counts)
+        
         logger.warning(f"🧹 Cleaned up {cleaned} dead subscriptions.")
         duration = asyncio.get_event_loop().time() - start_time
         return {"success": True, "duration": duration, "result": result, "cleaned": cleaned}
@@ -64,7 +69,7 @@ async def check_stability_task() -> Dict[str, Any]:
 
     processor = SmartBatchProcessor(worker_count=50)
     
-    results_buffer = []
+    old_counts = await StatsRepo.get_regions_counts()
     
     async def check_one(sub):
         try:
@@ -97,5 +102,14 @@ async def check_stability_task() -> Dict[str, Any]:
         cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
         logger.warning(f"🧹 Cleaned up {cleaned} dead subscriptions after stability check.")
 
+    new_counts = await StatsRepo.get_regions_counts()
+    await SmartAlerts.process_changes(old_counts, new_counts)
+
     logger.warning(f"✅ Stability Check Done. Checked: {len(updates)}")
     return {"checked": len(updates)}
+
+@app.task(base=OptimizedTask)
+async def update_geoip_task() -> Dict[str, Any]:
+    logger.warning("🌍 Starting monthly GeoIP update...")
+    success = await GeoIP.update_database()
+    return {"status": "updated" if success else "failed"}

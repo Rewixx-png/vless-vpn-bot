@@ -1,16 +1,16 @@
 import asyncio
 import logging
-from tasks import run_collector_task
 from utils.state import BotState
 
 logger = logging.getLogger("Scheduler")
-
 
 class BackgroundTasks:
     _tasks = []
     _is_running = False
     
-    COLLECT_INTERVAL = 600
+    COLLECT_INTERVAL = 600       # 10 минут для сбора новых прокси
+    STABILITY_INTERVAL = 600     # 10 минут для проверки стабильности (начисляет streak)
+    GEOIP_UPDATE_INTERVAL = 30 * 24 * 3600 # 30 дней
     
     @classmethod
     async def start_scheduler(cls):
@@ -22,6 +22,8 @@ class BackgroundTasks:
         
         cls._tasks = [
             asyncio.create_task(cls._collector_scheduler(), name="collector_scheduler"),
+            asyncio.create_task(cls._stability_scheduler(), name="stability_scheduler"),
+            asyncio.create_task(cls._geoip_scheduler(), name="geoip_scheduler"),
         ]
     
     @classmethod
@@ -43,6 +45,7 @@ class BackgroundTasks:
     async def _collector_scheduler(cls):
         while cls._is_running:
             try:
+                from tasks import run_collector_task
                 if BotState.is_maintenance():
                     logger.warning("⏸️ Collector skipped due to Maintenance Mode")
                 else:
@@ -54,3 +57,36 @@ class BackgroundTasks:
                 logger.error(f"❌ Collector Scheduler Error: {e}")
             
             await asyncio.sleep(cls.COLLECT_INTERVAL)
+
+    @classmethod
+    async def _stability_scheduler(cls):
+        # Ждем 30 секунд перед первым запуском, чтобы система успела загрузиться
+        await asyncio.sleep(30)
+        
+        while cls._is_running:
+            try:
+                from tasks import check_stability_task
+                if BotState.is_maintenance():
+                    logger.warning("⏸️ Stability Check skipped due to Maintenance Mode")
+                else:
+                    logger.warning("🛡 Running stability check...")
+                    check_stability_task.delay()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ Stability Scheduler Error: {e}")
+            
+            await asyncio.sleep(cls.STABILITY_INTERVAL)
+
+    @classmethod
+    async def _geoip_scheduler(cls):
+        while cls._is_running:
+            try:
+                from tasks import update_geoip_task
+                update_geoip_task.delay()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ GeoIP Scheduler Error: {e}")
+            
+            await asyncio.sleep(cls.GEOIP_UPDATE_INTERVAL)

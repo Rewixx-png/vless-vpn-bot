@@ -7,6 +7,8 @@ def main_admin_kb(collector_active: bool = True):
     kb.button(text="➕ Добавить ключи", callback_data="admin_add")
     kb.button(text="📂 Управление базой", callback_data="admin_manage")
     
+    kb.button(text="🔗 Источники", callback_data="admin_sources")
+    
     kb.button(text="📡 Menu Recheck", callback_data="admin_recheck_menu")
     kb.button(text="🌍 Fix Unknowns", callback_data="admin_fix_regions")
     
@@ -23,7 +25,24 @@ def main_admin_kb(collector_active: bool = True):
     
     kb.button(text="↩️ Режим Юзера", callback_data="user_mode")
     
-    kb.adjust(2, 2, 2, 1, 1, 2, 1)
+    kb.adjust(2, 1, 2, 2, 1, 1, 2, 1)
+    return kb.as_markup()
+
+def sources_list_kb(sources: list):
+    kb = InlineKeyboardBuilder()
+    
+    for s in sources:
+        status = "✅" if s.is_enabled else "❌"
+        title = s.title if s.title else s.url.split("//")[1][:20]
+        kb.button(text=f"{status} {title}", callback_data=f"src_toggle_{s.id}")
+        kb.button(text="🗑", callback_data=f"src_del_{s.id}")
+    
+    kb.adjust(2)
+    
+    kb.row(InlineKeyboardButton(text="➕ Добавить источник", callback_data="src_add"))
+    kb.row(InlineKeyboardButton(text="⚡ Запустить Collector", callback_data="src_force_run"))
+    kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_home"))
+    
     return kb.as_markup()
 
 def recheck_menu_kb():

@@ -33,6 +33,7 @@ class SubscriptionServer:
             parts.append("|".join(tags))
 
         return " • ".join(parts)
+        
     @staticmethod
     def _rename_vless(link: str, new_name: str) -> str:
         if "#" in link:
@@ -118,11 +119,14 @@ class SubscriptionServer:
             user_id_raw = request.query.get('id')
             format_param = request.query.get('format', '').lower()
             types_param = request.query.get('types', '').lower()
+            auto_clean_param = request.query.get('auto_clean', '').lower() == 'true'
+            
             is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
             is_v2raytun = 'v2raytun' in user_agent
             is_happ = 'happ' in user_agent.lower()
 
             subs = []
+            use_fragment = False
             
             if user_id_raw:
                 user_id = 0
@@ -140,6 +144,7 @@ class SubscriptionServer:
 
                 user = await UserRepo.get_user(user_id)
                 if user:
+                    use_fragment = user.use_fragment
                     countries_filter = None
                     tags_filter = None
                     
@@ -164,12 +169,13 @@ class SubscriptionServer:
                     subs = await SubRepo.get_smart_keys(
                         regions=countries_filter, 
                         tags=tags_filter,
-                        limit=user.subscription_limit
+                        limit=user.subscription_limit,
+                        auto_clean=auto_clean_param
                     )
                 else:
-                    subs = await SubRepo.get_smart_keys(regions=None, limit=10)
+                    subs = await SubRepo.get_smart_keys(regions=None, limit=10, auto_clean=auto_clean_param)
             else:
-                subs = await SubRepo.get_smart_keys(regions=None, limit=10)
+                subs = await SubRepo.get_smart_keys(regions=None, limit=10, auto_clean=auto_clean_param)
 
             if not subs:
                 return web.Response(text="", status=200)
@@ -193,6 +199,12 @@ class SubscriptionServer:
                 )
 
                 base_link = (sub.vless_key or "").strip()
+                
+                if use_fragment:
+                    if "security=tls" in base_link or "security=reality" in base_link:
+                         if "fragment=" not in base_link:
+                              base_link += "&fragment=10-30,10-30,tlshello"
+                              
                 new_link = SubscriptionServer._rename_vless(base_link, final_name)
                 renamed_links.append(new_link)
 

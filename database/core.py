@@ -37,12 +37,15 @@ async def init_db():
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR DEFAULT 'ru'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS use_fragment BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS death_count INTEGER DEFAULT 0",
                 "ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stable_state INTEGER DEFAULT 0",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stability_streak INTEGER DEFAULT 0",
-                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS speed_mbps FLOAT DEFAULT 0.0"
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS speed_mbps FLOAT DEFAULT 0.0",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
             ]
 
             for sql in migrations:
