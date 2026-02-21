@@ -10,14 +10,10 @@ from config import config
 warnings.simplefilter('ignore', SecurityWarning)
 os.environ.setdefault('C_FORCE_ROOT', '1')
 
-
 class AsyncTask(Task):
-    """Base task class with native async support"""
     
     def __call__(self, *args, **kwargs):
-        """Override to properly handle async functions"""
         if asyncio.iscoroutinefunction(self.run):
-            # Get or create event loop
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_closed():
@@ -30,7 +26,6 @@ class AsyncTask(Task):
             return loop.run_until_complete(self.run(*args, **kwargs))
         
         return self.run(*args, **kwargs)
-
 
 app = Celery(
     'vless_bot_worker',
@@ -54,7 +49,7 @@ app.conf.task_routes = {
 app.conf.update(
     timezone='Europe/Moscow',
     enable_utc=True,
-    worker_concurrency=30,
+    worker_concurrency=10,
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=150,
     worker_max_memory_per_child=300000,

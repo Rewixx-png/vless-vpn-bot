@@ -17,7 +17,6 @@ class XrayExecutor:
         if encryption == 'auto':
             encryption = 'none'
         
-        # Fix for some Reality configs needing flow
         flow = parsed.get('flow', '')
         if parsed['security'] == 'reality' and not flow and parsed['type'] == 'tcp':
              flow = 'xtls-rprx-vision'
@@ -39,7 +38,6 @@ class XrayExecutor:
         stream = outbound["streamSettings"]
         
         if parsed['security'] in ['tls', 'reality']:
-            # Fingerprint randomization to avoid being detected as a bot
             fp = parsed.get('fp', '')
             if not fp or fp == 'random':
                 fp = random.choice(['chrome', 'firefox', 'edge'])
@@ -47,7 +45,7 @@ class XrayExecutor:
             tls_settings = {
                 "serverName": parsed.get('sni') or parsed.get('host') or parsed['server'],
                 "fingerprint": fp,
-                "allowInsecure": True  # Crucial for some self-signed certs
+                "allowInsecure": True
             }
             if parsed['security'] == 'reality':
                 tls_settings['show'] = False
@@ -84,10 +82,9 @@ class XrayExecutor:
     async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
-            return None, 0, "Invalid Link Format"
+            return None, 0, "SYS_ERR: Invalid Link Format"
 
         local_port = random.randint(20000, 60000)
-        # Use UUID to prevent collision between workers
         unique_id = uuid.uuid4().hex
         config_path = f"/tmp/xray_{unique_id}.json"
 
@@ -103,20 +100,17 @@ class XrayExecutor:
                 start_new_session=True
             )
             
-            # Brief wait to catch immediate crashes (e.g. invalid config)
             try:
-                await asyncio.wait_for(process.wait(), timeout=0.5)
-                # If we get here, process exited immediately -> Crash
+                await asyncio.wait_for(process.wait(), timeout=1.0)
                 cls._cleanup_file(config_path)
-                return None, 0, "Xray Crashed on Start"
+                return None, 0, "SYS_ERR: Xray Crashed on Start"
             except asyncio.TimeoutError:
-                # Timeout means it's still running -> Good
                 pass
 
             return process, local_port, config_path
         except Exception as e:
             cls._cleanup_file(config_path)
-            return None, 0, str(e)
+            return None, 0, f"SYS_ERR: {str(e)}"
 
     @staticmethod
     def _cleanup_file(config_path: str):

@@ -16,9 +16,6 @@ class BatchResult:
     duration: float
 
 class BatchProcessor:
-    """
-    Base processor using a fixed Semaphore for concurrency control.
-    """
     def __init__(
         self,
         worker_count: int = 20,
@@ -65,7 +62,6 @@ class BatchProcessor:
                             await asyncio.sleep(1.0 / self.rate_limit)
                         
                         try:
-                            # Hard timeout 45s to prevent stuck workers
                             success, result = await asyncio.wait_for(
                                 process_func(item), 
                                 timeout=45.0
@@ -97,7 +93,6 @@ class BatchProcessor:
                     finally:
                         queue.task_done()
         
-        # Progress reporter
         progress_task = None
         if on_progress:
             async def progress_updater():
@@ -125,8 +120,6 @@ class BatchProcessor:
             
             progress_task = asyncio.create_task(progress_updater())
         
-        # Spawn workers
-        # Limit total coroutines to avoid memory explosion on huge lists
         num_workers = min(self.worker_count * 2, len(items))
         workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
             
@@ -155,11 +148,7 @@ class BatchProcessor:
     def cancel(self):
         self._cancelled = True
 
-
 class SmartBatchProcessor(BatchProcessor):
-    """
-    Extended processor with error tracking (backwards compatibility).
-    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.error_count = 0
@@ -168,12 +157,8 @@ class SmartBatchProcessor(BatchProcessor):
     async def process(self, items, process_func, on_progress=None, on_complete=None):
         return await super().process(items, process_func, on_progress, on_complete)
 
-
 class CpuAdaptiveProcessor(BatchProcessor):
-    """
-    Processor that aggressively adjusts concurrency based on CPU usage.
-    """
-    def __init__(self, initial_workers: int = 200, min_workers: int = 50, max_workers: int = 2000, target_cpu: float = 90.0):
+    def __init__(self, initial_workers: int = 15, min_workers: int = 5, max_workers: int = 40, target_cpu: float = 85.0):
         super().__init__(worker_count=initial_workers)
         self.min_workers = min_workers
         self.max_workers = max_workers
@@ -211,9 +196,8 @@ class CpuAdaptiveProcessor(BatchProcessor):
                 except asyncio.QueueEmpty:
                     break
                 
-                # Dynamic semaphore logic
                 while active_tasks_count >= self.current_concurrency:
-                    await asyncio.sleep(0.05) # Быстрая проверка
+                    await asyncio.sleep(0.05)
                 
                 active_tasks_count += 1
                 
@@ -245,36 +229,30 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     active_tasks_count -= 1
                     queue.task_done()
 
-        # Aggressive CPU Monitor
         async def cpu_monitor():
             while not self._cancelled and stats["completed"] < len(items):
-                await asyncio.sleep(1.0) # Проверяем каждую секунду
+                await asyncio.sleep(2.0)
                 try:
                     cpu_usage = psutil.cpu_percent(interval=None)
                     
-                    # Агрессивный рост (геометрическая прогрессия)
                     if cpu_usage < self.target_cpu - 15:
-                        # Если CPU < 75%, увеличиваем на 50% сразу
-                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency * 1.5))
+                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 5))
                     elif cpu_usage < self.target_cpu:
-                        # Если CPU близко к цели, добавляем линейно
-                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 50))
+                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 2))
                     elif cpu_usage > self.target_cpu + 5:
-                        # Если перегрев, сбрасываем плавно
-                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency * 0.8))
+                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency - 10))
                         
                     if on_progress:
                          if asyncio.iscoroutinefunction(on_progress):
                              await on_progress(stats["completed"], len(items), stats["success"], stats["failed"], self.current_concurrency)
                          else:
                              on_progress(stats["completed"], len(items), stats["success"], stats["failed"], self.current_concurrency)
-                except:
+                except Exception:
                     pass
                          
         monitor_task = asyncio.create_task(cpu_monitor())
         
-        # Start workers. We start A LOT of runners to consume the queue rapidly
-        num_runners = self.max_workers + 100 
+        num_runners = self.max_workers + 20 
         runners = [asyncio.create_task(worker()) for _ in range(num_runners)]
         
         await asyncio.gather(*runners, return_exceptions=True)

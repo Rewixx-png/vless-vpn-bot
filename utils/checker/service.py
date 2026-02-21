@@ -24,9 +24,8 @@ from config import config
 try:
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
-    print(f"✅ System Limit: Open Files increased to {hard}")
-except Exception as e:
-    print(f"⚠️ Failed to increase system limits: {e}")
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -34,7 +33,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CheckerService")
 
-MAX_CONCURRENT_CHECKS_PER_WORKER = 40
+MAX_CONCURRENT_CHECKS_PER_WORKER = 25
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
 
 PROBE_URLS = [
@@ -46,16 +45,15 @@ PROBE_URLS = [
 
 async def cleanup_zombie_xrays():
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(60)
         try:
-            subprocess.run("find /tmp -name 'xray_*.json' -mmin +2 -delete 2>/dev/null", shell=True)
-            subprocess.run("ps -ef | grep 'xray -c /tmp' | grep -v grep | awk '{if ($5 ~ /[0-9]:[0-9][0-9]/) print $2}' | xargs -r kill -9 2>/dev/null", shell=True)
+            subprocess.run("find /tmp -name 'xray_*.json' -mmin +5 -delete 2>/dev/null", shell=True)
             gc.collect()
         except Exception:
             pass
 
 async def probe_proxy(connector: ProxyConnector) -> dict:
-    timeout = aiohttp.ClientTimeout(total=5.0, connect=3.0, sock_read=3.0)
+    timeout = aiohttp.ClientTimeout(total=8.0, connect=4.0, sock_read=4.0)
     
     result = {
         "success": False,
@@ -75,7 +73,7 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
                     
                     try:
                         data = await response.json(content_type=None)
-                    except:
+                    except Exception:
                         result["success"] = True
                         result["latency"] = latency
                         return result
@@ -107,20 +105,20 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
     return result
 
 async def check_ai_availability(connector: ProxyConnector) -> bool:
-    timeout = aiohttp.ClientTimeout(total=3.0)
+    timeout = aiohttp.ClientTimeout(total=4.0)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
                 if resp.status in [200, 401, 403]:
                     return True
-    except:
+    except Exception:
         pass
     return False
 
 async def check_handler(request):
     try:
         data = await request.json()
-    except:
+    except Exception:
         return web.json_response({"error": "Invalid JSON"}, status=400)
         
     config_url = data.get("config")
@@ -128,7 +126,7 @@ async def check_handler(request):
         return web.json_response({"error": "No config provided"}, status=400)
 
     try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=3.0)
+        await asyncio.wait_for(semaphore.acquire(), timeout=10.0)
     except asyncio.TimeoutError:
         return web.json_response({"error": "SYS_ERR: Worker Busy"}, status=503)
 
@@ -149,7 +147,7 @@ async def check_handler(request):
         process, local_port, config_path = await XrayExecutor.start_xray(config_url)
         
         if not process:
-            response_data["error"] = config_path
+            response_data["error"] = f"SYS_ERR: {config_path}"
             return web.json_response(response_data)
 
         connector = ProxyConnector.from_url(
@@ -169,7 +167,7 @@ async def check_handler(request):
             
             try:
                 st_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-                async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=8.0)) as st_session:
+                async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=10.0)) as st_session:
                     st_start = time.monotonic()
                     async with st_session.get('http://speed.cloudflare.com/__down?bytes=10000000') as resp:
                         if resp.status == 200:
@@ -224,8 +222,6 @@ class GunicornApp(BaseApplication):
 def main():
     workers = multiprocessing.cpu_count()
     if workers > 8: workers = 8
-    
-    print(f"🚀 Starting High-Performance Checker with {workers} workers on port {config.CHECKER_PORT}")
     
     options = {
         'bind': f'0.0.0.0:{config.CHECKER_PORT}',

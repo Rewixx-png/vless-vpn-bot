@@ -10,7 +10,6 @@ from utils.checker import VlessChecker
 from utils.batch_processor import SmartBatchProcessor
 from utils.state import BotState
 from utils.smart_alerts import SmartAlerts
-# FIX: Правильный импорт из geo_ip (с подчеркиванием)
 from utils.checker.geo_ip import GeoIP
 
 logger = logging.getLogger("Worker")
@@ -67,23 +66,25 @@ async def check_stability_task() -> Dict[str, Any]:
 
     logger.warning(f"🛡 Checking {len(subs)} candidates for stability...")
 
-    processor = SmartBatchProcessor(worker_count=50)
+    processor = SmartBatchProcessor(worker_count=20)
     
     old_counts = await StatsRepo.get_regions_counts()
     
     async def check_one(sub):
         try:
-            is_alive, _, latency, speed_mbps, _, _ = await VlessChecker.process_subscription(sub.vless_key)
+            is_alive, _, latency, speed_mbps, _, err = await VlessChecker.process_subscription(sub.vless_key)
+            if not is_alive and err and "SYS_ERR" in str(err):
+                return (True, None)
             return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
-        except:
-            return (True, {"id": sub.id, "is_alive": False, "latency": 9999, "speed_mbps": 0.0})
+        except Exception:
+            return (True, None)
 
     batch_res = await processor.process(
         items=subs,
         process_func=check_one
     )
     
-    updates = [item["result"] for item in batch_res.items if item["success"]]
+    updates = [item["result"] for item in batch_res.items if item["success"] and item["result"] is not None]
     
     if updates:
         await SubRepo.batch_update_stability(updates)

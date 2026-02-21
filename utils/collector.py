@@ -98,9 +98,9 @@ class SubscriptionCollector:
         region_stats = {}
         
         processor = CpuAdaptiveProcessor(
-            initial_workers=50,
-            min_workers=20,
-            max_workers=150,
+            initial_workers=15,
+            min_workers=5,
+            max_workers=40,
             target_cpu=80.0
         )
 
@@ -111,7 +111,7 @@ class SubscriptionCollector:
 
                 is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
                 
-                if not is_alive and err and str(err).startswith("SYS_ERR"):
+                if not is_alive and err and "SYS_ERR" in str(err):
                     return False, "sys_err"
                 
                 if is_alive:
@@ -183,7 +183,7 @@ class SubscriptionCollector:
                     if len(content) > 10 * 1024 * 1024:
                         content = content[:10 * 1024 * 1024]
                     return content.decode('utf-8', errors='ignore')
-        except:
+        except Exception:
             pass
         return ""
     
@@ -202,7 +202,7 @@ class SubscriptionCollector:
                 dec = base64.b64decode(line).decode('utf-8', errors='ignore')
                 if "vless://" in dec:
                     decoded_parts.append(dec)
-            except:
+            except Exception:
                 pass
         
         if not decoded_parts:
@@ -212,7 +212,7 @@ class SubscriptionCollector:
                 if pad: clean_text += '=' * (4 - pad)
                 dec = base64.b64decode(clean_text).decode('utf-8', errors='ignore')
                 decoded_parts.extend(re.findall(r'vless://[^\s]+', dec))
-            except:
+            except Exception:
                 pass
             
         return "\n".join(decoded_parts)

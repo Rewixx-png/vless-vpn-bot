@@ -74,9 +74,9 @@ async def _run_recheck_process(subs: list, msg: Message):
     total = len(subs)
     
     processor = CpuAdaptiveProcessor(
-        initial_workers=50,
-        min_workers=20,
-        max_workers=150,
+        initial_workers=20,
+        min_workers=10,
+        max_workers=50,
         target_cpu=80.0
     )
 
@@ -106,7 +106,7 @@ async def _run_recheck_process(subs: list, msg: Message):
         try:
             is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
             
-            if not is_alive and err and str(err).startswith("SYS_ERR"):
+            if not is_alive and err and "SYS_ERR" in str(err):
                 return (False, {"status": "error"})
 
             status_upd = None
