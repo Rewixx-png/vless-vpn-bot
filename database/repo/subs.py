@@ -123,7 +123,7 @@ class SubRepo:
                     stmt = stmt.where(Subscription.ai_available == True)
                 
                 if 'fast' in tags:
-                    stmt = stmt.where(Subscription.speed_mbps > 10.0)
+                    stmt = stmt.where(Subscription.speed_mbps >= 100.0)
                 
                 if 'wl' in tags:
                     stmt = stmt.where(

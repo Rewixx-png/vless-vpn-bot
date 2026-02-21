@@ -11,7 +11,6 @@ import subprocess
 from aiohttp import web
 from aiohttp_socks import ProxyConnector, ProxyError, ProxyConnectionError, ProxyTimeoutError
 
-# Fix imports if running standalone
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
@@ -20,45 +19,33 @@ from utils.checker.xray import XrayExecutor
 from utils.checker.geoip import GeoIP
 from config import config
 
-# Logging setup
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - CHECKER - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("CheckerService")
 
-# Global semaphore to limit concurrent Xray processes
 MAX_CONCURRENT_CHECKS = 75
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
-# GeoIP Probe Endpoints (HTTPS preferred for Reality/TLS tests)
 PROBE_URLS = [
-    "http://ip-api.com/json/?fields=countryCode,query",  # HTTP fallback, very reliable
-    "https://ipwho.is/",                                 # Good JSON response
-    "https://api.ip.sb/geoip",                           # Fast
-    "https://ifconfig.co/json"                           # Clean
+    "http://ip-api.com/json/?fields=countryCode,query",
+    "https://ipwho.is/",
+    "https://api.ip.sb/geoip",
+    "https://ifconfig.co/json"
 ]
 
 async def cleanup_zombie_xrays():
-    """Aggressive cleanup of stuck processes and temp files"""
     while True:
         await asyncio.sleep(60)
         try:
-            # Kill processes running longer than 2 minutes
             subprocess.run("ps -ef | grep 'xray_check_' | grep -v grep | awk '{print $2}' | xargs -r kill -9", shell=True, stderr=subprocess.DEVNULL)
-            # Clean old config files
             subprocess.run("find /tmp -name 'xray_check_*.json' -mmin +2 -delete 2>/dev/null", shell=True)
             gc.collect()
         except Exception:
             pass
 
 async def probe_proxy(connector: ProxyConnector) -> dict:
-    """
-    Attempts to determine proxy validity and region by fetching data THROUGH the proxy.
-    This mimics real client behavior (FlClash) to get the EXIT IP region.
-    """
-    # Strict timeout: Real clients usually timeout after 5-8 seconds.
-    # If we wait 15s, we add servers that users will complain about.
     timeout = aiohttp.ClientTimeout(total=8.0, connect=5.0, sock_read=5.0)
     
     result = {
@@ -70,7 +57,6 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
     }
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        # Try up to 2 probes. If first works, great.
         for url in PROBE_URLS[:2]:
             try:
                 start_time = time.monotonic()
@@ -81,20 +67,16 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
                         try:
                             data = await response.json(content_type=None)
                         except:
-                            # If JSON fails but status is 200, connection works but data is garbage
-                            # We treat it as valid but UNK region
                             result["success"] = True
                             result["latency"] = latency
                             return result
 
-                        # Parse GeoIP data from response
-                        # Different APIs have different keys
                         code = None
                         ip = None
                         
-                        if "countryCode" in data: code = data["countryCode"] # ip-api
-                        elif "country_code" in data: code = data["country_code"] # ipwho.is / ip.sb
-                        elif "country_iso" in data: code = data["country_iso"] # ifconfig.co
+                        if "countryCode" in data: code = data["countryCode"]
+                        elif "country_code" in data: code = data["country_code"]
+                        elif "country_iso" in data: code = data["country_iso"]
                         
                         if "query" in data: ip = data["query"]
                         elif "ip" in data: ip = data["ip"]
@@ -116,13 +98,11 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
     return result
 
 async def check_ai_availability(connector: ProxyConnector) -> bool:
-    """Checks if OpenAI/Google is accessible"""
     timeout = aiohttp.ClientTimeout(total=3.0)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            # Check OpenAI (Head request is faster)
             async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
-                if resp.status in [200, 401, 403]: # 401/403 means we reached OpenAI, just no key
+                if resp.status in [200, 401, 403]:
                     return True
     except:
         pass
@@ -138,7 +118,6 @@ async def check_handler(request):
     if not config_url:
         return web.json_response({"error": "No config provided"}, status=400)
 
-    # 1. Acquire slot
     try:
         await asyncio.wait_for(semaphore.acquire(), timeout=3.0)
     except asyncio.TimeoutError:
@@ -158,15 +137,12 @@ async def check_handler(request):
     }
 
     try:
-        # 2. Start Xray
         process, local_port, config_path = await XrayExecutor.start_xray(config_url)
         
         if not process:
-            response_data["error"] = config_path # Error message passed here
+            response_data["error"] = config_path
             return web.json_response(response_data)
 
-        # 3. Create Connector
-        # force_close=True is critical to prevent "Too many open files"
         connector = ProxyConnector.from_url(
             f"socks5://127.0.0.1:{local_port}", 
             rdns=True, 
@@ -174,7 +150,6 @@ async def check_handler(request):
             enable_cleanup_closed=True
         )
 
-        # 4. Probe the Proxy (GeoIP + Latency + Connectivity)
         probe_result = await probe_proxy(connector)
         
         if probe_result["success"]:
@@ -183,29 +158,21 @@ async def check_handler(request):
             response_data["region"] = probe_result["region"]
             response_data["error"] = "OK"
             
-            # 5. Rough Speed Test (Only if alive)
-            # Fetch a small file to verify throughput stability
             try:
-                # Re-create connector for new session to ensure clean state
                 st_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-                async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=5.0)) as st_session:
+                async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=15.0)) as st_session:
                     st_start = time.monotonic()
-                    # 200KB file from Cloudflare
-                    async with st_session.get('http://speed.cloudflare.com/__down?bytes=200000') as resp:
+                    async with st_session.get('http://speed.cloudflare.com/__down?bytes=25000000') as resp:
                         if resp.status == 200:
                             content = await resp.read()
                             duration = time.monotonic() - st_start
                             if duration > 0.01:
-                                # bits / seconds / 1M
                                 speed = (len(content) * 8) / (duration * 1_000_000)
                                 response_data["speed_mbps"] = round(speed, 2)
             except Exception:
-                # If speedtest fails but probe passed, we still count it as alive but 0 speed
                 pass
 
-            # 6. AI Check (Only if fast enough)
             if response_data["speed_mbps"] > 1.0:
-                 # Re-create connector again
                  ai_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
                  response_data["ai"] = await check_ai_availability(ai_connector)
 
@@ -215,7 +182,6 @@ async def check_handler(request):
     except Exception as e:
         response_data["error"] = str(e)
     finally:
-        # Cleanup
         semaphore.release()
         await XrayExecutor.cleanup(process, config_path)
 
@@ -225,14 +191,11 @@ async def health_check(request):
     return web.Response(text="OK")
 
 def main():
-    # Setup event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    # Init GeoIP (Optional now, since we use API, but good for backup)
     loop.run_until_complete(GeoIP.initialize())
     
-    # Start zombie killer
     loop.create_task(cleanup_zombie_xrays())
     
     app = web.Application()

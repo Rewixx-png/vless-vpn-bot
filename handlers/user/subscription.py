@@ -103,7 +103,7 @@ async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
         "Выберите типы серверов, которые вам нужны:\n\n"
         "🛡 <b>Stable (Elite):</b> Серверы с аптаймом 24ч+ без единого сбоя.\n"
         "▫️ <b>AI Ready:</b> Разблокирует ChatGPT, Gemini, Claude.\n"
-        "▫️ <b>High Speed:</b> Серверы со скоростью &gt; 10 Mbps.\n"
+        "▫️ <b>High Speed:</b> Серверы со скоростью &gt; 100 Mbps.\n"
         "▫️ <b>Reality/Vision:</b> Высокая скрытность от блокировок.\n\n"
         "<i>✅ - Включено в подписку\n⬜️ - Обычные серверы</i>"
     )

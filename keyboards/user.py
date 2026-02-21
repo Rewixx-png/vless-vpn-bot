@@ -50,7 +50,7 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
     
     kb.button(text=get_btn("stable", "🛡 Stable (24h Uptime)"), callback_data=f"{prefix}_stable")
     kb.button(text=get_btn("ai", "AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
-    kb.button(text=get_btn("fast", "High Speed (>10Mbps)"), callback_data=f"{prefix}_fast")
+    kb.button(text=get_btn("fast", "High Speed (>100Mbps)"), callback_data=f"{prefix}_fast")
     kb.button(text=get_btn("wl", "Reality / Vision (Stealth)"), callback_data=f"{prefix}_wl")
     
     kb.adjust(1)
