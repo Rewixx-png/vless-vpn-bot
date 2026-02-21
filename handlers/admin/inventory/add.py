@@ -90,11 +90,10 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     results_log = []
     
-    # Use SmartBatchProcessor for reliable parallel checking
     start_time = asyncio.get_event_loop().time()
     
     processor = SmartBatchProcessor(
-        worker_count=20, # Keep conservative for manual import
+        worker_count=20,
         progress_interval=3.0,
         rate_limit=50
     )
@@ -102,6 +101,10 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     async def process_link(link: str):
         try:
             is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
+            
+            if not is_alive and err and str(err).startswith("SYS_ERR"):
+                return (False, {"status": "failed", "error": "System Overload. Try again later."})
+                
             if is_alive:
                 added = await SubRepo.smart_add_subscription(
                     vless_key=link,
@@ -149,7 +152,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                 added_count += 1
                 results_log.append(f"✅ {res.get('region')} ({res.get('speed_mbps')}Mb/s)")
             elif status == "failed":
-                # Only log detailed failures if few items
                 if len(links) < 50:
                     results_log.append(f"❌ {res.get('error')}")
 

@@ -1,6 +1,3 @@
-"""
-Main bot entry point with optimized startup and error handling.
-"""
 import asyncio
 import logging
 import sys
@@ -43,8 +40,6 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramLogHandler(logging.Handler):
-    """Send critical errors to admins via Telegram"""
-    
     def __init__(self, bot: Bot, admin_ids: Iterable[int]):
         super().__init__(level=logging.ERROR)
         self.bot = bot
@@ -78,7 +73,6 @@ class TelegramLogHandler(logging.Handler):
 
 
 async def notify_admins(bot: Bot, message: str):
-    """Send notification to all admins"""
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.send_message(admin_id, message, parse_mode="HTML")
@@ -87,7 +81,6 @@ async def notify_admins(bot: Bot, message: str):
 
 
 async def check_services() -> dict:
-    """Check if required services are running"""
     results = {
         "checker": False,
         "database": False,
@@ -105,7 +98,8 @@ async def check_services() -> dict:
     
     try:
         test_result = await CheckerAPI.check("vless://test@localhost:443?security=none")
-        results["checker"] = test_result[4] != "Checker Service Offline"
+        err_msg = str(test_result[5])
+        results["checker"] = "Offline" not in err_msg and "SYS_ERR" not in err_msg
     except Exception:
         results["checker"] = False
     
@@ -164,7 +158,7 @@ async def main():
     if not service_status["checker"]:
         startup_msg += (
             f"⚠️ <b>Внимание!</b>\n"
-            f"Checker Service не запущен.\n"
+            f"Checker Service не запущен или недоступен.\n"
             f"Запустите: <code>python utils/checker/service.py</code>\n\n"
         )
         
@@ -174,7 +168,6 @@ async def main():
             f"<pre>{service_status.get('db_error', 'Unknown Error')}</pre>"
         )
     
-    # Notify admins
     await notify_admins(bot, startup_msg)
     logger.info(f"✅ Bot started in {startup_duration:.1f}s")
     

@@ -17,7 +17,10 @@ class CheckerAPI:
                     if resp.status == 200:
                         data = await resp.json()
                         if "error" in data and not "success" in data:
-                             return False, "", 0, 0.0, False, data
+                             err_msg = data.get("error", "Unknown Error")
+                             if "SYS_ERR" in err_msg:
+                                 return False, "", 0, 0.0, False, err_msg
+                             return False, "", 0, 0.0, False, err_msg
                              
                         return (
                             data.get("success", False),
@@ -28,10 +31,10 @@ class CheckerAPI:
                             data.get("error", "OK")
                         )
                     else:
-                        return False, "", 0, 0.0, False, f"Service Error: {resp.status}"
+                        return False, "", 0, 0.0, False, f"SYS_ERR: Service Error {resp.status}"
         except aiohttp.ClientConnectorError:
-            return False, "", 0, 0.0, False, "Checker Service Offline"
+            return False, "", 0, 0.0, False, "SYS_ERR: Checker Service Offline"
         except asyncio.TimeoutError:
-            return False, "", 0, 0.0, False, "Checker Service Timeout"
+            return False, "", 0, 0.0, False, "SYS_ERR: Checker Service Timeout"
         except Exception as e:
-            return False, "", 0, 0.0, False, f"API Error: {str(e)}"
+            return False, "", 0, 0.0, False, f"SYS_ERR: API Error: {str(e)}"

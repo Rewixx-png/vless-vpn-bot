@@ -11,19 +11,16 @@ from aiohttp_socks import ProxyConnector, ProxyError, ProxyConnectionError, Prox
 import subprocess
 import time
 
-# Gunicorn imports for embedding
 from gunicorn.app.base import BaseApplication
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 
-# Импорт из нового файла geo_ip
 from utils.checker.xray import XrayExecutor
 from utils.checker.geo_ip import GeoIP
 from config import config
 
-# --- SYSTEM TUNING ---
 try:
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
@@ -37,10 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CheckerService")
 
-# BALANCED MODE PER WORKER
-# 4 workers * 80 = 320 concurrent checks total.
-# This prevents CPU choke and allows Xray to actually finish.
-MAX_CONCURRENT_CHECKS_PER_WORKER = 80
+MAX_CONCURRENT_CHECKS_PER_WORKER = 40
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
 
 PROBE_URLS = [
@@ -51,20 +45,16 @@ PROBE_URLS = [
 ]
 
 async def cleanup_zombie_xrays():
-    """Фоновая очистка зависших процессов Xray"""
     while True:
-        await asyncio.sleep(30) # Чаще проверяем зомби (каждые 30 сек)
+        await asyncio.sleep(30)
         try:
-            # Очищаем процессы старше 2 минут (они точно зависли)
             subprocess.run("find /tmp -name 'xray_*.json' -mmin +2 -delete 2>/dev/null", shell=True)
-            # Жесткое убийство старых процессов xray, если их слишком много
             subprocess.run("ps -ef | grep 'xray -c /tmp' | grep -v grep | awk '{if ($5 ~ /[0-9]:[0-9][0-9]/) print $2}' | xargs -r kill -9 2>/dev/null", shell=True)
             gc.collect()
         except Exception:
             pass
 
 async def probe_proxy(connector: ProxyConnector) -> dict:
-    # Уменьшаем таймаут, чтобы быстрее отбрасывать мертвые прокси
     timeout = aiohttp.ClientTimeout(total=5.0, connect=3.0, sock_read=3.0)
     
     result = {
@@ -76,7 +66,6 @@ async def probe_proxy(connector: ProxyConnector) -> dict:
     }
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        # Пробуем только один URL для скорости
         url = PROBE_URLS[0]
         try:
             start_time = time.monotonic()
@@ -141,7 +130,7 @@ async def check_handler(request):
     try:
         await asyncio.wait_for(semaphore.acquire(), timeout=3.0)
     except asyncio.TimeoutError:
-        return web.json_response({"error": "Worker Busy"}, status=503)
+        return web.json_response({"error": "SYS_ERR: Worker Busy"}, status=503)
 
     process = None
     config_path = None
@@ -182,7 +171,6 @@ async def check_handler(request):
                 st_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
                 async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=8.0)) as st_session:
                     st_start = time.monotonic()
-                    # Качаем меньше данных для теста скорости (10MB вместо 25MB), чтобы быстрее освобождать ресурсы
                     async with st_session.get('http://speed.cloudflare.com/__down?bytes=10000000') as resp:
                         if resp.status == 200:
                             content = await resp.read()
@@ -212,7 +200,6 @@ async def health_check(request):
     return web.Response(text="OK")
 
 async def app_factory():
-    """Factory for Gunicorn"""
     await GeoIP.initialize()
     app = web.Application()
     app.router.add_post('/check', check_handler)

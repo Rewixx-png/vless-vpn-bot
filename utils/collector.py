@@ -11,7 +11,6 @@ from utils.batch_processor import CpuAdaptiveProcessor
 
 logger = logging.getLogger("Collector")
 
-# Базовые источники (fallback)
 DEFAULT_SOURCES = [
     "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
     "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
@@ -56,10 +55,7 @@ class SubscriptionCollector:
     
     @classmethod
     async def run_collection(cls) -> dict:
-        # Получаем пользовательские источники из БД
         db_sources = await SourceRepo.get_enabled_urls()
-        
-        # Объединяем с дефолтными
         all_sources = list(set(DEFAULT_SOURCES + db_sources))
         
         logger.warning(f"🚀 Starting SMART AGGRESSIVE collection from {len(all_sources)} sources ({len(db_sources)} custom)...")
@@ -92,7 +88,7 @@ class SubscriptionCollector:
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Turbo Check (Target 90% CPU)...")
+        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Turbo Check...")
         return await cls._check_and_add_batch(unique_links)
     
     @classmethod
@@ -101,12 +97,11 @@ class SubscriptionCollector:
         failed_count = 0
         region_stats = {}
         
-        # TURBO SETTINGS
         processor = CpuAdaptiveProcessor(
-            initial_workers=300,  # Стартуем сразу с 300 потоков
-            min_workers=100,
-            max_workers=2500,     # Разрешаем разгон до 2500
-            target_cpu=90.0       # Цель 90% CPU
+            initial_workers=50,
+            min_workers=20,
+            max_workers=150,
+            target_cpu=80.0
         )
 
         async def process_link(link: str):
@@ -115,6 +110,9 @@ class SubscriptionCollector:
                     return False, "invalid_format"
 
                 is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
+                
+                if not is_alive and err and str(err).startswith("SYS_ERR"):
+                    return False, "sys_err"
                 
                 if is_alive:
                     added = await SubRepo.smart_add_subscription(

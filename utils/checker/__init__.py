@@ -16,8 +16,8 @@ class VlessChecker:
     async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str]:
         success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
         
-        if not success and err == "Checker Service Offline":
-            return False, "", 0, 0.0, False, "Checker Service Offline"
+        if not success and err and str(err).startswith("SYS_ERR"):
+            return False, "", 0, 0.0, False, err
             
         return success, region, latency, speed_mbps, ai, err
 

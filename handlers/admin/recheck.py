@@ -45,8 +45,8 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
         f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
         "✋ Фоновые задачи (Collector) остановлены\n"
-        "⚙️ Адаптивная нагрузка на CPU (&lt;85%)\n"
-        "🚀 <b>Turbo Mode:</b> Limit 1000 threads\n"
+        "⚙️ Адаптивная нагрузка на CPU\n"
+        "🚀 <b>Turbo Mode</b>\n"
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
@@ -74,10 +74,10 @@ async def _run_recheck_process(subs: list, msg: Message):
     total = len(subs)
     
     processor = CpuAdaptiveProcessor(
-        initial_workers=100,
-        min_workers=50,
-        max_workers=1000,
-        target_cpu=85.0
+        initial_workers=50,
+        min_workers=20,
+        max_workers=150,
+        target_cpu=80.0
     )
 
     update_lock = asyncio.Lock()
@@ -106,6 +106,9 @@ async def _run_recheck_process(subs: list, msg: Message):
         try:
             is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
             
+            if not is_alive and err and str(err).startswith("SYS_ERR"):
+                return (False, {"status": "error"})
+
             status_upd = None
             region_upd = None
 
