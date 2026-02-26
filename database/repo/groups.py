@@ -57,6 +57,12 @@ class GroupRepo:
             await session.commit()
 
     @staticmethod
+    async def get_all_groups():
+        async with async_session_factory() as session:
+            result = await session.execute(select(UserGroup).order_by(UserGroup.user_id))
+            return result.scalars().all()
+
+    @staticmethod
     async def get_users_with_group_region(region: str) -> list[int]:
         async with async_session_factory() as session:
             # Ищем группы, у которых в фильтре есть этот регион

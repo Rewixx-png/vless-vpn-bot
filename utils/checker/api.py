@@ -9,6 +9,7 @@ class CheckerAPI:
     @staticmethod
     async def check(config_url: str) -> tuple:
         try:
+            # Общий таймаут клиента 60с, но чекер ответит быстрее
             timeout = aiohttp.ClientTimeout(total=60.0)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
@@ -17,12 +18,15 @@ class CheckerAPI:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
+                        # Если API вернул явную ошибку
                         if "error" in data and not data.get("success", False):
                              err_msg = data.get("error", "Unknown Error")
                              if "Worker Busy" in err_msg and "SYS_ERR" not in err_msg:
                                  err_msg = f"SYS_ERR: {err_msg}"
+                             # Возвращаем как есть
                              return False, "", 0, 0.0, False, err_msg
-                             
+                        
+                        # Успешный ответ (даже если latency 9999, главное success=True)
                         return (
                             data.get("success", False),
                             data.get("region", "🌍 UNK"),

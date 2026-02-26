@@ -4,13 +4,13 @@ from database.models import SubscriptionSource
 
 class SourceRepo:
     @staticmethod
-    async def add_source(url: str, title: str = None) -> bool:
+    async def add_source(url: str, title: str = None, enabled: bool = True) -> bool:
         async with async_session_factory() as session:
             existing = await session.execute(select(SubscriptionSource).where(SubscriptionSource.url == url))
             if existing.scalars().first():
                 return False
             
-            source = SubscriptionSource(url=url, title=title)
+            source = SubscriptionSource(url=url, title=title, is_enabled=enabled)
             session.add(source)
             await session.commit()
             return True
@@ -36,11 +36,14 @@ class SourceRepo:
             await session.commit()
 
     @staticmethod
-    async def toggle_source(source_id: int):
+    async def toggle_source(source_id: int, enabled: bool = None):
         async with async_session_factory() as session:
             source = await session.get(SubscriptionSource, source_id)
             if source:
-                source.is_enabled = not source.is_enabled
+                if enabled is not None:
+                    source.is_enabled = enabled
+                else:
+                    source.is_enabled = not source.is_enabled
                 await session.commit()
                 return source.is_enabled
         return False

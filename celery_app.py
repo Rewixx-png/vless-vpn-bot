@@ -37,7 +37,10 @@ app = Celery(
 
 app.conf.task_queues = (
     Queue('high_priority', Exchange('high_priority'), routing_key='high_priority'),
+    Queue('medium_priority', Exchange('medium_priority'), routing_key='medium_priority'),
     Queue('low_priority', Exchange('low_priority'), routing_key='low_priority'),
+    Queue('stability_check', Exchange('stability_check'), routing_key='stability_check'),
+    Queue('geoip_update', Exchange('geoip_update'), routing_key='geoip_update'),
 )
 
 app.conf.task_routes = {
@@ -46,19 +49,29 @@ app.conf.task_routes = {
     'tasks.cleanup_database_task': {'queue': 'high_priority'},
 }
 
+app.conf.beat_schedule = {
+    'run-collector-every-5-minutes': {
+        'task': 'tasks.run_collector_task',
+        'schedule': 300.0,
+    },
+}
+
 app.conf.update(
     timezone='Europe/Moscow',
     enable_utc=True,
-    worker_concurrency=10,
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=150,
+    worker_concurrency=16,
+    worker_prefetch_multiplier=2,
+    worker_max_tasks_per_child=200,
     worker_max_memory_per_child=300000,
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
     worker_redirect_stdouts=False,
     broker_connection_retry_on_startup=True,
-    task_default_queue='low_priority'
+    task_default_queue='low_priority',
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_pool_restarts=True
 )
 
 @signals.after_setup_logger.connect

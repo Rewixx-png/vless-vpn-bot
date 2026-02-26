@@ -5,11 +5,11 @@ def main_admin_kb(collector_active: bool = True):
     kb = InlineKeyboardBuilder()
     
     kb.button(text="➕ Добавить ключи", callback_data="admin_add")
-    kb.button(text="📂 Управление базой", callback_data="admin_manage")
+    kb.button(text="📂 Управление БД", callback_data="admin_manage")
     
     kb.button(text="🔗 Источники", callback_data="admin_sources")
     
-    kb.button(text="📡 Menu Recheck", callback_data="admin_recheck_menu")
+    kb.button(text="🔄 Menu Recheck", callback_data="admin_recheck_menu")
     kb.button(text="🌍 Fix Unknowns", callback_data="admin_fix_regions")
     
     kb.button(text="👥 Меню Юзеров", callback_data="admin_users_list_0")
@@ -17,15 +17,15 @@ def main_admin_kb(collector_active: bool = True):
     
     kb.button(text="🛡 Stable List", callback_data="admin_stable_list")
     
-    coll_text = "🟢 Collector ON" if collector_active else "🔴 Collector OFF"
+    coll_text = "🟢 Коллектор: ON" if collector_active else "🔴 Коллектор: OFF"
     kb.button(text=coll_text, callback_data="toggle_collector")
     
-    kb.button(text="⚙️ Домен", callback_data="admin_domain")
+    kb.button(text="🌐 Домен", callback_data="admin_domain")
     kb.button(text="📢 Рассылка", callback_data="admin_broadcast")
     
-    kb.button(text="↩️ Режим Юзера", callback_data="user_mode")
+    kb.button(text="↩️ Выход", callback_data="user_mode")
     
-    kb.adjust(2, 1, 2, 2, 1, 1, 2, 1)
+    kb.adjust(2, 2, 2, 2, 2, 1)
     return kb.as_markup()
 
 def sources_list_kb(sources: list):
@@ -100,7 +100,7 @@ def regions_kb(regions: list, prefix: str):
     for reg in regions:
         kb.button(text=f"{reg}", callback_data=f"{prefix}_{reg}")
     
-    kb.adjust(2) 
+    kb.adjust(3) 
     
     if "manage" in prefix:
         kb.row(InlineKeyboardButton(text="🚫 Blacklist Unknown", callback_data="admin_delete_unknown"))
@@ -181,5 +181,5 @@ def stats_kb():
     kb.button(text="🗑 Очистить ЧС", callback_data="admin_clear_blacklist_confirm")
     kb.button(text="🔄 Обновить", callback_data="admin_stats")
     kb.button(text="🔙 Назад", callback_data="admin_home")
-    kb.adjust(1)
+    kb.adjust(2, 2)
     return kb.as_markup()

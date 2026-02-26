@@ -82,7 +82,7 @@ class XrayExecutor:
     async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
-            return None, 0, "SYS_ERR: Invalid Link Format"
+            return None, 0, "CONFIG_ERR: Invalid Link Format"
 
         local_port = random.randint(20000, 60000)
         unique_id = uuid.uuid4().hex
@@ -101,15 +101,34 @@ class XrayExecutor:
             )
             
             try:
-                await asyncio.wait_for(process.wait(), timeout=1.0)
+                await asyncio.wait_for(process.wait(), timeout=0.5)
                 cls._cleanup_file(config_path)
-                return None, 0, "SYS_ERR: Xray Crashed on Start"
+                return None, 0, "CONFIG_ERR: Xray Crashed on Start"
             except asyncio.TimeoutError:
                 pass
 
+            port_open = False
+            start_wait = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start_wait < 3.0:
+                if process.returncode is not None:
+                    await cls.cleanup(process, config_path)
+                    return None, 0, "CONFIG_ERR: Xray Crashed during bind"
+                try:
+                    _, writer = await asyncio.open_connection('127.0.0.1', local_port)
+                    writer.close()
+                    await writer.wait_closed()
+                    port_open = True
+                    break
+                except Exception:
+                    await asyncio.sleep(0.05)
+
+            if not port_open:
+                await cls.cleanup(process, config_path)
+                return None, 0, "SYS_ERR: Xray Port Bind Timeout"
+
             return process, local_port, config_path
         except Exception as e:
-            cls._cleanup_file(config_path)
+            await cls.cleanup(None, config_path)
             return None, 0, f"SYS_ERR: {str(e)}"
 
     @staticmethod
@@ -119,6 +138,17 @@ class XrayExecutor:
                 os.remove(config_path)
             except Exception:
                 pass
+    
+    @staticmethod
+    def cleanup_zombies():
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["pkill", "-9", "-f", "xray_.*.json"],
+                capture_output=True
+            )
+        except Exception:
+            pass
     
     @classmethod
     async def cleanup(cls, process, config_path):

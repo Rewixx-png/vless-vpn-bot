@@ -9,6 +9,8 @@ from database.repo.blacklist import BlacklistRepo
 
 logger = logging.getLogger("SubRepo")
 
+_session_factory = async_session_factory
+
 _cache = {}
 _cache_ttl = {}
 
@@ -97,9 +99,16 @@ class SubRepo:
 
     @staticmethod
     async def get_all_keys_set() -> set:
+        cache_key = "all_keys_set"
+        cached = _get_cached(cache_key, ttl=300)
+        if cached is not None:
+            return cached
+        
         async with async_session_factory() as session:
             result = await session.execute(select(Subscription.vless_key))
-            return set(result.scalars().all())
+            keys = set(result.scalars().all())
+            _set_cached(cache_key, keys, ttl=300)
+            return keys
 
     @staticmethod
     async def get_smart_keys(

@@ -16,17 +16,17 @@ def user_main_kb(is_admin: bool = False):
     kb.button(text="💎 Поддержать проект", callback_data="donate_info")
 
     if is_admin:
-        kb.button(text="🔒 Admin Panel", callback_data="admin_home")
+        kb.button(text="🔒 Панель Админа", callback_data="admin_home")
 
     kb.adjust(2, 2, 2, 1, 1) 
     return kb.as_markup()
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📱 Показать QR-код", callback_data="sub_qr_main")
-    kb.button(text="⚙️ Настроить фильтры", callback_data="settings_main")
-    kb.button(text="🔙 В меню", callback_data="home")
-    kb.adjust(1)
+    kb.button(text="📱 QR-Код", callback_data="sub_qr_main")
+    kb.button(text="⚙️ Фильтры", callback_data="settings_main")
+    kb.button(text="🏠 Главное меню", callback_data="home")
+    kb.adjust(1, 1, 1)
     return kb.as_markup()
 
 def settings_main_kb(current_limit: int, use_fragment: bool = False):
@@ -39,7 +39,7 @@ def settings_main_kb(current_limit: int, use_fragment: bool = False):
     kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
     kb.button(text=f"🛡 Фрагментация (DPI): {frag_text}", callback_data="toggle_fragment")
     kb.button(text="🔙 Назад", callback_data="home")
-    kb.adjust(1)
+    kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 def settings_tags_kb(selected_tags: list, group_id: int = None):
@@ -52,9 +52,9 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
         return f"{status} {label}"
     
     kb.button(text=get_btn("stable", "🛡 Stable (24h Uptime)"), callback_data=f"{prefix}_stable")
-    kb.button(text=get_btn("ai", "AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
-    kb.button(text=get_btn("fast", "High Speed (>100Mbps)"), callback_data=f"{prefix}_fast")
-    kb.button(text=get_btn("wl", "Reality / Vision (Stealth)"), callback_data=f"{prefix}_wl")
+    kb.button(text=get_btn("ai", "🤖 AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
+    kb.button(text=get_btn("fast", "⚡ High Speed (>100Mbps)"), callback_data=f"{prefix}_fast")
+    kb.button(text=get_btn("wl", "🔐 Reality / Vision (Stealth)"), callback_data=f"{prefix}_wl")
     
     kb.adjust(1)
     
@@ -96,7 +96,7 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
         clean_reg = reg
         kb.button(text=f"{status} {clean_reg}", callback_data=f"{prefix}_{reg}")
 
-    kb.adjust(2) 
+    kb.adjust(3) 
 
     if group_id is None:
         if is_all_on:
@@ -124,12 +124,12 @@ def groups_list_kb(groups: list):
 
 def group_view_kb(group_id: int, url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📱 Показать QR-код", callback_data=f"group_qr_{group_id}")
+    kb.button(text="📱 QR-Код", callback_data=f"group_qr_{group_id}")
     kb.button(text="🌍 Выбор стран", callback_data=f"group_edit_countries_{group_id}")
     kb.button(text="⚡ Настройка тегов", callback_data=f"group_edit_tags_{group_id}")
     kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}")
     kb.button(text="🔙 Назад", callback_data="groups_list")
-    kb.adjust(1)
+    kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 def apps_os_kb():
@@ -172,15 +172,15 @@ def crypto_amount_kb():
     amounts = [1, 3, 5, 10, 25, 50]
     for amt in amounts:
         kb.button(text=f"{amt} $", callback_data=f"pay_create_{amt}")
-    kb.button(text="✍️ Своя сумма", callback_data="pay_custom")
+    kb.button(text="✏️ Своя сумма", callback_data="pay_custom")
     kb.adjust(3)
     kb.button(text="🔙 Назад", callback_data="donate_info")
     return kb.as_markup()
 
 def pay_link_kb(url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="💳 Перейти к оплате", url=url)
-    kb.button(text="🔙 Вернуться", callback_data="donate_info")
+    kb.button(text="💳 К оплате", url=url)
+    kb.button(text="🔙 Назад", callback_data="donate_info")
     kb.adjust(1)
     return kb.as_markup()
 

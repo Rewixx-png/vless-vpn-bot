@@ -8,8 +8,8 @@ class BackgroundTasks:
     _tasks = []
     _is_running = False
     
-    COLLECT_INTERVAL = 600       # 10 минут для сбора новых прокси
-    STABILITY_INTERVAL = 600     # 10 минут для проверки стабильности (начисляет streak)
+    COLLECT_INTERVAL = 1800       # 30 минут для сбора новых прокси (было 10)
+    STABILITY_INTERVAL = 1800     # 30 минут для проверки стабильности (было 10)
     GEOIP_UPDATE_INTERVAL = 30 * 24 * 3600 # 30 дней
     
     @classmethod

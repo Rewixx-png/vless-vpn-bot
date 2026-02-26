@@ -15,7 +15,7 @@ class UserRepo:
     @staticmethod
     async def get_all_users():
         async with async_session_factory() as session:
-            result = await session.execute(select(User.id))
+            result = await session.execute(select(User).order_by(User.id.desc()))
             return result.scalars().all()
 
     @staticmethod

@@ -5,90 +5,111 @@ import re
 import logging
 from typing import List
 
+try:
+    from settings import COLLECTOR_SETTINGS
+except ImportError:
+    COLLECTOR_SETTINGS = {
+        "max_links_per_batch": 40000,
+        "initial_workers": 20,
+        "min_workers": 8,
+        "max_workers": 60,
+        "target_cpu": 90.0,
+    }
+
 from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
-from utils.batch_processor import CpuAdaptiveProcessor
+from utils.batch_processor import CpuAdaptiveProcessor, SmartBatchProcessor
 
 logger = logging.getLogger("Collector")
 
 DEFAULT_SOURCES = [
-    "https://github.com/MhdiTaheri/V2rayCollector_Py/blob/main/sub/Mix/mix.txt",
-    "https://github.com/T3stAcc/V2Ray/blob/main/All_Configs_Sub.txt",
-    "https://github.com/V2RayRoot/V2RayConfig/blob/main/Config/vless.txt",
-    "https://github.com/ALIILAPRO/v2rayNG-Config/blob/main/server.txt",
-    "https://raw.githubusercontent.com/yitong2333/proxy-minging/refs/heads/main/v2ray.txt",
-    "https://raw.githubusercontent.com/acymz/AutoVPN/refs/heads/main/data/V2.txt",
-    "https://raw.githubusercontent.com/miladtahanian/V2RayCFGDumper/refs/heads/main/config.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
-    "https://github.com/Epodonios/v2ray-configs/raw/main/Splitted-By-Protocol/trojan.txt",
-    "https://raw.githubusercontent.com/YasserDivaR/pr0xy/refs/heads/main/ShadowSocks2021.txt",
-    "https://raw.githubusercontent.com/mohamadfg-dev/telegram-v2ray-configs-collector/refs/heads/main/category/vless.txt",
-    "https://raw.githubusercontent.com/heidari98/.proxy/refs/heads/main/vless",
-    "https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/mixed_iran.txt",
-    "https://raw.githubusercontent.com/heidari98/.proxy/refs/heads/main/all",
-    "https://github.com/Kwinshadow/TelegramV2rayCollector/raw/refs/heads/main/sublinks/mix.txt",
-    "https://github.com/LalatinaHub/Mineral/raw/refs/heads/master/result/nodes",
-    "https://raw.githubusercontent.com/miladtahanian/multi-proxy-config-fetcher/refs/heads/main/configs/proxy_configs.txt",
-    "https://raw.githubusercontent.com/Pawdroid/Free-servers/refs/heads/main/sub",
-    "https://github.com/MhdiTaheri/V2rayCollector_Py/raw/refs/heads/main/sub/Mix/mix.txt",
-    "https://github.com/Epodonios/v2ray-configs/raw/main/Splitted-By-Protocol/vmess.txt",
-    "https://github.com/MhdiTaheri/V2rayCollector/raw/refs/heads/main/sub/mix",
-    "https://raw.githubusercontent.com/mehran1404/Sub_Link/refs/heads/main/V2RAY-Sub.txt",
-    "https://raw.githubusercontent.com/shabane/kamaji/master/hub/merged.txt",
-    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",
-    "https://raw.githubusercontent.com/AzadNetCH/Clash/refs/heads/main/AzadNet.txt",
-    "https://raw.githubusercontent.com/STR97/STRUGOV/refs/heads/main/STR.BYPASS",
-    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt",
-    "https://raw.githubusercontent.com/lagzian/SS-Collector/main/mix_clash.yaml",
-    "https://raw.githubusercontent.com/Argh94/V2RayAutoConfig/refs/heads/main/configs/Vless.txt",
-    "https://raw.githubusercontent.com/Argh94/V2RayAutoConfig/refs/heads/main/configs/Hysteria2.txt",
-    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_list.json",
-    "https://raw.githubusercontent.com/NiREvil/vless/main/sub/SSTime",
-    "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/speed.txt",
-    "https://raw.githubusercontent.com/Mahdi0024/ProxyCollector/master/sub/proxies.txt",
-    "https://raw.githubusercontent.com/Mosifree/-FREE2CONFIG/refs/heads/main/Reality",
-    "https://raw.githubusercontent.com/MrMohebi/xray-proxy-grabber-telegram/master/collected-proxies/row-url/all.txt"
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/1.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/2.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/3.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/4.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/5.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/6.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/7.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/8.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/9.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/10.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/11.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/12.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/13.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/14.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/15.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/16.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/17.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/18.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/19.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/20.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/21.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/22.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/23.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/24.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/25.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/26.txt",
 ]
 
 class SubscriptionCollector:
-    MAX_LINKS_PER_BATCH = 150000 
+    MAX_LINKS_PER_BATCH = 40000 
     
     @classmethod
     async def run_collection(cls) -> dict:
         db_sources = await SourceRepo.get_enabled_urls()
         all_sources = list(set(DEFAULT_SOURCES + db_sources))
         
-        logger.warning(f"🚀 Starting SMART AGGRESSIVE collection from {len(all_sources)} sources ({len(db_sources)} custom)...")
+        logger.warning(f"🚀 Starting SAFE collection from {len(all_sources)} sources...")
         
         async with aiohttp.ClientSession() as session:
-            tasks = [cls._fetch_url(session, url) for url in all_sources]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Ограничиваем одновременные запросы к источникам
+            tasks = []
+            for url in all_sources:
+                tasks.append(cls._fetch_url(session, url))
+            
+            # Скачиваем чанками по 9 для скорости
+            results = []
+            for i in range(0, len(tasks), 9):
+                chunk = tasks[i:i+9]
+                chunk_res = await asyncio.gather(*chunk, return_exceptions=True)
+                results.extend(chunk_res)
         
-        all_content = [r for r in results if isinstance(r, str) and r]
+        valid_results = [r for r in results if isinstance(r, str) and len(r) > 10]
         
-        combined_text = "\n".join(all_content)
-        del all_content
+        combined_text = "\n".join(valid_results)
+        del valid_results
         
         decoded_content = cls._try_decode(combined_text)
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
         
-        found_links = re.findall(r'vless://[^\s]+', full_text)
+        found_links = re.findall(r'vless://[a-zA-Z0-9\-@:?&=%#_.]+', full_text)
         found_links = list(set(found_links))
         del full_text
         
+        if not found_links:
+            logger.warning("💤 No links found in sources.")
+            return {"processed": 0, "added": 0}
+
         existing_keys = await SubRepo.get_all_keys_set()
-        unique_links = [l.strip() for l in found_links if l.strip() not in existing_keys]
+        unique_links = []
+        for l in found_links:
+            l = l.strip()
+            if l and l not in existing_keys:
+                unique_links.append(l)
+        
         del found_links, existing_keys
         
         if not unique_links:
-            logger.warning("💤 No new unique links found.")
+            logger.warning("💤 All found links are already in DB.")
             return {"processed": 0, "added": 0}
         
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"⚡ Found {len(unique_links)} candidates. Starting Turbo Check...")
+        logger.warning(f"⚡ Unique candidates: {len(unique_links)}. Starting Adaptive Check...")
         return await cls._check_and_add_batch(unique_links)
     
     @classmethod
@@ -97,17 +118,13 @@ class SubscriptionCollector:
         failed_count = 0
         region_stats = {}
         
-        processor = CpuAdaptiveProcessor(
-            initial_workers=15,
-            min_workers=5,
-            max_workers=40,
-            target_cpu=80.0
-        )
+        # Используем SmartBatchProcessor для скорости
+        processor = SmartBatchProcessor(worker_count=10)
 
         async def process_link(link: str):
             try:
                 if "vless://" not in link or "@" not in link or ":" not in link:
-                    return False, "invalid_format"
+                    return False, "fmt_err"
 
                 is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
                 
@@ -115,6 +132,8 @@ class SubscriptionCollector:
                     return False, "sys_err"
                 
                 if is_alive:
+                    if not region: region = "🌍 UNK"
+                    
                     added = await SubRepo.smart_add_subscription(
                         vless_key=link,
                         region=region,
@@ -126,7 +145,7 @@ class SubscriptionCollector:
                     if added:
                         return True, {"region": region}
                     else:
-                        return False, "duplicate_or_limit"
+                        return False, "dup_or_bl"
                 else:
                     return False, "dead"
                     
@@ -134,9 +153,9 @@ class SubscriptionCollector:
                 return False, str(e)
 
         async def on_progress(completed, total, success, failed, workers):
-            if completed % 200 == 0:
+            if completed % 100 == 0:
                 percent = int((completed / total) * 100) if total > 0 else 0
-                logger.info(f"📊 Progress: {percent}% ({completed}/{total}) | 🏗 Workers: {workers} | ✅ +{success}")
+                logger.info(f"📊 Col: {percent}% ({completed}/{total}) | 🏗 Wrk: {workers} | ✅ +{success}")
 
         result = await processor.process(
             items=links,
@@ -156,7 +175,7 @@ class SubscriptionCollector:
             else:
                 failed_count += 1
         
-        logger.warning(f"✅ Collection Finished: +{added_count} Added | {failed_count} Discarded")
+        logger.warning(f"✅ Collector Summary: +{added_count} Added | {failed_count} Discarded")
         
         return {
             "processed": len(links),
@@ -172,10 +191,10 @@ class SubscriptionCollector:
                 url = url.replace("/blob/", "/raw/")
             
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
             }
             
-            timeout = aiohttp.ClientTimeout(total=15, connect=5)
+            timeout = aiohttp.ClientTimeout(total=20, connect=10)
             
             async with session.get(url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:

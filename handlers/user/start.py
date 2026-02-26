@@ -120,18 +120,18 @@ async def cmd_start(message: Message, state: FSMContext):
         limit_display = f"{user_settings.subscription_limit} шт."
 
     text = (
-        f"<b>🔐 VLESS VPN | DASHBOARD</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👋 Добро пожаловать, <b>{message.from_user.first_name}</b>!\n\n"
-        f"<b>👤 Информация о профиле:</b>\n"
-        f"🔹 <b>ID:</b> <code>{message.from_user.id}</code>\n"
-        f"🔹 <b>Тариф:</b> Free / {limit_display}\n"
-        f"🔹 <b>Статус:</b> ✅ Активен\n\n"
-        f"<b>🌍 Состояние сети:</b>\n"
-        f"▫️ <b>Онлайн:</b> {stats['active']} серверов\n"
-        f"▫️ <b>Регионов:</b> {stats['regions']} стран\n\n"
-        f"<i>🚀 Выберите действие в меню ниже:</i>\n"
-        f"👨‍💻 <b>Admin:</b> @RewiX_X"
+        f"<b>🚀 VLESS VPN | DASHBOARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
+        f"╔ <b>👤 ПРОФИЛЬ</b>\n"
+        f"║ 🔹 <b>ID:</b> <code>{message.from_user.id}</code>\n"
+        f"║ 🔹 <b>Тариф:</b> Free / {limit_display}\n"
+        f"║ 🔹 <b>Статус:</b> ✅ Активен\n\n"
+        f"╔ <b>🌍 СЕТЬ</b>\n"
+        f"║ ⚡ <b>Онлайн:</b> {stats['active']} серверов\n"
+        f"║ 🌍 <b>Стран:</b> {stats['regions']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>👇 Выберите действие:</i>"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -156,17 +156,17 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
         limit_display = f"{user_settings.subscription_limit} шт."
     
     text = (
-        f"<b>🔐 VLESS VPN | DASHBOARD</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
+        f"<b>🚀 VLESS VPN | DASHBOARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👋 С возвращением, <b>{callback.from_user.first_name}</b>!\n\n"
-        f"<b>👤 Ваш Профиль:</b>\n"
-        f"🔹 <b>ID:</b> <code>{callback.from_user.id}</code>\n"
-        f"🔹 <b>Лимит:</b> {limit_display}\n\n"
-        f"<b>🌍 Сеть:</b>\n"
-        f"▫️ <b>Серверов:</b> {stats['active']}\n"
-        f"▫️ <b>Локаций:</b> {stats['regions']}\n\n"
-        f"<i>👇 Управление доступом:</i>\n"
-        f"👨‍💻 <b>Admin:</b> @RewiX_X"
+        f"╔ <b>👤 ПРОФИЛЬ</b>\n"
+        f"║ 🔹 <b>ID:</b> <code>{callback.from_user.id}</code>\n"
+        f"║ 🔹 <b>Лимит:</b> {limit_display}\n\n"
+        f"╔ <b>🌍 СЕТЬ</b>\n"
+        f"║ ⚡ <b>Серверов:</b> {stats['active']}\n"
+        f"║ 🌍 <b>Локаций:</b> {stats['regions']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>👇 Выберите действие:</i>"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS

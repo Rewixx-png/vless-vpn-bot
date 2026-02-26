@@ -18,14 +18,18 @@ class BatchResult:
 class BatchProcessor:
     def __init__(
         self,
-        worker_count: int = 20,
-        progress_interval: float = 3.0,
-        rate_limit: Optional[int] = None
+        worker_count: int = 40,
+        progress_interval: float = 2.0,
+        rate_limit: Optional[int] = None,
+        max_concurrent_per_core: int = 4
     ):
-        self.worker_count = worker_count
+        import multiprocessing
+        cpu_count = multiprocessing.cpu_count()
+        self.worker_count = min(worker_count, cpu_count * max_concurrent_per_core)
         self.progress_interval = progress_interval
         self.rate_limit = rate_limit
         self._cancelled = False
+        self.cpu_count = cpu_count
         
     async def process(
         self,

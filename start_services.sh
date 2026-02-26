@@ -24,6 +24,11 @@ pm2 start "celery -A celery_app worker -Q high_priority,low_priority --loglevel=
 
 echo "✅ Celery Worker started (Turbo Maximum)."
 
+# 2.1 Запускаем Celery Beat (планировщик задач)
+pm2 start "celery -A celery_app beat --loglevel=ERROR" --name "VPN_Beat"
+
+echo "✅ Celery Beat started."
+
 # 3. Запускаем Основного Бота
 pm2 start bot.py --name "VPN_Bot" --interpreter python3
 

@@ -14,6 +14,9 @@ from utils.clash import ClashGenerator
 
 logger = logging.getLogger("SubServer")
 
+_sub_cache = {"ts": 0.0, "data": None, "params_hash": ""}
+_SUB_CACHE_TTL = 60  # Кэш на 60 секунд
+
 class SubscriptionServer:
     _external_cache = {"ts": 0.0, "links": []}
     @staticmethod

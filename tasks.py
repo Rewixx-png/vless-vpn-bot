@@ -66,18 +66,21 @@ async def check_stability_task() -> Dict[str, Any]:
 
     logger.warning(f"🛡 Checking {len(subs)} candidates for stability...")
 
-    processor = SmartBatchProcessor(worker_count=20)
+    worker_count = min(20, max(10, len(subs) // 10))
+    processor = SmartBatchProcessor(worker_count=worker_count)
     
     old_counts = await StatsRepo.get_regions_counts()
     
-    async def check_one(sub):
-        try:
-            is_alive, _, latency, speed_mbps, _, err = await VlessChecker.process_subscription(sub.vless_key)
-            if not is_alive and err and "SYS_ERR" in str(err):
+    def check_one(sub):
+        async def _check():
+            try:
+                is_alive, _, latency, speed_mbps, _, err = await VlessChecker.process_subscription(sub.vless_key)
+                if not is_alive and err and "SYS_ERR" in str(err):
+                    return (True, None)
+                return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
+            except Exception:
                 return (True, None)
-            return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
-        except Exception:
-            return (True, None)
+        return _check()
 
     batch_res = await processor.process(
         items=subs,

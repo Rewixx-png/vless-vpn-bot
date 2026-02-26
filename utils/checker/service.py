@@ -6,6 +6,7 @@ import logging
 import multiprocessing
 import resource
 from pathlib import Path
+import aiohttp
 from aiohttp import web
 from aiohttp_socks import ProxyConnector, ProxyError, ProxyConnectionError, ProxyTimeoutError
 import subprocess
@@ -22,6 +23,16 @@ from utils.checker.geo_ip import GeoIP
 from config import config
 
 try:
+    from settings import CHECKER_SETTINGS
+except ImportError:
+    CHECKER_SETTINGS = {
+        "max_concurrent": 80,
+        "timeout": 10,
+        "connect_timeout": 3,
+        "workers": 8,
+    }
+
+try:
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 except Exception:
@@ -33,79 +44,88 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CheckerService")
 
-MAX_CONCURRENT_CHECKS_PER_WORKER = 25
+MAX_CONCURRENT_CHECKS_PER_WORKER = CHECKER_SETTINGS.get("max_concurrent", 80)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
 
 PROBE_URLS = [
-    "http://ip-api.com/json/?fields=countryCode,query",
-    "https://ipwho.is/",
     "https://api.ip.sb/geoip",
-    "https://ifconfig.co/json"
+    "https://ipwho.is/",
+    "http://ip-api.com/json/?fields=countryCode,query",
 ]
 
+def custom_exception_handler(loop, context):
+    msg = context.get("message", "")
+    if "Task was destroyed but it is pending" in str(msg):
+        return
+    loop.default_exception_handler(context)
+
 async def cleanup_zombie_xrays():
-    while True:
-        await asyncio.sleep(60)
-        try:
-            subprocess.run("find /tmp -name 'xray_*.json' -mmin +5 -delete 2>/dev/null", shell=True)
-            gc.collect()
-        except Exception:
-            pass
+    try:
+        while True:
+            await asyncio.sleep(30)
+            try:
+                XrayExecutor.cleanup_zombies()
+                proc = await asyncio.create_subprocess_shell(
+                    "find /tmp -name 'xray_*.json' -mmin +2 -delete 2>/dev/null",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                await proc.wait()
+                gc.collect()
+            except Exception:
+                pass
+    except asyncio.CancelledError:
+        pass
 
 async def probe_proxy(connector: ProxyConnector) -> dict:
-    timeout = aiohttp.ClientTimeout(total=8.0, connect=4.0, sock_read=4.0)
+    timeout = aiohttp.ClientTimeout(total=5.0, connect=2.0, sock_read=2.0)
     
     result = {
         "success": False,
         "region": "🌍 UNK",
         "latency": 9999,
         "ip": None,
-        "error": None
+        "error": "Failed"
     }
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        url = PROBE_URLS[0]
-        try:
-            start_time = time.monotonic()
-            async with session.get(url, allow_redirects=True) as response:
-                if response.status == 200:
+        for url in PROBE_URLS:
+            try:
+                start_time = time.monotonic()
+                async with session.get(url, allow_redirects=True) as response:
                     latency = int((time.monotonic() - start_time) * 1000)
                     
-                    try:
-                        data = await response.json(content_type=None)
-                    except Exception:
-                        result["success"] = True
-                        result["latency"] = latency
-                        return result
-
-                    code = None
-                    ip = None
-                    
-                    if "countryCode" in data: code = data["countryCode"]
-                    elif "country_code" in data: code = data["country_code"]
-                    elif "country_iso" in data: code = data["country_iso"]
-                    
-                    if "query" in data: ip = data["query"]
-                    elif "ip" in data: ip = data["ip"]
-
                     result["success"] = True
-                    result["latency"] = latency
-                    result["region"] = GeoIP.code_to_region(code) if code else "🌍 UNK"
-                    result["ip"] = ip
+                    result["latency"] = min(result["latency"], latency)
                     
-                    return result
-                
-        except (asyncio.TimeoutError, ProxyTimeoutError):
-            result["error"] = "Timeout"
-        except (ProxyError, ProxyConnectionError, aiohttp.ClientConnectorError):
-            result["error"] = "Connection Failed"
-        except Exception as e:
-            result["error"] = str(e)
+                    if response.status == 200:
+                        try:
+                            data = await response.json(content_type=None)
+                            code = data.get("countryCode") or data.get("country_code") or data.get("country_iso")
+                            ip = data.get("query") or data.get("ip")
+                            
+                            if code:
+                                result["region"] = GeoIP.code_to_region(code)
+                            if ip:
+                                result["ip"] = ip
+                                
+                            result["error"] = "OK"
+                            return result
+                        except Exception:
+                            result["error"] = "Invalid JSON"
+                    else:
+                        result["error"] = f"HTTP {response.status}"
+            except (asyncio.TimeoutError, ProxyTimeoutError):
+                if result["error"] == "Failed": result["error"] = "Timeout"
+            except (ProxyError, ProxyConnectionError, aiohttp.ClientConnectorError):
+                if result["error"] == "Failed": result["error"] = "Connection Failed"
+            except Exception as e:
+                if result["error"] == "Failed": result["error"] = str(e)
     
     return result
 
 async def check_ai_availability(connector: ProxyConnector) -> bool:
-    timeout = aiohttp.ClientTimeout(total=4.0)
+    timeout = aiohttp.ClientTimeout(total=3.0)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
@@ -126,7 +146,8 @@ async def check_handler(request):
         return web.json_response({"error": "No config provided"}, status=400)
 
     try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=10.0)
+        # Увеличиваем время ожидания очереди, так как семафор маленький
+        await asyncio.wait_for(semaphore.acquire(), timeout=30.0)
     except asyncio.TimeoutError:
         return web.json_response({"error": "SYS_ERR: Worker Busy"}, status=503)
 
@@ -147,7 +168,7 @@ async def check_handler(request):
         process, local_port, config_path = await XrayExecutor.start_xray(config_url)
         
         if not process:
-            response_data["error"] = f"SYS_ERR: {config_path}"
+            response_data["error"] = config_path 
             return web.json_response(response_data)
 
         connector = ProxyConnector.from_url(
@@ -162,22 +183,27 @@ async def check_handler(request):
         if probe_result["success"]:
             response_data["success"] = True
             response_data["latency"] = probe_result["latency"]
-            response_data["region"] = probe_result["region"]
-            response_data["error"] = "OK"
             
-            try:
-                st_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-                async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=10.0)) as st_session:
-                    st_start = time.monotonic()
-                    async with st_session.get('http://speed.cloudflare.com/__down?bytes=10000000') as resp:
-                        if resp.status == 200:
-                            content = await resp.read()
-                            duration = time.monotonic() - st_start
-                            if duration > 0.01:
-                                speed = (len(content) * 8) / (duration * 1_000_000)
-                                response_data["speed_mbps"] = round(speed, 2)
-            except Exception:
-                pass
+            if probe_result["region"] != "🌍 UNK":
+                response_data["region"] = probe_result["region"]
+                
+            response_data["error"] = probe_result.get("error", "OK")
+            
+            # Облегченный спидтест (1МБ), только если пинг < 1500мс
+            if response_data["latency"] < 1500:
+                try:
+                    st_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
+                    async with aiohttp.ClientSession(connector=st_connector, timeout=aiohttp.ClientTimeout(total=3.0)) as st_session:
+                        st_start = time.monotonic()
+                        async with st_session.get('http://speed.cloudflare.com/__down?bytes=1000000') as resp:
+                            if resp.status == 200:
+                                content = await resp.read()
+                                duration = time.monotonic() - st_start
+                                if duration > 0.01:
+                                    speed = (len(content) * 8) / (duration * 1_000_000)
+                                    response_data["speed_mbps"] = round(speed, 2)
+                except Exception:
+                    pass
 
             if response_data["speed_mbps"] > 1.0:
                  ai_connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
@@ -197,13 +223,29 @@ async def check_handler(request):
 async def health_check(request):
     return web.Response(text="OK")
 
+async def start_background_tasks(app):
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(custom_exception_handler)
+    app['cleanup_task'] = asyncio.create_task(cleanup_zombie_xrays())
+
+async def cleanup_background_tasks(app):
+    task = app.get('cleanup_task')
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
 async def app_factory():
     await GeoIP.initialize()
     app = web.Application()
     app.router.add_post('/check', check_handler)
     app.router.add_get('/', health_check)
     
-    asyncio.create_task(cleanup_zombie_xrays())
+    app.on_startup.append(start_background_tasks)
+    app.on_cleanup.append(cleanup_background_tasks)
+    
     return app
 
 class GunicornApp(BaseApplication):
@@ -227,7 +269,8 @@ def main():
         'bind': f'0.0.0.0:{config.CHECKER_PORT}',
         'workers': workers,
         'worker_class': 'aiohttp.GunicornWebWorker',
-        'timeout': 60,
+        'timeout': 120,
+        'graceful_timeout': 30,
         'keepalive': 5,
         'loglevel': 'warning',
         'accesslog': None,
@@ -244,6 +287,8 @@ if __name__ == "__main__":
         loop.run_until_complete(GeoIP.initialize())
         app = web.Application()
         app.router.add_post('/check', check_handler)
+        app.on_startup.append(start_background_tasks)
+        app.on_cleanup.append(cleanup_background_tasks)
         web.run_app(app, port=config.CHECKER_PORT)
     else:
         main()
