@@ -48,7 +48,7 @@ class BatchProcessor:
             "completed": 0,
             "success": 0,
             "failed": 0,
-            "items": []
+            "items":[]
         }
         
         semaphore = asyncio.Semaphore(self.worker_count)
@@ -162,7 +162,7 @@ class SmartBatchProcessor(BatchProcessor):
         return await super().process(items, process_func, on_progress, on_complete)
 
 class CpuAdaptiveProcessor(BatchProcessor):
-    def __init__(self, initial_workers: int = 15, min_workers: int = 5, max_workers: int = 40, target_cpu: float = 85.0):
+    def __init__(self, initial_workers: int = 20, min_workers: int = 10, max_workers: int = 200, target_cpu: float = 85.0):
         super().__init__(worker_count=initial_workers)
         self.min_workers = min_workers
         self.max_workers = max_workers
@@ -187,7 +187,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
             "completed": 0,
             "success": 0,
             "failed": 0,
-            "items": []
+            "items":[]
         }
         
         active_tasks_count = 0
@@ -239,12 +239,10 @@ class CpuAdaptiveProcessor(BatchProcessor):
                 try:
                     cpu_usage = psutil.cpu_percent(interval=None)
                     
-                    if cpu_usage < self.target_cpu - 15:
-                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 5))
-                    elif cpu_usage < self.target_cpu:
-                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 2))
-                    elif cpu_usage > self.target_cpu + 5:
-                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency - 10))
+                    if cpu_usage < self.target_cpu:
+                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + 20))
+                    else:
+                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency - 20))
                         
                     if on_progress:
                          if asyncio.iscoroutinefunction(on_progress):
@@ -257,7 +255,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
         monitor_task = asyncio.create_task(cpu_monitor())
         
         num_runners = self.max_workers + 20 
-        runners = [asyncio.create_task(worker()) for _ in range(num_runners)]
+        runners =[asyncio.create_task(worker()) for _ in range(num_runners)]
         
         await asyncio.gather(*runners, return_exceptions=True)
             

@@ -51,7 +51,7 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
-    subs = []
+    subs =[]
     if mode == "all":
         subs = await SubRepo.get_all_subscriptions_for_check()
     elif mode == "active":
@@ -76,13 +76,13 @@ async def _run_recheck_process(subs: list, msg: Message):
     processor = CpuAdaptiveProcessor(
         initial_workers=20,
         min_workers=10,
-        max_workers=50,
-        target_cpu=80.0
+        max_workers=200,
+        target_cpu=85.0
     )
 
     update_lock = asyncio.Lock()
     status_buffer = []
-    region_buffer = []
+    region_buffer =[]
     BATCH_SIZE = 50
 
     stats = {"active": 0, "died": 0, "revived": 0, "saved": 0}

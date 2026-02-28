@@ -1,6 +1,7 @@
 import logging
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 from config import config
@@ -20,7 +21,7 @@ engine = create_async_engine(
     pool_use_lifo=True
 )
 
-async_session_factory = async_sessionmaker(
+async_session_factory = sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
 
@@ -37,7 +38,7 @@ async def init_db():
         async with engine.begin() as conn:
             logger.info("🔄 Checking migrations...")
             
-            migrations = [
+            migrations =[
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS country_filter TEXT DEFAULT NULL",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_limit INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL",

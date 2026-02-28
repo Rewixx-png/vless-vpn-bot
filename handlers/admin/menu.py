@@ -10,16 +10,16 @@ router = Router()
 
 @router.callback_query(F.data == "admin_home")
 async def admin_dashboard(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in config.ADMIN_IDS:
+    if callback.fromuser.id not in config.ADMIN_IDS:
         return
     
-    # Check collector status
     enabled_str = await SystemRepo.get_config("collector_enabled")
     collector_active = enabled_str != "false"
     
     text = (
         "🛠 <b>Control Panel</b>\n"
-        "Управление ботом и серверами."
+        "Управление ботом и серверами.\n\n"
+        "<i>💡 Кнопка «Коллектор: ON/OFF» позволяет включать и отключать фоновый сборщик серверов.</i>"
     )
     
     await admin_edit_or_answer(callback, state, text, reply_markup=main_admin_kb(collector_active))
@@ -33,7 +33,6 @@ async def toggle_collector(callback: CallbackQuery, state: FSMContext):
     await SystemRepo.set_config("collector_enabled", "true" if new_state else "false")
     
     status_text = "🟢 ВКЛЮЧЕН" if new_state else "🔴 ВЫКЛЮЧЕН"
-    await callback.answer(f"Collector {status_text}")
+    await callback.answer(f"Сборщик серверов {status_text}", show_alert=True)
     
-    # Refresh menu
     await admin_dashboard(callback, state)
