@@ -46,7 +46,8 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
         "✋ Фоновые задачи (Collector) остановлены\n"
         "⚙️ Адаптивная нагрузка на CPU\n"
-        "🚀 <b>Turbo Mode</b>\n"
+        "🧠 Защита от OOM (Контроль RAM)\n"
+        "🚀 <b>Turbo Mode (Soft Start)</b>\n"
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
@@ -74,14 +75,15 @@ async def _run_recheck_process(subs: list, msg: Message):
     total = len(subs)
     
     processor = CpuAdaptiveProcessor(
-        initial_workers=20,
-        min_workers=10,
+        initial_workers=5,
+        min_workers=5,
         max_workers=200,
-        target_cpu=85.0
+        target_cpu=85.0,
+        target_ram=90.0
     )
 
     update_lock = asyncio.Lock()
-    status_buffer = []
+    status_buffer =[]
     region_buffer =[]
     BATCH_SIZE = 50
 
@@ -166,13 +168,15 @@ async def _run_recheck_process(subs: list, msg: Message):
         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
         remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
         cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
         
         try:
             await msg.edit_text(
                 f"<blockquote>⚡ <b>ПРИОРИТЕТНАЯ ПРОВЕРКА: {percent}%</b>\n\n"
                 f"📊 <b>{completed} / {total}</b>\n"
-                f"💻 <b>CPU:</b> {cpu}% | 🏗 <b>Workers:</b> {workers}\n"
-                f"⏱️ Осталось: ~{remaining}сек | ⚡ {speed}серв/мин\n"
+                f"💻 <b>CPU:</b> {cpu}% | 🧠 <b>RAM:</b> {ram}%\n"
+                f"🏗 <b>Workers:</b> {workers} | ⚡ {speed}серв/мин\n"
+                f"⏱️ Осталось: ~{remaining}сек\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🟢 Рабочих: <b>{stats['active']}</b>\n"
                 f"💀 Нерабочих: <b>{stats['died']}</b>\n"
