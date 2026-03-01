@@ -35,7 +35,7 @@ def _invalidate_cache(pattern: str = None):
         _cache.clear()
         _cache_ttl.clear()
     else:
-        keys_to_remove = [k for k in _cache.keys() if pattern in k]
+        keys_to_remove =[k for k in _cache.keys() if pattern in k]
         for k in keys_to_remove:
             del _cache[k]
             if k in _cache_ttl:
@@ -220,7 +220,7 @@ class SubRepo:
     @staticmethod
     async def get_subs_by_ids(sub_ids: List[int]) -> List[Subscription]:
         if not sub_ids:
-            return []
+            return[]
         async with async_session_factory() as session:
             stmt = select(Subscription).where(Subscription.id.in_(sub_ids))
             result = await session.execute(stmt)
@@ -231,15 +231,14 @@ class SubRepo:
         if not updates:
             return
         
-        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
         updates.sort(key=lambda x: x['id'])
         
         async with async_session_factory() as session:
             case_active = []
-            case_latency = []
+            case_latency =[]
             case_speed = []
             case_ai = []
-            case_death = []
+            case_death =[]
             ids = []
             
             for upd in updates:
@@ -278,12 +277,11 @@ class SubRepo:
         if not updates:
             return
 
-        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
         updates.sort(key=lambda x: x['id'])
         
         async with async_session_factory() as session:
             case_regions = []
-            ids = []
+            ids =[]
             
             for upd in updates:
                 ids.append(upd["id"])
@@ -309,17 +307,16 @@ class SubRepo:
         if not updates:
             return
 
-        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
         updates.sort(key=lambda x: x['id'])
 
         async with async_session_factory() as session:
             case_streak = []
-            ids = []
+            ids =[]
             
             for upd in updates:
                 sub_id = upd["id"]
                 ids.append(sub_id)
-                is_alive = upd["is_active"] # исправлено поле, иногда приходило is_alive
+                is_alive = upd["is_active"]
                 if is_alive:
                     case_streak.append(f"WHEN {sub_id} THEN stability_streak + 1")
                 else:
@@ -337,6 +334,43 @@ class SubRepo:
             except Exception as e:
                 logger.error(f"Batch update stability failed: {e}")
                 await session.rollback()
+
+    @staticmethod
+    async def batch_update_keys(updates: List[Dict[str, Any]]):
+        if not updates:
+            return
+            
+        updates.sort(key=lambda x: x['id'])
+        
+        async with async_session_factory() as session:
+            case_keys = []
+            ids =[]
+            
+            for upd in updates:
+                ids.append(upd["id"])
+                key = upd["vless_key"].replace("'", "''")
+                case_keys.append(f"WHEN {upd['id']} THEN '{key}'")
+            
+            sql = text(f"""
+                UPDATE subscriptions
+                SET vless_key = CASE id {' '.join(case_keys)} END
+                WHERE id IN ({','.join(map(str, ids))})
+            """)
+            
+            try:
+                await session.execute(sql)
+                await session.commit()
+                _invalidate_cache("subscription")
+            except Exception as e:
+                logger.error(f"Batch update keys failed: {e}")
+                await session.rollback()
+
+    @staticmethod
+    async def update_sub_key(sub_id: int, new_key: str):
+        async with async_session_factory() as session:
+            stmt = update(Subscription).where(Subscription.id == sub_id).values(vless_key=new_key)
+            await session.execute(stmt)
+            await session.commit()
 
     @staticmethod
     async def delete_sub(sub_id: int):

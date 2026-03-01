@@ -1,13 +1,9 @@
-import logging
 import asyncio
 import ssl
 import aiohttp
 from utils.parser import LinkParser
 from utils.checker.api import CheckerAPI
 from utils.checker.geo_ip import GeoIP
-from utils.checker.xray import XrayExecutor
-
-logger = logging.getLogger("Checker")
 
 class VlessChecker:
     @staticmethod
@@ -58,7 +54,7 @@ class VlessChecker:
                     pass
 
     @staticmethod
-    async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str]:
+    async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str, str]:
         parsed = LinkParser.parse_vless(config_url)
         
         if parsed:
@@ -66,23 +62,41 @@ class VlessChecker:
             port = parsed.get("port")
             
             if host and port:
-                is_tcp_alive = await VlessChecker.check_tcp_connectivity(host, port, timeout=2.0)
+                resolved_ip = await GeoIP.resolve_host(host)
+                check_ip = resolved_ip if resolved_ip else host
+                
+                is_tcp_alive = await VlessChecker.check_tcp_connectivity(check_ip, port, timeout=2.0)
                 if not is_tcp_alive:
-                    return False, "🌍 UNK", 9999, 0.0, False, "Factor 1: TCP Unreachable"
+                    await GeoIP.invalidate_cache(host)
+                    return False, "🌍 UNK", 9999, 0.0, False, "Factor 1: TCP Unreachable", config_url
 
-            security = parsed.get("security", "none")
-            if security in ["tls", "reality"]:
-                sni = parsed.get("sni") or parsed.get("host") or host
-                is_ssl_alive = await VlessChecker.check_ssl_handshake(host, port, sni, timeout=3.0)
-                if not is_ssl_alive:
-                    return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed"
+                security = parsed.get("security", "none")
+                if security in ["tls", "reality"]:
+                    sni = parsed.get("sni") or parsed.get("host") or host
+                    is_ssl_alive = await VlessChecker.check_ssl_handshake(check_ip, port, sni, timeout=3.0)
+                    
+                    if not is_ssl_alive:
+                        FALLBACK_SNIS =["yahoo.com", "www.microsoft.com", "cloudflare-dns.com", "gateway.icloud.com", "itunes.apple.com"]
+                        working_sni = None
+                        for alt_sni in FALLBACK_SNIS:
+                            if await VlessChecker.check_ssl_handshake(check_ip, port, alt_sni, timeout=2.0):
+                                working_sni = alt_sni
+                                break
+                        
+                        if working_sni:
+                            config_url = LinkParser.update_param(config_url, "sni", working_sni)
+                        else:
+                            return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
         success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
         
-        if not success and err and str(err).startswith("SYS_ERR"):
-            return False, "", 0, 0.0, False, err
+        if success and speed_mbps < 25.0:
+            return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 25)", config_url
             
-        return success, region, latency, speed_mbps, ai, err
+        if not success and err and str(err).startswith("SYS_ERR"):
+            return False, "", 0, 0.0, False, err, config_url
+            
+        return success, region, latency, speed_mbps, ai, err, config_url
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list[tuple[str, str]], session: aiohttp.ClientSession) -> dict[str, str]:
@@ -94,11 +108,9 @@ class VlessChecker:
     @staticmethod
     async def verify_domain(domain: str) -> tuple[bool, str]:
         try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            try:
-                ip = await loop.getaddrinfo(domain, 80)
-                ip_addr = ip[0][4][0]
-            except: return False, "DNS Resolve Failed"
-            return True, f"OK ({ip_addr})"
-        except Exception as e: return False, str(e)
+            resolved_ip = await GeoIP.resolve_host(domain)
+            if not resolved_ip:
+                return False, "DNS Resolve Failed"
+            return True, f"OK ({resolved_ip})"
+        except Exception as e:
+            return False, str(e)

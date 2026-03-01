@@ -1,20 +1,23 @@
 import os
 import aiohttp
-import logging
+import asyncio
 import geoip2.database
+import aiodns
+import socket
+import redis.asyncio as redis
 from typing import Optional
 from config import config
 
-logger = logging.getLogger("GeoIP")
-
 class GeoIP:
-    MMDB_URLS = [
+    MMDB_URLS =[
         "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
         "https://git.io/GeoLite2-Country.mmdb"
     ]
     DB_PATH = "utils/checker/mmdb/Country.mmdb"
     
     _reader: Optional[geoip2.database.Reader] = None
+    _resolver: Optional[aiodns.DNSResolver] = None
+    _redis: Optional[redis.Redis] = None
     
     FLAGS = {
         'AD': '🇦🇩', 'AE': '🇦🇪', 'AF': '🇦🇫', 'AG': '🇦🇬', 'AI': '🇦🇮', 'AL': '🇦🇱', 'AM': '🇦🇲', 'AO': '🇦🇴',
@@ -52,13 +55,77 @@ class GeoIP:
     }
 
     @classmethod
+    async def get_resolver(cls):
+        if cls._resolver is None:
+            cls._resolver = aiodns.DNSResolver()
+        return cls._resolver
+
+    @classmethod
+    async def get_redis(cls):
+        if cls._redis is None:
+            try:
+                cls._redis = redis.from_url(config.REDIS_URL)
+            except Exception:
+                pass
+        return cls._redis
+
+    @classmethod
+    async def invalidate_cache(cls, host: str):
+        if not host:
+            return
+        r = await cls.get_redis()
+        if r:
+            try:
+                await r.delete(f"dns:{host}")
+            except Exception:
+                pass
+
+    @classmethod
+    async def resolve_host(cls, host: str) -> str | None:
+        if not host:
+            return None
+            
+        try:
+            socket.inet_aton(host)
+            return host
+        except socket.error:
+            pass
+
+        r = await cls.get_redis()
+        cache_key = f"dns:{host}"
+        
+        if r:
+            try:
+                cached = await r.get(cache_key)
+                if cached:
+                    return cached.decode('utf-8')
+            except Exception:
+                pass
+
+        try:
+            resolver = await cls.get_resolver()
+            res = await resolver.query(host, 'A')
+            ip = res[0].host
+            
+            if r:
+                try:
+                    await r.setex(cache_key, config.DNS_CACHE_TTL, ip)
+                except Exception:
+                    pass
+                    
+            return ip
+        except Exception:
+            return None
+
+    @classmethod
     async def initialize(cls):
+        await cls.get_redis()
+        
         dir_path = os.path.dirname(cls.DB_PATH)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
 
         if not os.path.exists(cls.DB_PATH):
-            logger.info("📥 Downloading GeoLite2...")
             try:
                 async with aiohttp.ClientSession() as session:
                     for url in cls.MMDB_URLS:
@@ -76,7 +143,6 @@ class GeoIP:
 
     @classmethod
     async def update_database(cls) -> bool:
-        logger.info("🔄 Force updating GeoLite2 MMDB...")
         dir_path = os.path.dirname(cls.DB_PATH)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
@@ -91,11 +157,10 @@ class GeoIP:
                                 f.write(await resp.read())
                             success = True
                             break
-        except Exception as e:
-            logger.error(f"❌ Failed to update GeoIP database: {e}")
+        except Exception:
+            pass
             
         if success:
-            logger.info("✅ GeoIP database updated.")
             try:
                 cls._reader = geoip2.database.Reader(cls.DB_PATH)
             except:
@@ -139,4 +204,42 @@ class GeoIP:
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:
-        return {}
+        results = {}
+        
+        async def process_host(host, remark):
+            region = await cls.identify_region(session, host, remark)
+            if region != "🌍 UNK":
+                return host, region
+            
+            ip = await cls.resolve_host(host)
+            if ip and cls._reader:
+                try:
+                    response = cls._reader.country(ip)
+                    code = response.country.iso_code
+                    if code:
+                        return host, cls.code_to_region(code)
+                except Exception:
+                    pass
+            
+            if ip:
+                try:
+                    async with session.get(f"http://ip-api.com/json/{ip}?fields=countryCode", timeout=2) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("countryCode"):
+                                return host, cls.code_to_region(data["countryCode"])
+                except:
+                    pass
+            return host, "🌍 UNK"
+
+        sem = asyncio.Semaphore(50)
+        async def bounded_process(h, r):
+            async with sem:
+                return await process_host(h, r)
+
+        tasks =[bounded_process(h, r) for h, r in hosts_data]
+        res_list = await asyncio.gather(*tasks)
+        for h, r in res_list:
+            results[h] = r
+            
+        return results

@@ -2,14 +2,11 @@ import aiohttp
 import asyncio
 import base64
 import re
-import logging
 from typing import List
 
 from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
-
-logger = logging.getLogger("Collector")
 
 DEFAULT_SOURCES =[
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
@@ -50,10 +47,8 @@ class SubscriptionCollector:
         db_sources = await SourceRepo.get_enabled_urls()
         all_sources = list(set(DEFAULT_SOURCES + db_sources))
         
-        logger.warning(f"🚀 Starting SAFE collection from {len(all_sources)} sources...")
-        
         async with aiohttp.ClientSession() as session:
-            tasks = [cls._fetch_url(session, url) for url in all_sources]
+            tasks =[cls._fetch_url(session, url) for url in all_sources]
             results = await asyncio.gather(*tasks, return_exceptions=True)
         
         valid_results =[r for r in results if isinstance(r, str) and len(r) > 10]
@@ -70,7 +65,6 @@ class SubscriptionCollector:
         del full_text
         
         if not found_links:
-            logger.warning("💤 No links found in sources.")
             return {"processed": 0, "added": 0}
 
         existing_keys = await SubRepo.get_all_keys_set()
@@ -83,13 +77,11 @@ class SubscriptionCollector:
         del found_links, existing_keys
         
         if not unique_links:
-            logger.warning("💤 All found links are already in DB.")
             return {"processed": 0, "added": 0}
         
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[:cls.MAX_LINKS_PER_BATCH]
         
-        logger.warning(f"⚡ Unique candidates: {len(unique_links)}. Starting Adaptive Check...")
         return await cls._check_and_add_batch(unique_links)
     
     @classmethod
@@ -99,9 +91,9 @@ class SubscriptionCollector:
         region_stats = {}
         
         processor = CpuAdaptiveProcessor(
-            initial_workers=40,
+            initial_workers=100,
             min_workers=20,
-            max_workers=150,
+            max_workers=400,
             target_cpu=85.0,
             target_ram=85.0
         )
@@ -111,7 +103,7 @@ class SubscriptionCollector:
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "fmt_err"
 
-                is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
+                is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(link)
                 
                 if not is_alive and err and "SYS_ERR" in str(err):
                     return False, "sys_err"
@@ -120,7 +112,7 @@ class SubscriptionCollector:
                     if not region: region = "🌍 UNK"
                     
                     added = await SubRepo.smart_add_subscription(
-                        vless_key=link,
+                        vless_key=updated_link,
                         region=region,
                         latency=latency,
                         speed_mbps=speed_mbps,
@@ -137,15 +129,10 @@ class SubscriptionCollector:
             except Exception as e:
                 return False, str(e)
 
-        async def on_progress(completed, total, success, failed, workers):
-            if completed % 100 == 0:
-                percent = int((completed / total) * 100) if total > 0 else 0
-                logger.info(f"📊 Col: {percent}% ({completed}/{total}) | 🏗 Wrk: {workers} | ✅ +{success}")
-
         result = await processor.process(
             items=links,
             process_func=process_link,
-            on_progress=on_progress
+            on_progress=None
         )
 
         for item in result.items:
@@ -159,8 +146,6 @@ class SubscriptionCollector:
                 region_stats[reg] += 1
             else:
                 failed_count += 1
-        
-        logger.warning(f"✅ Collector Summary: +{added_count} Added | {failed_count} Discarded")
         
         return {
             "processed": len(links),

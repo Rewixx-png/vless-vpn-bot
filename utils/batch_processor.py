@@ -1,11 +1,8 @@
 import asyncio
-import logging
 import psutil
 import time
 from typing import Callable, List, Any, Optional, Dict
 from dataclasses import dataclass
-
-logger = logging.getLogger("BatchProcessor")
 
 @dataclass
 class BatchResult:
@@ -40,10 +37,8 @@ class BatchProcessor:
         collect_results: bool = True
     ) -> BatchResult:
         start_time = time.time()
-        queue = asyncio.Queue()
         
-        for idx, item in enumerate(items):
-            queue.put_nowait((idx, item))
+        queue = asyncio.Queue(maxsize=self.worker_count * 3)
         
         stats = {
             "completed": 0,
@@ -53,13 +48,24 @@ class BatchProcessor:
         }
         
         semaphore = asyncio.Semaphore(self.worker_count)
+
+        async def producer():
+            for idx, item in enumerate(items):
+                if self._cancelled:
+                    break
+                await queue.put((idx, item))
+
+        prod_task = asyncio.create_task(producer())
         
         async def worker():
             while not self._cancelled:
-                try:
-                    idx, item = queue.get_nowait()
-                except asyncio.QueueEmpty:
+                if prod_task.done() and queue.empty():
                     break
+                
+                try:
+                    idx, item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
                 
                 async with semaphore:
                     try:
@@ -92,14 +98,11 @@ class BatchProcessor:
                                 "result": result
                             })
                         
-                    except Exception as e:
-                        logger.error(f"Critical worker crash: {e}")
+                    except Exception:
                         stats["completed"] += 1
                         stats["failed"] += 1
                     finally:
                         queue.task_done()
-                        del item
-                        del result
         
         progress_task = None
         if on_progress:
@@ -129,13 +132,18 @@ class BatchProcessor:
             progress_task = asyncio.create_task(progress_updater())
         
         num_workers = min(self.worker_count * 2, len(items))
-        workers =[asyncio.create_task(worker()) for _ in range(num_workers)]
+        workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
             
         await asyncio.gather(*workers, return_exceptions=True)
         
         if progress_task:
             progress_task.cancel()
             try: await progress_task
+            except: pass
+            
+        if not prod_task.done():
+            prod_task.cancel()
+            try: await prod_task
             except: pass
         
         duration = time.time() - start_time
@@ -161,32 +169,22 @@ class SmartBatchProcessor(BatchProcessor):
         super().__init__(*args, **kwargs)
         self.error_count = 0
         self.max_errors = 50
-    
-    async def process(self, items, process_func, on_progress=None, on_complete=None, collect_results=True):
-        return await super().process(
-            items,
-            process_func,
-            on_progress,
-            on_complete,
-            collect_results=collect_results
-        )
 
 class CpuAdaptiveProcessor(BatchProcessor):
     def __init__(
         self, 
-        initial_workers: int = 5, 
-        min_workers: int = 5, 
-        max_workers: int = 200, 
+        initial_workers: int = 50, 
+        min_workers: int = 10, 
+        max_workers: int = 400,
         target_cpu: float = 85.0,
         target_ram: float = 90.0
     ):
-        super().__init__(worker_count=initial_workers)
+        super().__init__(worker_count=max_workers)
         self.min_workers = min_workers
         self.max_workers = max_workers
         self.target_cpu = target_cpu
         self.target_ram = target_ram
         self.current_concurrency = initial_workers
-        self.increase_step = 5
         
     async def process(
         self,
@@ -198,10 +196,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
     ) -> BatchResult:
         
         start_time = time.time()
-        queue = asyncio.Queue()
-        
-        for idx, item in enumerate(items):
-            queue.put_nowait((idx, item))
+        queue = asyncio.Queue(maxsize=1000)
         
         stats = {
             "completed": 0,
@@ -211,53 +206,50 @@ class CpuAdaptiveProcessor(BatchProcessor):
         }
         
         active_tasks_count = 0
+
+        async def producer():
+            for idx, item in enumerate(items):
+                if self._cancelled:
+                    break
+                await queue.put((idx, item))
+
+        prod_task = asyncio.create_task(producer())
         
         async def worker():
             nonlocal active_tasks_count
             while not self._cancelled:
+                if prod_task.done() and queue.empty():
+                    break
+                
+                if active_tasks_count >= self.current_concurrency:
+                    await asyncio.sleep(0.5)
+                    continue
+                
                 try:
                     idx, item = queue.get_nowait()
                 except asyncio.QueueEmpty:
-                    break
-                
-                while active_tasks_count >= self.current_concurrency:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.5)
+                    continue
                 
                 active_tasks_count += 1
-                
                 try:
-                    try:
-                        success, result = await asyncio.wait_for(
-                            process_func(item), 
-                            timeout=30.0
-                        )
-                    except asyncio.TimeoutError:
-                        success = False
-                        result = "TIMEOUT"
-                    except Exception as e:
-                        success = False
-                        result = str(e)
-                    
+                    success, result = await asyncio.wait_for(
+                        process_func(item), 
+                        timeout=40.0
+                    )
                     stats["completed"] += 1
-                    if success:
-                        stats["success"] += 1
-                    else:
-                        stats["failed"] += 1
-                    
+                    if success: stats["success"] += 1
+                    else: stats["failed"] += 1
                     if collect_results:
                         stats["items"].append({"idx": idx, "item": item, "success": success, "result": result})
-                    
                 except Exception:
                     stats["completed"] += 1
                     stats["failed"] += 1
                 finally:
                     active_tasks_count -= 1
                     queue.task_done()
-                    del item
-                    if 'result' in locals():
-                        del result
 
-        async def cpu_monitor():
+        async def monitor():
             while not self._cancelled and stats["completed"] < len(items):
                 await asyncio.sleep(2.0)
                 try:
@@ -265,14 +257,16 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     ram_usage = psutil.virtual_memory().percent
                     
                     if ram_usage >= self.target_ram:
-                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency - 40))
-                        self.increase_step = 5
-                    elif cpu_usage < self.target_cpu:
-                        self.current_concurrency = int(min(self.max_workers, self.current_concurrency + self.increase_step))
-                        self.increase_step = min(20, self.increase_step + 5)
+                        self.current_concurrency = max(self.min_workers, int(self.current_concurrency * 0.5))
+                    elif cpu_usage >= self.target_cpu:
+                        self.current_concurrency = max(self.min_workers, int(self.current_concurrency * 0.8))
                     else:
-                        self.current_concurrency = int(max(self.min_workers, self.current_concurrency - 20))
-                        self.increase_step = 5
+                        diff = self.target_cpu - cpu_usage
+                        if diff > 50: self.current_concurrency += 50
+                        elif diff > 25: self.current_concurrency += 20
+                        else: self.current_concurrency += 10
+                        
+                    self.current_concurrency = min(self.current_concurrency, self.max_workers)
                         
                     if on_progress:
                          if asyncio.iscoroutinefunction(on_progress):
@@ -281,16 +275,17 @@ class CpuAdaptiveProcessor(BatchProcessor):
                              on_progress(stats["completed"], len(items), stats["success"], stats["failed"], self.current_concurrency)
                 except Exception:
                     pass
-                         
-        monitor_task = asyncio.create_task(cpu_monitor())
+
+        monitor_task = asyncio.create_task(monitor())
+        workers =[asyncio.create_task(worker()) for _ in range(min(self.max_workers, len(items)))]
         
-        num_runners = self.max_workers + 40 
-        runners =[asyncio.create_task(worker()) for _ in range(num_runners)]
-        
-        await asyncio.gather(*runners, return_exceptions=True)
-            
+        await asyncio.gather(*workers)
         self._cancelled = True
         monitor_task.cancel()
+        if not prod_task.done():
+            prod_task.cancel()
+            try: await prod_task
+            except: pass
             
         duration = time.time() - start_time
         res_obj = BatchResult(

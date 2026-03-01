@@ -28,7 +28,7 @@ async def start_add_subs(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AdminStates.waiting_for_subs)
 
-@router.message(StateFilter(AdminStates.waiting_for_subs), F.from_user.id.in_(config.ADMIN_IDS))
+@router.message(StateFilter(AdminStates.waiting_for_subs), F.fromuser.id.in_(config.ADMIN_IDS) if hasattr(F, 'fromuser') else F.from_user.id.in_(config.ADMIN_IDS))
 async def process_batch(message: Message, state: FSMContext, bot: Bot):
     text_content = ""
     
@@ -71,7 +71,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         return
 
     links = re.findall(r'(vless://[^\s\n<>"]+)', text_content)
-    links = [link.strip() for link in links if link.strip()]
+    links =[link.strip() for link in links if link.strip()]
 
     if not links:
         await message.answer(
@@ -88,7 +88,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         parse_mode="HTML"
     )
 
-    results_log = []
+    results_log =[]
     
     start_time = asyncio.get_event_loop().time()
     
@@ -100,14 +100,14 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     async def process_link(link: str):
         try:
-            is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(link)
+            is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(link)
             
             if not is_alive and err and str(err).startswith("SYS_ERR"):
                 return (False, {"status": "failed", "error": "System Overload. Try again later."})
                 
             if is_alive:
                 added = await SubRepo.smart_add_subscription(
-                    vless_key=link,
+                    vless_key=updated_link,
                     region=region,
                     latency=latency,
                     speed_mbps=speed_mbps,
@@ -123,7 +123,6 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
             return (False, {"status": "error", "error": str(e)})
 
     async def on_progress(completed: int, total: int, success: int, failed: int, workers: int):
-        elapsed = asyncio.get_event_loop().time() - start_time
         percent = int((completed / total) * 100)
         
         await safe_edit_message(

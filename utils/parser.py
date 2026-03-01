@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 from urllib.parse import parse_qs, unquote
 
 logger = logging.getLogger("LinkParser")
@@ -75,3 +76,21 @@ class LinkParser:
             return config
         except Exception:
             return None
+
+    @staticmethod
+    def update_param(link: str, param: str, value: str) -> str:
+        try:
+            if "?" not in link:
+                base, hash_part = link.split("#", 1) if "#" in link else (link, "")
+                return f"{base}?{param}={value}#{hash_part}" if hash_part else f"{base}?{param}={value}"
+            
+            base, rest = link.split("?", 1)
+            query, hash_part = rest.split("#", 1) if "#" in rest else (rest, "")
+            
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            params[param] = [value]
+            
+            new_query = urllib.parse.urlencode(params, doseq=True)
+            return f"{base}?{new_query}#{hash_part}" if hash_part else f"{base}?{new_query}"
+        except Exception:
+            return link

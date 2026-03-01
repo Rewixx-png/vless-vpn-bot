@@ -2,14 +2,12 @@ import sys
 import os
 import gc
 import asyncio
-import logging
 import multiprocessing
 import resource
 from pathlib import Path
 import aiohttp
 from aiohttp import web
 from aiohttp_socks import ProxyConnector
-import subprocess
 import time
 
 from gunicorn.app.base import BaseApplication
@@ -26,7 +24,6 @@ try:
     from settings import CHECKER_SETTINGS
 except ImportError:
     CHECKER_SETTINGS = {
-        "max_concurrent": 15,
         "timeout": 8,
         "connect_timeout": 3,
         "workers": 2,
@@ -37,21 +34,6 @@ try:
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 except Exception:
     pass
-
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - CHECKER - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("CheckerService")
-
-MAX_CONCURRENT_CHECKS_PER_WORKER = CHECKER_SETTINGS.get("max_concurrent", 15)
-semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
-
-GEO_PROBES =[
-    "https://api.ip.sb/geoip",
-    "https://ipwho.is/",
-    "http://ip-api.com/json/?fields=countryCode,query",
-]
 
 def custom_exception_handler(loop, context):
     msg = context.get("message", "")
@@ -106,6 +88,12 @@ async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]
 async def probe_geoip(connector: ProxyConnector) -> dict:
     timeout = aiohttp.ClientTimeout(total=5.0, connect=3.0)
     result = {"region": "🌍 UNK", "ip": None}
+    
+    GEO_PROBES =[
+        "https://api.ip.sb/geoip",
+        "https://ipwho.is/",
+        "http://ip-api.com/json/?fields=countryCode,query",
+    ]
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         for url in GEO_PROBES:
@@ -138,7 +126,7 @@ async def check_ai_availability(connector: ProxyConnector) -> bool:
                 
             try:
                 async with session.get('https://gemini.google.com/app', allow_redirects=True) as resp:
-                    if resp.status in [200, 302]:
+                    if resp.status in[200, 302]:
                         google_ok = True
             except:
                 pass
@@ -162,11 +150,6 @@ async def check_handler(request):
         
     config_url = data.get("config")
     if not config_url: return web.json_response({"error": "No config provided"}, status=400)
-
-    try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=15.0)
-    except asyncio.TimeoutError:
-        return web.json_response({"error": "SYS_ERR: Worker Busy"}, status=503)
 
     process = None
     config_path = None
@@ -224,7 +207,6 @@ async def check_handler(request):
     except Exception as e:
         response_data["error"] = str(e)
     finally:
-        semaphore.release()
         await XrayExecutor.cleanup(process, config_path)
 
     return web.json_response(response_data)

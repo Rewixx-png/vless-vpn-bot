@@ -47,12 +47,15 @@ def sources_list_kb(sources: list):
 
 def recheck_menu_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="♻️ Full Recheck (Все)", callback_data="admin_recheck_run_all")
-    kb.button(text="⚡ Active Recheck (Живые)", callback_data="admin_recheck_run_active")
-    kb.button(text="💀 Dead Recheck (Мертвые)", callback_data="admin_recheck_run_dead")
+    kb.button(text="♻️ Full Recheck (1 Pass)", callback_data="admin_recheck_run_all_1")
+    kb.button(text="⚡ Active (1 Pass)", callback_data="admin_recheck_run_active_1")
+    kb.button(text="⚡ Active (3 Passes)", callback_data="admin_recheck_run_active_3")
+    kb.button(text="⚡ Active (5 Passes)", callback_data="admin_recheck_run_active_5")
+    kb.button(text="⚡ Active (10 Passes)", callback_data="admin_recheck_run_active_10")
+    kb.button(text="💀 Dead Recheck", callback_data="admin_recheck_run_dead_1")
     kb.button(text="🌍 Recheck Regions (GeoIP)", callback_data="admin_recheck_regions_force")
     kb.button(text="🔙 Назад", callback_data="admin_home")
-    kb.adjust(1)
+    kb.adjust(1, 2, 2, 1, 1, 1)
     return kb.as_markup()
 
 def users_list_kb(users: list, offset: int, total: int):
@@ -63,7 +66,7 @@ def users_list_kb(users: list, offset: int, total: int):
         username = f"@{u.username}" if u.username else str(u.id)
         kb.button(text=f"👤 {username}", callback_data=f"admin_user_view_{u.id}_{offset}")
     
-    nav_row = []
+    nav_row =[]
     if offset > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_users_list_{offset - limit}"))
     if offset + limit < total:
@@ -90,8 +93,7 @@ def stable_list_kb(candidates: list):
     return kb.as_markup()
 
 def back_to_admin():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 В админку", callback_data="admin_home")]
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В админку", callback_data="admin_home")]
     ])
 
 def regions_kb(regions: list, prefix: str):
@@ -144,7 +146,7 @@ def subs_list_kb(subs: list, region: str, page: int, total_pages: int):
     
     kb.adjust(1, 2) 
     
-    nav_buttons = []
+    nav_buttons =[]
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"manage_region_{region}:{page - 1}"))
     
