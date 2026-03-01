@@ -10,14 +10,14 @@ class CheckerAPI:
 
     @classmethod
     async def get_session(cls) -> aiohttp.ClientSession:
-        """
-        Singleton сессия для переиспользования соединений (Keep-Alive).
-        Это предотвращает ошибку Too many open files.
-        """
         if cls._session is None or cls._session.closed:
-            timeout = aiohttp.ClientTimeout(total=60.0, connect=10.0)
+            timeout = aiohttp.ClientTimeout(total=45.0, connect=10.0)
             connector = aiohttp.TCPConnector(limit=100, ttl_dns_cache=300)
-            cls._session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+            cls._session = aiohttp.ClientSession(
+                connector=connector, 
+                timeout=timeout,
+                cookie_jar=aiohttp.DummyCookieJar()
+            )
         return cls._session
 
     @staticmethod

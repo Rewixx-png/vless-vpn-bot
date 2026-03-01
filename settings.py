@@ -1,31 +1,27 @@
-# Настройки коллектора (сборщика конфигов)
 COLLECTOR_SETTINGS = {
-    "max_links_per_batch": 2000,   # ОЧЕНЬ СИЛЬНО УМЕНЬШЕНО (было 5000)
-    "initial_workers": 5,          # Уменьшено
-    "min_workers": 2,              # Уменьшено
-    "max_workers": 10,             # Максимум 10 потоков внутри процесса
-    "target_cpu": 60.0,            # Держим нагрузку низкой
+    "max_links_per_batch": 50000,
+    "initial_workers": 25,
+    "min_workers": 10,
+    "max_workers": 100,
+    "target_cpu": 85.0,
     "check_timeout": 8,
     "fetch_timeout": 10,
-    "batch_size_fetch": 3,
+    "batch_size_fetch": 5,
 }
 
-# Настройки чекера (проверяльщика работоспособности)
 CHECKER_SETTINGS = {
-    "max_concurrent": 15,   # Уменьшено с 20 (а было 80)
+    "max_concurrent": 40,
     "timeout": 8,
     "connect_timeout": 3,
-    "workers": 2,           # Gunicorn workers
+    "workers": 3,
 }
 
-# Настройки Celery воркера (обработка задач)
 WORKER_SETTINGS = {
-    "concurrency": 2,              # Жесткий лимит
-    "max_tasks_per_child": 25,     # Частый перезапуск для очистки RAM
-    "prefetch_multiplier": 1,
+    "concurrency": 8,
+    "max_tasks_per_child": 50,
+    "prefetch_multiplier": 2,
 }
 
-# Расписание автоматических задач
 BEAT_SCHEDULE = {
     "collector_interval": 1800,
 }

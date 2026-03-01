@@ -53,19 +53,32 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
             f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
             "✋ Фоновые задачи (Collector) остановлены\n"
             "🛡 <b>3-Factor Check:</b> TCP ➔ SSL ➔ Xray\n"
-            "⚙️ Адаптивная нагрузка на CPU\n"
-            "🚀 <b>Max Stability Mode (8 Workers)</b>\n"
-            "⏱️ Это может занять время...</blockquote>",
+            "⚙️ Оптимизированный менеджмент RAM (Chunking)\n"
+            "🚀 <b>Turbo Mode (до 60 Workers)</b>\n"
+            "⏱️ Подготовка данных (выгрузка БД)...</blockquote>",
             parse_mode="HTML"
         )
 
-        subs = []
+        raw_subs =[]
         if mode == "all":
-            subs = await SubRepo.get_all_subscriptions_for_check()
+            raw_subs = await SubRepo.get_all_subscriptions_for_check()
         elif mode == "active":
-            subs = await SubRepo.get_active_subscriptions_for_check()
+            raw_subs = await SubRepo.get_active_subscriptions_for_check()
         elif mode == "dead":
-            subs = await SubRepo.get_dead_subscriptions_for_check()
+            raw_subs = await SubRepo.get_dead_subscriptions_for_check()
+
+        if not raw_subs:
+            BotState.set_maintenance(False)
+            await safe_edit_message(
+                msg,
+                "<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
+                reply_markup=back_to_admin()
+            )
+            return
+
+        subs =[{"id": s.id, "vless_key": s.vless_key, "is_active": s.is_active, "region": s.region} for s in raw_subs]
+        del raw_subs
+        gc.collect()
 
         await _run_recheck_process(subs, msg)
     except Exception as e:
@@ -88,30 +101,12 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
                 pass
 
 async def _run_recheck_process(subs: list, msg: Message):
-    if not subs:
-        BotState.set_maintenance(False)
-        await safe_edit_message(
-            msg,
-            "<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
-            reply_markup=back_to_admin()
-        )
-        return
-
     total = len(subs)
     
-    # ЕЩЕ БОЛЬШЕЕ СНИЖЕНИЕ. 8 воркеров - это очень безопасно.
-    processor = CpuAdaptiveProcessor(
-        initial_workers=4,
-        min_workers=2,
-        max_workers=8, 
-        target_cpu=65.0,
-        target_ram=75.0
-    )
-
     update_lock = asyncio.Lock()
     status_buffer = []
-    region_buffer = []
-    BATCH_SIZE = 50
+    region_buffer =[]
+    BATCH_SIZE = 150
 
     stats = {
         "completed": 0,
@@ -128,11 +123,16 @@ async def _run_recheck_process(subs: list, msg: Message):
     is_running = True
 
     async def flush_buffers():
+        to_save_status = None
+        to_save_region = None
+        
         async with update_lock:
-            to_save_status = list(status_buffer)
-            to_save_region = list(region_buffer)
-            status_buffer.clear()
-            region_buffer.clear()
+            if status_buffer:
+                to_save_status = list(status_buffer)
+                status_buffer.clear()
+            if region_buffer:
+                to_save_region = list(region_buffer)
+                region_buffer.clear()
 
         if to_save_status:
             await SubRepo.batch_update_status(to_save_status)
@@ -140,16 +140,11 @@ async def _run_recheck_process(subs: list, msg: Message):
         
         if to_save_region:
             await SubRepo.batch_update_regions(to_save_region)
-            
-        # GC чаще
-        if stats["saved"] % 200 == 0:
-            gc.collect()
 
-    # UI Loop
     async def ui_loop():
         while is_running:
             try:
-                await asyncio.sleep(5.0)
+                await asyncio.sleep(4.0)
 
                 completed = stats["completed"]
                 if completed == 0:
@@ -185,11 +180,10 @@ async def _run_recheck_process(subs: list, msg: Message):
     ui_task = asyncio.create_task(ui_loop())
 
     async def process_sub(sub):
-        # Даем дышать Event Loop между задачами
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)
         
         try:
-            is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
+            is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub["vless_key"])
             
             if not is_alive and err and "SYS_ERR" in str(err):
                 stats["completed"] += 1
@@ -200,11 +194,11 @@ async def _run_recheck_process(subs: list, msg: Message):
 
             if is_alive:
                 stats["active"] += 1
-                if not sub.is_active:
+                if not sub["is_active"]:
                     stats["revived"] += 1
 
                 status_upd = {
-                    "id": sub.id,
+                    "id": sub["id"],
                     "is_active": True,
                     "latency_ms": latency,
                     "speed_mbps": speed_mbps,
@@ -212,7 +206,7 @@ async def _run_recheck_process(subs: list, msg: Message):
                 }
                 
                 if region and "Unk" not in region:
-                    region_upd = {"id": sub.id, "region": region}
+                    region_upd = {"id": sub["id"], "region": region}
                 
                 result_status = "active"
             else:
@@ -224,11 +218,11 @@ async def _run_recheck_process(subs: list, msg: Message):
                 else:
                     stats["f3_dead"] += 1
 
-                if sub.is_active:
+                if sub["is_active"]:
                     stats["died"] += 1
                 
                 status_upd = {
-                    "id": sub.id,
+                    "id": sub["id"],
                     "is_active": False,
                     "latency_ms": 9999,
                     "speed_mbps": 0.0,
@@ -257,13 +251,30 @@ async def _run_recheck_process(subs: list, msg: Message):
             return (False, {"status": "error"})
 
     try:
-        await processor.process(
-            items=subs,
-            process_func=process_sub,
-            on_progress=None,
-            collect_results=False
-        )
-        await flush_buffers()
+        chunk_size = 4000
+        for i in range(0, total, chunk_size):
+            chunk = subs[i:i+chunk_size]
+            
+            processor = CpuAdaptiveProcessor(
+                initial_workers=30,
+                min_workers=10,
+                max_workers=60, 
+                target_cpu=80.0,
+                target_ram=80.0
+            )
+            
+            await processor.process(
+                items=chunk,
+                process_func=process_sub,
+                on_progress=None,
+                collect_results=False
+            )
+            
+            await flush_buffers()
+            del chunk
+            del processor
+            gc.collect()
+            
         await SubRepo.cleanup_dead_subs(max_deaths=3)
         
     finally:
@@ -276,6 +287,8 @@ async def _run_recheck_process(subs: list, msg: Message):
         except Exception:
             pass
         BotState.set_maintenance(False)
+        del subs
+        gc.collect()
 
     await safe_edit_message(
         msg,

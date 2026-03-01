@@ -98,6 +98,8 @@ class BatchProcessor:
                         stats["failed"] += 1
                     finally:
                         queue.task_done()
+                        del item
+                        del result
         
         progress_task = None
         if on_progress:
@@ -127,7 +129,7 @@ class BatchProcessor:
             progress_task = asyncio.create_task(progress_updater())
         
         num_workers = min(self.worker_count * 2, len(items))
-        workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+        workers =[asyncio.create_task(worker()) for _ in range(num_workers)]
             
         await asyncio.gather(*workers, return_exceptions=True)
         
@@ -219,7 +221,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     break
                 
                 while active_tasks_count >= self.current_concurrency:
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.1)
                 
                 active_tasks_count += 1
                 
@@ -251,6 +253,9 @@ class CpuAdaptiveProcessor(BatchProcessor):
                 finally:
                     active_tasks_count -= 1
                     queue.task_done()
+                    del item
+                    if 'result' in locals():
+                        del result
 
         async def cpu_monitor():
             while not self._cancelled and stats["completed"] < len(items):
@@ -288,7 +293,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
         monitor_task.cancel()
             
         duration = time.time() - start_time
-        result = BatchResult(
+        res_obj = BatchResult(
             total=len(items),
             success=stats["success"],
             failed=stats["failed"],
@@ -297,7 +302,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
         )
         
         if on_complete:
-            try: on_complete(result)
+            try: on_complete(res_obj)
             except: pass
         
-        return result
+        return res_obj

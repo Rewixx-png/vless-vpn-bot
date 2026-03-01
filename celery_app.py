@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import warnings
 import asyncio
@@ -6,6 +7,12 @@ from celery import Celery, signals, Task
 from celery.exceptions import SecurityWarning
 from kombu import Queue, Exchange
 from config import config
+
+try:
+    from settings import WORKER_SETTINGS, BEAT_SCHEDULE
+except ImportError:
+    WORKER_SETTINGS = {"concurrency": 8, "max_tasks_per_child": 50, "prefetch_multiplier": 2}
+    BEAT_SCHEDULE = {"collector_interval": 1800}
 
 warnings.simplefilter('ignore', SecurityWarning)
 os.environ.setdefault('C_FORCE_ROOT', '1')
@@ -50,7 +57,7 @@ app.conf.task_routes = {
 app.conf.beat_schedule = {
     'run-collector-every-30-minutes': {
         'task': 'tasks.run_collector_task',
-        'schedule': 1800.0,
+        'schedule': float(BEAT_SCHEDULE.get("collector_interval", 1800.0)),
     },
     'check-stability-every-30-minutes': {
         'task': 'tasks.check_stability_task',
@@ -65,10 +72,10 @@ app.conf.beat_schedule = {
 app.conf.update(
     timezone='Europe/Moscow',
     enable_utc=True,
-    worker_concurrency=2,
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=25,
-    worker_max_memory_per_child=120000, 
+    worker_concurrency=WORKER_SETTINGS.get("concurrency", 8),
+    worker_prefetch_multiplier=WORKER_SETTINGS.get("prefetch_multiplier", 2),
+    worker_max_tasks_per_child=WORKER_SETTINGS.get("max_tasks_per_child", 50),
+    worker_max_memory_per_child=150000, 
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
@@ -84,7 +91,7 @@ app.conf.update(
 
 @signals.after_setup_logger.connect
 def setup_loggers(logger, *args, **kwargs):
-    noisy = ["celery", "kombu", "asyncio", "aiogram", "aiohttp"]
+    noisy =["celery", "kombu", "asyncio", "aiogram", "aiohttp"]
     for name in noisy:
         logging.getLogger(name).setLevel(logging.WARNING)
 

@@ -38,7 +38,7 @@ class XrayExecutor:
         }
         stream = outbound["streamSettings"]
         
-        if parsed['security'] in ['tls', 'reality']:
+        if parsed['security'] in['tls', 'reality']:
             fp = parsed.get('fp', '')
             if not fp or fp == 'random':
                 fp = random.choice(['chrome', 'firefox', 'edge'])
@@ -70,15 +70,12 @@ class XrayExecutor:
 
         return {
             "log": {"loglevel": "none"},
-            "inbounds": [{
+            "inbounds":[{
                 "port": local_port, 
                 "protocol": "socks", 
                 "settings": {"auth": "noauth", "udp": True}, 
                 "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
             }],
-            # ВАЖНО: Удален 'freedom' (direct) outbound.
-            # Если прокси не отвечает, трафик умрет внутри Xray.
-            # Это предотвращает ложные срабатывания через IP сервера.
             "outbounds": [outbound] 
         }
 
@@ -147,8 +144,7 @@ class XrayExecutor:
     def cleanup_zombies():
         try:
             import subprocess
-            result = subprocess.run(
-                ["pkill", "-9", "-f", "xray_.*.json"],
+            subprocess.run(["pkill", "-9", "-f", "xray_.*.json"],
                 capture_output=True
             )
         except Exception:
@@ -164,6 +160,7 @@ class XrayExecutor:
                         await asyncio.wait_for(process.wait(), timeout=1.0)
                     except asyncio.TimeoutError:
                         process.kill()
+                        await process.wait()
             except Exception:
                 pass
         

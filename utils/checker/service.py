@@ -26,7 +26,7 @@ try:
     from settings import CHECKER_SETTINGS
 except ImportError:
     CHECKER_SETTINGS = {
-        "max_concurrent": 20,
+        "max_concurrent": 15,
         "timeout": 8,
         "connect_timeout": 3,
         "workers": 2,
@@ -44,14 +44,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CheckerService")
 
-MAX_CONCURRENT_CHECKS_PER_WORKER = CHECKER_SETTINGS.get("max_concurrent", 20)
+MAX_CONCURRENT_CHECKS_PER_WORKER = CHECKER_SETTINGS.get("max_concurrent", 15)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
 
-# СТРОГИЕ ПРАВИЛА:
-# generate_204 должен вернуть 204. Если вернет 200 -> значит это заглушка провайдера/РКН.
 TARGET_URL = "http://www.gstatic.com/generate_204"
 
-GEO_PROBES = [
+GEO_PROBES =[
     "https://api.ip.sb/geoip",
     "https://ipwho.is/",
     "http://ip-api.com/json/?fields=countryCode,query",
@@ -82,9 +80,6 @@ async def cleanup_zombie_xrays():
         pass
 
 async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]:
-    """
-    Строгая проверка URL.
-    """
     timeout = aiohttp.ClientTimeout(total=6.0, connect=4.0, sock_read=4.0)
     
     try:
@@ -93,12 +88,9 @@ async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]
             async with session.get(TARGET_URL, allow_redirects=False) as response:
                 latency = int((time.monotonic() - start_time) * 1000)
                 
-                # ВАЖНО: NekoBox считает успехом ТОЛЬКО 204 для gstatic
                 if response.status == 204:
                     return True, latency, "OK"
-                # Некоторые провайдеры редиректят на страницу "Доступ ограничен" с кодом 200
                 elif response.status == 200:
-                    # Дополнительная проверка: если контент пустой, то может быть ок, но для gstatic это 204
                     return False, 9999, f"Fake Success (HTTP 200 instead of 204)"
                 else:
                     return False, 9999, f"HTTP {response.status}"
@@ -132,7 +124,7 @@ async def check_ai_availability(connector: ProxyConnector) -> bool:
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
-                if resp.status in [200, 401, 403]:
+                if resp.status in[200, 401, 403]:
                     return True
     except: pass
     return False
@@ -169,7 +161,6 @@ async def check_handler(request):
             response_data["error"] = config_path 
             return web.json_response(response_data)
 
-        # 1. Strict Connectivity Check
         connector_strict = ProxyConnector.from_url(
             f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True, enable_cleanup_closed=True
         )
@@ -181,12 +172,10 @@ async def check_handler(request):
             response_data["latency"] = latency
             response_data["error"] = "OK"
             
-            # 2. GeoIP Check
             connector_geo = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
             geo_info = await probe_geoip(connector_geo)
             response_data["region"] = geo_info["region"]
             
-            # 3. AI Check & Speed
             if latency < 1200:
                 connector_ai = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
                 response_data["ai"] = await check_ai_availability(connector_ai)
@@ -248,8 +237,7 @@ class GunicornApp(BaseApplication):
     def load(self): return app_factory
 
 def main():
-    workers = multiprocessing.cpu_count()
-    if workers > 4: workers = 4
+    workers = CHECKER_SETTINGS.get("workers", 2)
     GunicornApp({
         'bind': f'0.0.0.0:{config.CHECKER_PORT}',
         'workers': workers,
@@ -264,7 +252,6 @@ def main():
 
 if __name__ == "__main__":
     if os.name == 'nt':
-        # Windows support removed for strict checks
         pass
     else:
         main()
