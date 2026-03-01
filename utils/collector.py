@@ -5,24 +5,13 @@ import re
 import logging
 from typing import List
 
-try:
-    from settings import COLLECTOR_SETTINGS
-except ImportError:
-    COLLECTOR_SETTINGS = {
-        "max_links_per_batch": 40000,
-        "initial_workers": 20,
-        "min_workers": 8,
-        "max_workers": 60,
-        "target_cpu": 90.0,
-    }
-
 from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
-from utils.batch_processor import CpuAdaptiveProcessor, SmartBatchProcessor
+from utils.batch_processor import CpuAdaptiveProcessor
 
 logger = logging.getLogger("Collector")
 
-DEFAULT_SOURCES = [
+DEFAULT_SOURCES =[
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
     "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/1.txt",
@@ -64,19 +53,10 @@ class SubscriptionCollector:
         logger.warning(f"🚀 Starting SAFE collection from {len(all_sources)} sources...")
         
         async with aiohttp.ClientSession() as session:
-            # Ограничиваем одновременные запросы к источникам
-            tasks = []
-            for url in all_sources:
-                tasks.append(cls._fetch_url(session, url))
-            
-            # Скачиваем чанками по 9 для скорости
-            results = []
-            for i in range(0, len(tasks), 9):
-                chunk = tasks[i:i+9]
-                chunk_res = await asyncio.gather(*chunk, return_exceptions=True)
-                results.extend(chunk_res)
+            tasks = [cls._fetch_url(session, url) for url in all_sources]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        valid_results = [r for r in results if isinstance(r, str) and len(r) > 10]
+        valid_results =[r for r in results if isinstance(r, str) and len(r) > 10]
         
         combined_text = "\n".join(valid_results)
         del valid_results
@@ -94,7 +74,7 @@ class SubscriptionCollector:
             return {"processed": 0, "added": 0}
 
         existing_keys = await SubRepo.get_all_keys_set()
-        unique_links = []
+        unique_links =[]
         for l in found_links:
             l = l.strip()
             if l and l not in existing_keys:
@@ -118,8 +98,13 @@ class SubscriptionCollector:
         failed_count = 0
         region_stats = {}
         
-        # Используем SmartBatchProcessor для скорости
-        processor = SmartBatchProcessor(worker_count=10)
+        processor = CpuAdaptiveProcessor(
+            initial_workers=40,
+            min_workers=20,
+            max_workers=150,
+            target_cpu=85.0,
+            target_ram=85.0
+        )
 
         async def process_link(link: str):
             try:
@@ -209,7 +194,7 @@ class SubscriptionCollector:
     @staticmethod
     def _try_decode(text: str) -> str:
         if not text: return ""
-        decoded_parts = []
+        decoded_parts =[]
         
         lines = text.replace(',', '\n').splitlines()
         for line in lines:

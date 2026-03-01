@@ -54,7 +54,6 @@ class VlessChecker:
             if writer:
                 try:
                     writer.close()
-                    # Не ждем wait_closed, чтобы не блокировать loop, если сокет завис
                 except Exception:
                     pass
 
@@ -66,13 +65,11 @@ class VlessChecker:
             host = parsed.get("server")
             port = parsed.get("port")
             
-            # FACTOR 1: TCP Ping (Layer 4)
             if host and port:
                 is_tcp_alive = await VlessChecker.check_tcp_connectivity(host, port, timeout=2.0)
                 if not is_tcp_alive:
                     return False, "🌍 UNK", 9999, 0.0, False, "Factor 1: TCP Unreachable"
 
-            # FACTOR 2: SSL/TLS Handshake (Layer 6)
             security = parsed.get("security", "none")
             if security in ["tls", "reality"]:
                 sni = parsed.get("sni") or parsed.get("host") or host
@@ -80,7 +77,6 @@ class VlessChecker:
                 if not is_ssl_alive:
                     return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed"
 
-        # FACTOR 3: Xray Real Test (Layer 7)
         success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
         
         if not success and err and str(err).startswith("SYS_ERR"):
@@ -91,7 +87,7 @@ class VlessChecker:
     @classmethod
     async def get_regions_batch(cls, hosts_data: list[tuple[str, str]], session: aiohttp.ClientSession) -> dict[str, str]:
         if hosts_data and isinstance(hosts_data[0], str):
-            hosts_data = [(h, "") for h in hosts_data]
+            hosts_data =[(h, "") for h in hosts_data]
             
         return await GeoIP.get_regions_batch(hosts_data, session)
 

@@ -52,7 +52,7 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
             f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
             f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
             "✋ Фоновые задачи (Collector) остановлены\n"
-            "🛡 <b>3-Factor Check:</b> TCP ➔ SSL ➔ Xray\n"
+            "🛡 <b>5-Factor Check:</b> TCP ➔ SSL ➔ Xray ➔ Portal ➔ Route\n"
             "⚙️ Оптимизированный менеджмент RAM (Chunking)\n"
             "🚀 <b>Turbo Mode (до 60 Workers)</b>\n"
             "⏱️ Подготовка данных (выгрузка БД)...</blockquote>",
@@ -116,7 +116,9 @@ async def _run_recheck_process(subs: list, msg: Message):
         "saved": 0, 
         "f1_dead": 0, 
         "f2_dead": 0, 
-        "f3_dead": 0
+        "f3_dead": 0,
+        "f4_dead": 0,
+        "f5_dead": 0
     }
     
     start_time = asyncio.get_event_loop().time()
@@ -158,7 +160,7 @@ async def _run_recheck_process(subs: list, msg: Message):
                 ram = psutil.virtual_memory().percent
 
                 await msg.edit_text(
-                    f"<blockquote>⚡ <b>3-FACTOR CHECK: {percent}%</b>\n\n"
+                    f"<blockquote>⚡ <b>5-FACTOR CHECK: {percent}%</b>\n\n"
                     f"📊 <b>{completed} / {total}</b>\n"
                     f"💻 <b>CPU:</b> {cpu}% | 🧠 <b>RAM:</b> {ram}%\n"
                     f"⚡ Скорость: {speed} серв/мин\n"
@@ -168,7 +170,9 @@ async def _run_recheck_process(subs: list, msg: Message):
                     f"💀 Потеряно: <b>{stats['died']}</b>\n"
                     f"├── 🚫 TCP Fail: <b>{stats['f1_dead']}</b>\n"
                     f"├── 🔐 SSL Fail: <b>{stats['f2_dead']}</b>\n"
-                    f"└── 🤖 Xray Fail: <b>{stats['f3_dead']}</b>\n"
+                    f"├── 🤖 Xray Fail: <b>{stats['f3_dead']}</b>\n"
+                    f"├── 🌐 Portal Fail: <b>{stats['f4_dead']}</b>\n"
+                    f"└── 🛡 Route Fail: <b>{stats['f5_dead']}</b>\n"
                     f"🆙 Восстановлено: <b>{stats['revived']}</b></blockquote>",
                     parse_mode="HTML"
                 )
@@ -215,6 +219,10 @@ async def _run_recheck_process(subs: list, msg: Message):
                     stats["f1_dead"] += 1
                 elif "Factor 2" in err_str:
                     stats["f2_dead"] += 1
+                elif "Factor 4" in err_str:
+                    stats["f4_dead"] += 1
+                elif "Factor 5" in err_str:
+                    stats["f5_dead"] += 1
                 else:
                     stats["f3_dead"] += 1
 
@@ -295,7 +303,7 @@ async def _run_recheck_process(subs: list, msg: Message):
         f"<blockquote>✅ <b>Проверка завершена!</b>\n\n"
         f"🟢 <b>MAINTENANCE MODE DISABLED</b>\n"
         f"Фоновые задачи возобновлены.\n\n"
-        f"📊 <b>Итоговый отчёт (3-Factor):</b>\n"
+        f"📊 <b>Итоговый отчёт (5-Factor):</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📋 Всего проверено: <b>{total}</b>\n"
         f"🟢 Рабочих серверов: <b>{stats['active']}</b>\n"
@@ -304,7 +312,9 @@ async def _run_recheck_process(subs: list, msg: Message):
         f"📊 <b>Статистика отказов:</b>\n"
         f"├── 🚫 1. TCP Ping: <b>{stats['f1_dead']}</b>\n"
         f"├── 🔐 2. SSL Handshake: <b>{stats['f2_dead']}</b>\n"
-        f"└── 🤖 3. Xray Core: <b>{stats['f3_dead']}</b>\n"
+        f"├── 🤖 3. Xray Core: <b>{stats['f3_dead']}</b>\n"
+        f"├── 🌐 4. Portal Check: <b>{stats['f4_dead']}</b>\n"
+        f"└── 🛡 5. HTTP Routing: <b>{stats['f5_dead']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"ℹ️ <i>База данных обновлена.</i></blockquote>",

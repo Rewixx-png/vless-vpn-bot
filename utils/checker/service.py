@@ -47,8 +47,6 @@ logger = logging.getLogger("CheckerService")
 MAX_CONCURRENT_CHECKS_PER_WORKER = CHECKER_SETTINGS.get("max_concurrent", 15)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS_PER_WORKER)
 
-TARGET_URL = "http://www.gstatic.com/generate_204"
-
 GEO_PROBES =[
     "https://api.ip.sb/geoip",
     "https://ipwho.is/",
@@ -80,25 +78,30 @@ async def cleanup_zombie_xrays():
         pass
 
 async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]:
-    timeout = aiohttp.ClientTimeout(total=6.0, connect=4.0, sock_read=4.0)
+    timeout = aiohttp.ClientTimeout(total=8.0, connect=4.0, sock_read=4.0)
     
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             start_time = time.monotonic()
-            async with session.get(TARGET_URL, allow_redirects=False) as response:
-                latency = int((time.monotonic() - start_time) * 1000)
-                
-                if response.status == 204:
-                    return True, latency, "OK"
-                elif response.status == 200:
-                    return False, 9999, f"Fake Success (HTTP 200 instead of 204)"
-                else:
-                    return False, 9999, f"HTTP {response.status}"
+            
+            async with session.get("http://www.gstatic.com/generate_204", allow_redirects=False) as response:
+                if response.status != 204:
+                    return False, 9999, f"Factor 4: Captive Portal Detected (HTTP {response.status})"
+            
+            async with session.get("http://detectportal.firefox.com/success.txt", allow_redirects=False) as response:
+                if response.status != 200:
+                    return False, 9999, f"Factor 5: Invalid Routing (HTTP {response.status})"
+                text = await response.text()
+                if "success" not in text:
+                    return False, 9999, "Factor 5: Bad Response Content"
+
+            latency = int((time.monotonic() - start_time) * 1000)
+            return True, latency, "OK"
                     
     except asyncio.TimeoutError:
-        return False, 9999, "Timeout"
+        return False, 9999, "Factor 4: HTTP Timeout"
     except Exception as e:
-        return False, 9999, str(e)
+        return False, 9999, f"Factor 4/5: {str(e)}"
 
 async def probe_geoip(connector: ProxyConnector) -> dict:
     timeout = aiohttp.ClientTimeout(total=5.0, connect=3.0)
@@ -120,14 +123,38 @@ async def probe_geoip(connector: ProxyConnector) -> dict:
     return result
 
 async def check_ai_availability(connector: ProxyConnector) -> bool:
-    timeout = aiohttp.ClientTimeout(total=3.0)
+    timeout = aiohttp.ClientTimeout(total=5.0)
+    openai_ok = False
+    google_ok = False
+    
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
-                if resp.status in[200, 401, 403]:
-                    return True
-    except: pass
-    return False
+            try:
+                async with session.get('https://api.openai.com/v1/models', allow_redirects=False) as resp:
+                    if resp.status in[200, 401, 403]:
+                        openai_ok = True
+            except:
+                pass
+                
+            try:
+                async with session.get('https://gemini.google.com/app', allow_redirects=True) as resp:
+                    if resp.status in [200, 302]:
+                        google_ok = True
+            except:
+                pass
+                
+            if not google_ok:
+                try:
+                    async with session.get('https://generativelanguage.googleapis.com/v1beta/models', allow_redirects=False) as resp:
+                        if resp.status in[200, 400, 401, 403, 404]:
+                            google_ok = True
+                except:
+                    pass
+
+    except:
+        pass
+        
+    return openai_ok and google_ok
 
 async def check_handler(request):
     try: data = await request.json()
