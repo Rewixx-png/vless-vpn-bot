@@ -1,33 +1,37 @@
+import logging
 from aiocryptopay import AioCryptoPay, Networks
 from config import config
 
+logger = logging.getLogger("Payment")
+
 class PaymentClient:
     def __init__(self):
-        # Инициализируем клиент CryptoBot
-        self.crypto = AioCryptoPay(
-            token=config.CRYPTO_BOT_TOKEN.get_secret_value(),
-            network=Networks.MAIN_NET
-        )
+        self._crypto = None
+
+    async def get_client(self):
+        if self._crypto is None:
+            self._crypto = AioCryptoPay(
+                token=config.CRYPTO_BOT_TOKEN.get_secret_value(),
+                network=Networks.MAIN_NET
+            )
+        return self._crypto
 
     async def create_invoice(self, amount: float, asset: str = "USDT"):
-        """
-        Создает инвойс на оплату.
-        amount: сумма
-        asset: валюта (USDT, TON, BTC)
-        """
         try:
-            invoice = await self.crypto.create_invoice(
+            client = await self.get_client()
+            invoice = await client.create_invoice(
                 asset=asset,
                 amount=amount,
-                description=f"Donation to FreeVPN Bot ({amount} {asset})"
+                description=f"Donation to VPN Bot ({amount} {asset})"
             )
             return invoice
         except Exception as e:
-            print(f"Error creating invoice: {e}")
+            logger.error(f"Error creating invoice: {e}")
             return None
             
     async def close(self):
-        await self.crypto.close()
+        if self._crypto:
+            await self._crypto.close()
+            self._crypto = None
 
-# Создаем глобальный экземпляр
 payment_client = PaymentClient()

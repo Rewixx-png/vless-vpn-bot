@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sys
 import time
-import traceback
+import os
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
@@ -38,6 +38,7 @@ for logger_name in loggers_to_silence:
 
 logger = logging.getLogger(__name__)
 
+CRASH_FILE = "crash_log.txt"
 
 class TelegramLogHandler(logging.Handler):
     def __init__(self, bot: Bot, admin_ids: Iterable[int]):
@@ -107,6 +108,22 @@ async def check_services() -> dict:
     
     return results
 
+async def report_crash(bot: Bot):
+    if os.path.exists(CRASH_FILE):
+        try:
+            with open(CRASH_FILE, "r", encoding="utf-8") as f:
+                crash_reason = f.read()
+            
+            os.remove(CRASH_FILE)
+            
+            await notify_admins(bot, f"☠️ <b>Бот был перезагружен после сбоя!</b>\n\n<pre>{crash_reason}</pre>")
+        except Exception:
+            pass
+    else:
+        # Если файла нет, но бот перезагрузился (мы знаем это, так как этот код выполняется при старте)
+        # Скорее всего это OOM Killer или ручной рестарт
+        # Можно проверять uptime, но пока просто уведомление о старте
+        pass
 
 async def main():
     start_time = time.time()
@@ -124,6 +141,9 @@ async def main():
     
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
+    
+    # Check for previous crash
+    await report_crash(bot)
     
     tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
     tg_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
@@ -153,6 +173,7 @@ async def main():
         f"{status_emoji(service_status['database'])} База данных\n"
         f"{status_emoji(service_status['checker'])} Checker Service\n"
         f"{status_emoji(service_status['video'])} Видео UI\n\n"
+        f"ℹ️ <i>Если бот перезагрузился сам по себе без ошибки выше - скорее всего закончилась RAM (OOM Killer).</i>"
     )
     
     if not service_status["checker"]:
@@ -211,6 +232,13 @@ if __name__ == "__main__":
             break
             
         except Exception as e:
+            # Write crash log
+            try:
+                with open(CRASH_FILE, "w", encoding="utf-8") as f:
+                    f.write(f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
+            except:
+                pass
+                
             restart_count += 1
             logger.error(f"❌ Fatal error (restart {restart_count}/{max_restarts}): {e}", exc_info=True)
             time.sleep(5)

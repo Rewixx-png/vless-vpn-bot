@@ -199,6 +199,9 @@ class SubRepo:
         if not updates:
             return
         
+        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
+        updates.sort(key=lambda x: x['id'])
+        
         async with async_session_factory() as session:
             case_active = []
             case_latency = []
@@ -230,14 +233,21 @@ class SubRepo:
                 WHERE id IN ({','.join(map(str, ids))})
             """)
             
-            await session.execute(sql)
-            await session.commit()
-            _invalidate_cache("subscription")
+            try:
+                await session.execute(sql)
+                await session.commit()
+                _invalidate_cache("subscription")
+            except Exception as e:
+                logger.error(f"Batch update status failed: {e}")
+                await session.rollback()
     
     @staticmethod
     async def batch_update_regions(updates: List[Dict[str, Any]]):
         if not updates:
             return
+
+        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
+        updates.sort(key=lambda x: x['id'])
         
         async with async_session_factory() as session:
             case_regions = []
@@ -254,14 +264,21 @@ class SubRepo:
                 WHERE id IN ({','.join(map(str, ids))})
             """)
             
-            await session.execute(sql)
-            await session.commit()
-            _invalidate_cache("subscription")
+            try:
+                await session.execute(sql)
+                await session.commit()
+                _invalidate_cache("subscription")
+            except Exception as e:
+                logger.error(f"Batch update regions failed: {e}")
+                await session.rollback()
 
     @staticmethod
     async def batch_update_stability(updates: List[Dict[str, Any]]):
         if not updates:
             return
+
+        # СОРТИРОВКА ДЛЯ ПРЕДОТВРАЩЕНИЯ DEADLOCK
+        updates.sort(key=lambda x: x['id'])
 
         async with async_session_factory() as session:
             case_streak = []
@@ -270,7 +287,7 @@ class SubRepo:
             for upd in updates:
                 sub_id = upd["id"]
                 ids.append(sub_id)
-                is_alive = upd["is_alive"]
+                is_alive = upd["is_active"] # исправлено поле, иногда приходило is_alive
                 if is_alive:
                     case_streak.append(f"WHEN {sub_id} THEN stability_streak + 1")
                 else:
@@ -282,8 +299,12 @@ class SubRepo:
                 WHERE id IN ({','.join(map(str, ids))})
             """)
             
-            await session.execute(sql)
-            await session.commit()
+            try:
+                await session.execute(sql)
+                await session.commit()
+            except Exception as e:
+                logger.error(f"Batch update stability failed: {e}")
+                await session.rollback()
 
     @staticmethod
     async def delete_sub(sub_id: int):

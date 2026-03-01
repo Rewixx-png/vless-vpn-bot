@@ -5,12 +5,13 @@ from config import config
 from database.repo import SystemRepo
 from keyboards.admin import main_admin_kb
 from handlers.admin.utils import admin_edit_or_answer
+from tasks import run_collector_task
 
 router = Router()
 
 @router.callback_query(F.data == "admin_home")
 async def admin_dashboard(callback: CallbackQuery, state: FSMContext):
-    if callback.fromuser.id not in config.ADMIN_IDS:
+    if callback.from_user.id not in config.ADMIN_IDS:
         return
     
     enabled_str = await SystemRepo.get_config("collector_enabled")
@@ -34,5 +35,10 @@ async def toggle_collector(callback: CallbackQuery, state: FSMContext):
     
     status_text = "🟢 ВКЛЮЧЕН" if new_state else "🔴 ВЫКЛЮЧЕН"
     await callback.answer(f"Сборщик серверов {status_text}", show_alert=True)
+    
+    if new_state:
+        # ПРИНУДИТЕЛЬНЫЙ ЗАПУСК КОЛЛЕКТОРА
+        run_collector_task.delay()
+        await callback.message.answer("🚀 <b>Коллектор запущен принудительно!</b>\nРезультаты появятся в логах.", parse_mode="HTML")
     
     await admin_dashboard(callback, state)

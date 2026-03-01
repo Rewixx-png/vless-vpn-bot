@@ -1,8 +1,11 @@
 import asyncio
 import psutil
+import gc
+import time
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramRetryAfter
 
 from database.repo import SubRepo
 from utils.checker import VlessChecker
@@ -45,9 +48,9 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
         f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
         "✋ Фоновые задачи (Collector) остановлены\n"
+        "🛡 <b>3-Factor Check:</b> TCP ➔ SSL ➔ Xray\n"
         "⚙️ Адаптивная нагрузка на CPU\n"
-        "🧠 Защита от OOM (Контроль RAM)\n"
-        "🚀 <b>Turbo Mode (Soft Start)</b>\n"
+        "🚀 <b>Max Stability Mode (8 Workers)</b>\n"
         "⏱️ Это может занять время...</blockquote>",
         parse_mode="HTML"
     )
@@ -74,21 +77,33 @@ async def _run_recheck_process(subs: list, msg: Message):
 
     total = len(subs)
     
+    # ЕЩЕ БОЛЬШЕЕ СНИЖЕНИЕ. 8 воркеров - это очень безопасно.
     processor = CpuAdaptiveProcessor(
-        initial_workers=5,
-        min_workers=5,
-        max_workers=200,
-        target_cpu=85.0,
-        target_ram=90.0
+        initial_workers=4,
+        min_workers=2,
+        max_workers=8, 
+        target_cpu=65.0,
+        target_ram=75.0
     )
 
     update_lock = asyncio.Lock()
-    status_buffer =[]
-    region_buffer =[]
+    status_buffer = []
+    region_buffer = []
     BATCH_SIZE = 50
 
-    stats = {"active": 0, "died": 0, "revived": 0, "saved": 0}
+    stats = {
+        "completed": 0,
+        "active": 0, 
+        "died": 0, 
+        "revived": 0, 
+        "saved": 0, 
+        "f1_dead": 0, 
+        "f2_dead": 0, 
+        "f3_dead": 0
+    }
+    
     start_time = asyncio.get_event_loop().time()
+    is_running = True
 
     async def flush_buffers():
         async with update_lock:
@@ -103,12 +118,58 @@ async def _run_recheck_process(subs: list, msg: Message):
         
         if to_save_region:
             await SubRepo.batch_update_regions(to_save_region)
+            
+        # GC чаще
+        if stats["saved"] % 200 == 0:
+            gc.collect()
+
+    # UI Loop
+    async def ui_loop():
+        while is_running:
+            await asyncio.sleep(5.0)
+            
+            completed = stats["completed"]
+            if completed == 0: continue
+            
+            elapsed = asyncio.get_event_loop().time() - start_time
+            percent = int((completed / total) * 100) if total > 0 else 0
+            speed = int(completed / elapsed * 60) if elapsed > 0 else 0
+            remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
+            cpu = psutil.cpu_percent()
+            ram = psutil.virtual_memory().percent
+            
+            try:
+                await msg.edit_text(
+                    f"<blockquote>⚡ <b>3-FACTOR CHECK: {percent}%</b>\n\n"
+                    f"📊 <b>{completed} / {total}</b>\n"
+                    f"💻 <b>CPU:</b> {cpu}% | 🧠 <b>RAM:</b> {ram}%\n"
+                    f"⚡ Скорость: {speed} серв/мин\n"
+                    f"⏱️ Осталось: ~{remaining}сек\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"🟢 Рабочих: <b>{stats['active']}</b>\n"
+                    f"💀 Потеряно: <b>{stats['died']}</b>\n"
+                    f"├── 🚫 TCP Fail: <b>{stats['f1_dead']}</b>\n"
+                    f"├── 🔐 SSL Fail: <b>{stats['f2_dead']}</b>\n"
+                    f"└── 🤖 Xray Fail: <b>{stats['f3_dead']}</b>\n"
+                    f"🆙 Восстановлено: <b>{stats['revived']}</b></blockquote>",
+                    parse_mode="HTML"
+                )
+            except TelegramRetryAfter:
+                await asyncio.sleep(5)
+            except Exception:
+                pass
+
+    ui_task = asyncio.create_task(ui_loop())
 
     async def process_sub(sub):
+        # Даем дышать Event Loop между задачами
+        await asyncio.sleep(0.01)
+        
         try:
             is_alive, region, latency, speed_mbps, ai_avail, err = await VlessChecker.process_subscription(sub.vless_key)
             
             if not is_alive and err and "SYS_ERR" in str(err):
+                stats["completed"] += 1
                 return (False, {"status": "error"})
 
             status_upd = None
@@ -132,6 +193,14 @@ async def _run_recheck_process(subs: list, msg: Message):
                 
                 result_status = "active"
             else:
+                err_str = str(err)
+                if "Factor 1" in err_str:
+                    stats["f1_dead"] += 1
+                elif "Factor 2" in err_str:
+                    stats["f2_dead"] += 1
+                else:
+                    stats["f3_dead"] += 1
+
                 if sub.is_active:
                     stats["died"] += 1
                 
@@ -157,60 +226,43 @@ async def _run_recheck_process(subs: list, msg: Message):
             if should_flush:
                 await flush_buffers()
 
+            stats["completed"] += 1
             return (True, {"status": result_status})
 
         except Exception:
+            stats["completed"] += 1
             return (False, {"status": "error"})
-
-    async def on_progress(completed: int, total: int, success: int, failed: int, workers: int):
-        elapsed = asyncio.get_event_loop().time() - start_time
-        percent = int((completed / total) * 100) if total > 0 else 0
-        speed = int(completed / elapsed * 60) if elapsed > 0 else 0
-        remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
-        cpu = psutil.cpu_percent()
-        ram = psutil.virtual_memory().percent
-        
-        try:
-            await msg.edit_text(
-                f"<blockquote>⚡ <b>ПРИОРИТЕТНАЯ ПРОВЕРКА: {percent}%</b>\n\n"
-                f"📊 <b>{completed} / {total}</b>\n"
-                f"💻 <b>CPU:</b> {cpu}% | 🧠 <b>RAM:</b> {ram}%\n"
-                f"🏗 <b>Workers:</b> {workers} | ⚡ {speed}серв/мин\n"
-                f"⏱️ Осталось: ~{remaining}сек\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🟢 Рабочих: <b>{stats['active']}</b>\n"
-                f"💀 Нерабочих: <b>{stats['died']}</b>\n"
-                f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔄 Система оптимизирует нагрузку...</blockquote>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
 
     try:
         await processor.process(
             items=subs,
             process_func=process_sub,
-            on_progress=on_progress
+            on_progress=None
         )
         await flush_buffers()
         await SubRepo.cleanup_dead_subs(max_deaths=3)
         
     finally:
+        is_running = False
+        ui_task.cancel()
         BotState.set_maintenance(False)
 
     await msg.edit_text(
         f"<blockquote>✅ <b>Проверка завершена!</b>\n\n"
         f"🟢 <b>MAINTENANCE MODE DISABLED</b>\n"
         f"Фоновые задачи возобновлены.\n\n"
-        f"📊 <b>Итоговый отчёт:</b>\n"
+        f"📊 <b>Итоговый отчёт (3-Factor):</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📋 Всего проверено: <b>{total}</b>\n"
         f"🟢 Рабочих серверов: <b>{stats['active']}</b>\n"
-        f"💀 Нерабочих серверов: <b>{stats['died']}</b>\n"
-        f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
+        f"💀 Потеряно (Active->Dead): <b>{stats['died']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>Статистика отказов:</b>\n"
+        f"├── 🚫 1. TCP Ping: <b>{stats['f1_dead']}</b>\n"
+        f"├── 🔐 2. SSL Handshake: <b>{stats['f2_dead']}</b>\n"
+        f"└── 🤖 3. Xray Core: <b>{stats['f3_dead']}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"ℹ️ <i>База данных обновлена.</i></blockquote>",
         reply_markup=recheck_menu_kb(),
         parse_mode="HTML"

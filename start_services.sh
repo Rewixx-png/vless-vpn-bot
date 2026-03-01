@@ -1,41 +1,40 @@
 #!/bin/bash
 
-# Очистка
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "${GREEN}🔄 Перезапуск VLESS VPN Bot (Safe Mode)...${NC}"
+
+# 1. Остановка только наших сервисов
+echo -e "${RED}🛑 Остановка процессов...${NC}"
 pm2 delete CheckerSVC 2>/dev/null
 pm2 delete VPN_Worker 2>/dev/null
 pm2 delete VPN_Bot 2>/dev/null
+pm2 delete VPN_Beat 2>/dev/null
 
-echo "♻️  Old processes cleaned."
+# 2. Очистка временных файлов и кэшей
+echo -e "🧹 Очистка временных файлов..."
+rm -rf /tmp/xray_*.json
+rm -f celerybeat-schedule
 
-# Пауза для завершения процессов
-sleep 2
+# 3. Принудительная очистка очереди задач (ВАЖНО ПРИ ПЕРЕГРУЗКЕ)
+# Это удалит накопившиеся задачи, которые убивают сервер при старте
+echo -e "${RED}🔥 Очистка очереди Celery (Purge)...${NC}"
+python3 -m celery -A celery_app purge -f
 
-# Настройки PM2 для стабильности
-export PM2_HOME="/root/.pm2"
-export PM2_PID_FILE_PATH="/root/.pm2/pm2.pid"
+# 4. Запуск сервисов с минимальными ресурсами
+echo -e "${GREEN}🚀 Запуск Checker Service...${NC}"
+pm2 start utils/checker/service.py --name CheckerSVC --interpreter python3 --max-memory-restart 300M
 
-# 1. Запускаем Микросервис Чекера (MAX POWER)
-pm2 start utils/checker/service.py --name "CheckerSVC" --interpreter python3
+echo -e "${GREEN}🚀 Запуск Celery Worker (Concurrency: 2)...${NC}"
+pm2 start celery_app.py --name VPN_Worker --interpreter python3 --max-memory-restart 500M
 
-echo "✅ Checker Service started."
+echo -e "${GREEN}🚀 Запуск Celery Beat (Scheduler)...${NC}"
+pm2 start celery_app.py --name VPN_Beat --interpreter python3 -- beat
 
-# 2. Запускаем Celery Worker
-pm2 start "celery -A celery_app worker -Q high_priority,low_priority --loglevel=ERROR --concurrency=30 --max-tasks-per-child=500" --name "VPN_Worker"
+echo -e "${GREEN}🚀 Запуск Telegram Bot...${NC}"
+pm2 start bot.py --name VPN_Bot --interpreter python3 --max-memory-restart 300M
 
-echo "✅ Celery Worker started (Turbo Maximum)."
-
-# 2.1 Запускаем Celery Beat (планировщик задач)
-pm2 start "celery -A celery_app beat --loglevel=ERROR" --name "VPN_Beat"
-
-echo "✅ Celery Beat started."
-
-# 3. Запускаем Основного Бота
-pm2 start bot.py --name "VPN_Bot" --interpreter python3
-
-echo "✅ VPN Bot started."
-
-# Сохраняем и выводим статус
-pm2 save
-sleep 3
+echo -e "${GREEN}✅ Система перезапущена в безопасном режиме!${NC}"
 pm2 list
-pm2 logs --lines 5 --nostream

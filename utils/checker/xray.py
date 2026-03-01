@@ -33,7 +33,8 @@ class XrayExecutor:
             "streamSettings": {
                 "network": parsed['type'],
                 "security": parsed['security']
-            }
+            },
+            "tag": "proxy"
         }
         stream = outbound["streamSettings"]
         
@@ -75,7 +76,10 @@ class XrayExecutor:
                 "settings": {"auth": "noauth", "udp": True}, 
                 "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
             }],
-            "outbounds": [outbound, {"protocol": "freedom", "tag": "direct"}]
+            # ВАЖНО: Удален 'freedom' (direct) outbound.
+            # Если прокси не отвечает, трафик умрет внутри Xray.
+            # Это предотвращает ложные срабатывания через IP сервера.
+            "outbounds": [outbound] 
         }
 
     @classmethod
