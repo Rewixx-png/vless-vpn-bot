@@ -36,7 +36,8 @@ class BatchProcessor:
         items: List[Any],
         process_func: Callable[[Any], tuple[bool, Any]],
         on_progress: Optional[Callable[[int, int, int, int, int], None]] = None,
-        on_complete: Optional[Callable[[BatchResult], None]] = None
+        on_complete: Optional[Callable[[BatchResult], None]] = None,
+        collect_results: bool = True
     ) -> BatchResult:
         start_time = time.time()
         queue = asyncio.Queue()
@@ -83,12 +84,13 @@ class BatchProcessor:
                         else:
                             stats["failed"] += 1
                         
-                        stats["items"].append({
-                            "idx": idx,
-                            "item": item,
-                            "success": success,
-                            "result": result
-                        })
+                        if collect_results:
+                            stats["items"].append({
+                                "idx": idx,
+                                "item": item,
+                                "success": success,
+                                "result": result
+                            })
                         
                     except Exception as e:
                         logger.error(f"Critical worker crash: {e}")
@@ -158,8 +160,14 @@ class SmartBatchProcessor(BatchProcessor):
         self.error_count = 0
         self.max_errors = 50
     
-    async def process(self, items, process_func, on_progress=None, on_complete=None):
-        return await super().process(items, process_func, on_progress, on_complete)
+    async def process(self, items, process_func, on_progress=None, on_complete=None, collect_results=True):
+        return await super().process(
+            items,
+            process_func,
+            on_progress,
+            on_complete,
+            collect_results=collect_results
+        )
 
 class CpuAdaptiveProcessor(BatchProcessor):
     def __init__(
@@ -183,7 +191,8 @@ class CpuAdaptiveProcessor(BatchProcessor):
         items: List[Any],
         process_func: Callable[[Any], tuple[bool, Any]],
         on_progress: Optional[Callable[[int, int, int, int, int], None]] = None,
-        on_complete: Optional[Callable[[BatchResult], None]] = None
+        on_complete: Optional[Callable[[BatchResult], None]] = None,
+        collect_results: bool = True
     ) -> BatchResult:
         
         start_time = time.time()
@@ -233,7 +242,8 @@ class CpuAdaptiveProcessor(BatchProcessor):
                     else:
                         stats["failed"] += 1
                     
-                    stats["items"].append({"idx": idx, "item": item, "success": success, "result": result})
+                    if collect_results:
+                        stats["items"].append({"idx": idx, "item": item, "success": success, "result": result})
                     
                 except Exception:
                     stats["completed"] += 1

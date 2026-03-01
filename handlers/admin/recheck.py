@@ -1,7 +1,7 @@
 import asyncio
+import logging
 import psutil
 import gc
-import time
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -11,10 +11,11 @@ from database.repo import SubRepo
 from utils.checker import VlessChecker
 from keyboards.admin import back_to_admin, recheck_menu_kb
 from utils.batch_processor import CpuAdaptiveProcessor
-from handlers.admin.utils import admin_edit_or_answer
+from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 from utils.state import BotState
 
 router = Router()
+logger = logging.getLogger("AdminRecheck")
 
 @router.callback_query(F.data == "admin_recheck_menu")
 async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
@@ -31,47 +32,68 @@ async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_recheck_run_"))
 async def run_recheck(callback: CallbackQuery, state: FSMContext):
-    try: await callback.answer()
-    except: pass
-    
-    mode = callback.data.split("admin_recheck_run_")[1]
-    
-    BotState.set_maintenance(True)
-    
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+    mode = callback.data.replace("admin_recheck_run_", "", 1) if callback.data else ""
     mode_text = {
         "all": "ВСЕ",
         "active": "ЖИВЫЕ",
         "dead": "МЕРТВЫЕ"
     }.get(mode, "Unknown")
-    
-    msg = await callback.message.answer(
-        f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
-        f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
-        "✋ Фоновые задачи (Collector) остановлены\n"
-        "🛡 <b>3-Factor Check:</b> TCP ➔ SSL ➔ Xray\n"
-        "⚙️ Адаптивная нагрузка на CPU\n"
-        "🚀 <b>Max Stability Mode (8 Workers)</b>\n"
-        "⏱️ Это может занять время...</blockquote>",
-        parse_mode="HTML"
-    )
 
-    subs =[]
-    if mode == "all":
-        subs = await SubRepo.get_all_subscriptions_for_check()
-    elif mode == "active":
-        subs = await SubRepo.get_active_subscriptions_for_check()
-    elif mode == "dead":
-        subs = await SubRepo.get_dead_subscriptions_for_check()
-        
-    await _run_recheck_process(subs, msg)
+    msg = None
+    BotState.set_maintenance(True)
+
+    try:
+        msg = await callback.message.answer(
+            f"<blockquote>⛔️ <b>MAINTENANCE MODE ACTIVE</b>\n\n"
+            f"🔍 <b>Запуск ПРИОРИТЕТНОЙ проверки ({mode_text})</b>\n"
+            "✋ Фоновые задачи (Collector) остановлены\n"
+            "🛡 <b>3-Factor Check:</b> TCP ➔ SSL ➔ Xray\n"
+            "⚙️ Адаптивная нагрузка на CPU\n"
+            "🚀 <b>Max Stability Mode (8 Workers)</b>\n"
+            "⏱️ Это может занять время...</blockquote>",
+            parse_mode="HTML"
+        )
+
+        subs = []
+        if mode == "all":
+            subs = await SubRepo.get_all_subscriptions_for_check()
+        elif mode == "active":
+            subs = await SubRepo.get_active_subscriptions_for_check()
+        elif mode == "dead":
+            subs = await SubRepo.get_dead_subscriptions_for_check()
+
+        await _run_recheck_process(subs, msg)
+    except Exception as e:
+        logger.error(f"Recheck failed in mode='{mode}': {e}", exc_info=True)
+        BotState.set_maintenance(False)
+        error_text = (
+            "<blockquote>❌ <b>Recheck завершился ошибкой.</b>\n"
+            "Проверка остановлена, maintenance mode отключен.</blockquote>"
+        )
+        if msg:
+            await safe_edit_message(msg, error_text, reply_markup=recheck_menu_kb())
+        else:
+            try:
+                await callback.message.answer(
+                    error_text,
+                    reply_markup=recheck_menu_kb(),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
 
 async def _run_recheck_process(subs: list, msg: Message):
     if not subs:
         BotState.set_maintenance(False)
-        await msg.edit_text(
+        await safe_edit_message(
+            msg,
             "<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
-            reply_markup=back_to_admin(),
-            parse_mode="HTML"
+            reply_markup=back_to_admin()
         )
         return
 
@@ -126,19 +148,20 @@ async def _run_recheck_process(subs: list, msg: Message):
     # UI Loop
     async def ui_loop():
         while is_running:
-            await asyncio.sleep(5.0)
-            
-            completed = stats["completed"]
-            if completed == 0: continue
-            
-            elapsed = asyncio.get_event_loop().time() - start_time
-            percent = int((completed / total) * 100) if total > 0 else 0
-            speed = int(completed / elapsed * 60) if elapsed > 0 else 0
-            remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
-            cpu = psutil.cpu_percent()
-            ram = psutil.virtual_memory().percent
-            
             try:
+                await asyncio.sleep(5.0)
+
+                completed = stats["completed"]
+                if completed == 0:
+                    continue
+
+                elapsed = asyncio.get_event_loop().time() - start_time
+                percent = int((completed / total) * 100) if total > 0 else 0
+                speed = int(completed / elapsed * 60) if elapsed > 0 else 0
+                remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
+                cpu = psutil.cpu_percent()
+                ram = psutil.virtual_memory().percent
+
                 await msg.edit_text(
                     f"<blockquote>⚡ <b>3-FACTOR CHECK: {percent}%</b>\n\n"
                     f"📊 <b>{completed} / {total}</b>\n"
@@ -237,7 +260,8 @@ async def _run_recheck_process(subs: list, msg: Message):
         await processor.process(
             items=subs,
             process_func=process_sub,
-            on_progress=None
+            on_progress=None,
+            collect_results=False
         )
         await flush_buffers()
         await SubRepo.cleanup_dead_subs(max_deaths=3)
@@ -245,9 +269,16 @@ async def _run_recheck_process(subs: list, msg: Message):
     finally:
         is_running = False
         ui_task.cancel()
+        try:
+            await ui_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
         BotState.set_maintenance(False)
 
-    await msg.edit_text(
+    await safe_edit_message(
+        msg,
         f"<blockquote>✅ <b>Проверка завершена!</b>\n\n"
         f"🟢 <b>MAINTENANCE MODE DISABLED</b>\n"
         f"Фоновые задачи возобновлены.\n\n"
@@ -264,6 +295,5 @@ async def _run_recheck_process(subs: list, msg: Message):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🆙 Восстановлено: <b>{stats['revived']}</b>\n"
         f"ℹ️ <i>База данных обновлена.</i></blockquote>",
-        reply_markup=recheck_menu_kb(),
-        parse_mode="HTML"
+        reply_markup=recheck_menu_kb()
     )

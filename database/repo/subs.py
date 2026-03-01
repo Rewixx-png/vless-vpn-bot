@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete, update, func, text, desc, or_
+from sqlalchemy.orm import load_only
 from database.core import async_session_factory
 from database.models import Subscription
 from database.repo.blacklist import BlacklistRepo
@@ -44,19 +45,50 @@ class SubRepo:
     @staticmethod
     async def get_all_subscriptions_for_check():
         async with async_session_factory() as session:
-            result = await session.execute(select(Subscription))
+            result = await session.execute(
+                select(Subscription).options(
+                    load_only(
+                        Subscription.id,
+                        Subscription.vless_key,
+                        Subscription.is_active,
+                        Subscription.region
+                    )
+                )
+            )
             return result.scalars().all()
 
     @staticmethod
     async def get_active_subscriptions_for_check():
         async with async_session_factory() as session:
-            result = await session.execute(select(Subscription).where(Subscription.is_active == True))
+            result = await session.execute(
+                select(Subscription)
+                .where(Subscription.is_active == True)
+                .options(
+                    load_only(
+                        Subscription.id,
+                        Subscription.vless_key,
+                        Subscription.is_active,
+                        Subscription.region
+                    )
+                )
+            )
             return result.scalars().all()
 
     @staticmethod
     async def get_dead_subscriptions_for_check():
         async with async_session_factory() as session:
-            result = await session.execute(select(Subscription).where(Subscription.is_active == False))
+            result = await session.execute(
+                select(Subscription)
+                .where(Subscription.is_active == False)
+                .options(
+                    load_only(
+                        Subscription.id,
+                        Subscription.vless_key,
+                        Subscription.is_active,
+                        Subscription.region
+                    )
+                )
+            )
             return result.scalars().all()
 
     @staticmethod
