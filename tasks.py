@@ -138,7 +138,7 @@ async def check_stability_task() -> Dict[str, Any]:
     if not subs:
         return {"checked": 0}
 
-    worker_count = min(20, max(10, len(subs) // 10))
+    worker_count = min(config.MAX_WORKERS, max(config.MIN_WORKERS, len(subs) // 10))
     processor = SmartBatchProcessor(worker_count=worker_count)
     
     old_counts = await StatsRepo.get_regions_counts()
@@ -415,15 +415,14 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         processor = None
         try:
             processor = CpuAdaptiveProcessor(
-                initial_workers=30,
-                min_workers=10,
-                max_workers=80,
+                initial_workers=config.MAX_WORKERS // 2,  # Start with half capacity
+                min_workers=config.MIN_WORKERS,
+                max_workers=config.MAX_WORKERS,
                 target_cpu=85.0,
                 target_ram=85.0
             )
             
             # Run processing with overall timeout to prevent hanging
-            # 8 minutes max per pass (should be plenty for ~2400 configs)
             await asyncio.wait_for(
                 processor.process(
                     items=current_subs,
@@ -431,7 +430,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                     on_progress=None,
                     collect_results=False
                 ),
-                timeout=480.0
+                timeout=config.RECHECK_TIMEOUT_PER_PASS
             )
 
             if current_pass == total_passes:

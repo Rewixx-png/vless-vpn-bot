@@ -4,6 +4,7 @@ import aiohttp
 from utils.parser import LinkParser
 from utils.checker.api import CheckerAPI
 from utils.checker.geo_ip import GeoIP
+from config import config
 
 class VlessChecker:
     @staticmethod
@@ -79,18 +80,18 @@ class VlessChecker:
                         else:
                             return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
-        # Wrap CheckerAPI.check with timeout to prevent hanging
-        try:
-            success, region, latency, speed_mbps, ai, err = await asyncio.wait_for(
-                CheckerAPI.check(config_url),
-                timeout=25.0  # Max 25 seconds per config check
-            )
-        except asyncio.TimeoutError:
-            return False, "🌍 UNK", 9999, 0.0, False, "Factor 3: Config Check Timeout (>25s)", config_url
+    # Wrap CheckerAPI.check with timeout to prevent hanging
+    try:
+        success, region, latency, speed_mbps, ai, err = await asyncio.wait_for(
+            CheckerAPI.check(config_url),
+            timeout=config.CHECKER_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        return False, "🌍 UNK", 9999, 0.0, False, f"Factor 3: Config Check Timeout (>{config.CHECKER_TIMEOUT}s)", config_url
 
-        # Check speed - reject configs with speed < 25 Mbps
-        if success and speed_mbps < 25.0:
-            return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 25)", config_url
+    # Check speed - reject configs with speed < MIN_SPEED_MBPS
+    if success and speed_mbps < config.MIN_SPEED_MBPS:
+        return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < {config.MIN_SPEED_MBPS})", config_url
 
         if not success and err and str(err).startswith("SYS_ERR"):
             return False, "", 0, 0.0, False, err, config_url

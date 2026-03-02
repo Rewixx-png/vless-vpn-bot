@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     MEMORY_CHECK_INTERVAL: int = 60
     COLLECTOR_INTERVAL: int = 1800  # 30 minutes
     STABILITY_CHECK_INTERVAL: int = 1800
+    
+    # Recheck timeouts
+    RECHECK_TIMEOUT_PER_PASS: int = 480  # 8 minutes per pass
 
     # GeoIP
     DNS_CACHE_TTL: int = 86400
