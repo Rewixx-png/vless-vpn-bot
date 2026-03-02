@@ -8,6 +8,7 @@ import subprocess
 import signal
 import re
 import gc
+import html
 import psutil
 from datetime import datetime, timedelta
 from typing import Iterable
@@ -91,15 +92,18 @@ class TelegramLogHandler(logging.Handler):
             if len(msg) > 3500:
                 msg = msg[:3500] + "..."
 
+            # Escape HTML entities in message to prevent parsing errors
+            safe_msg = html.escape(msg)
+
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
-                
+
             for admin_id in self.admin_ids:
                 try:
                     loop.create_task(
-                        self.bot.send_message(admin_id, f"❗️ <b>Ошибка:</b>\n<pre>{msg}</pre>", parse_mode="HTML")
+                        self.bot.send_message(admin_id, f"❗️ <b>Ошибка:</b>\n<pre>{safe_msg}</pre>", parse_mode="HTML")
                     )
                 except Exception:
                     pass
