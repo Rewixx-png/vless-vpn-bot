@@ -71,7 +71,11 @@ async def cleanup_zombie_xrays():
         pass
 
 async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]:
-    timeout = aiohttp.ClientTimeout(total=8.0, connect=4.0, sock_read=4.0)
+    timeout = aiohttp.ClientTimeout(
+        total=config.CONNECTIVITY_TIMEOUT,
+        connect=4.0,
+        sock_read=4.0
+    )
     
     CHECK_URLS = [
         ("http://cp.cloudflare.com/generate_204", 204),
