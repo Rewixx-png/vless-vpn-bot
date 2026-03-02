@@ -7,9 +7,36 @@ import traceback
 import subprocess
 import signal
 import re
+import gc
+import psutil
 from datetime import datetime, timedelta
 from typing import Iterable
 from aiogram import Bot, Dispatcher
+
+# Memory limit in MB before triggering GC and potential restart
+MEMORY_LIMIT_MB = 450
+MEMORY_CHECK_INTERVAL = 60  # Check every 60 seconds
+
+async def memory_monitor():
+    """Monitor memory usage and trigger GC if needed"""
+    process = psutil.Process(os.getpid())
+    while True:
+        try:
+            await asyncio.sleep(MEMORY_CHECK_INTERVAL)
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            
+            if memory_mb > MEMORY_LIMIT_MB:
+                logger.warning(f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC...")
+                gc.collect()
+                
+                # Check again after GC
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                logger.info(f"📊 Memory after GC: {memory_mb:.0f}MB")
+                
+                if memory_mb > MEMORY_LIMIT_MB + 50:
+                    logger.error(f"🚨 Memory still high after GC ({memory_mb:.0f}MB). Consider restarting.")
+        except Exception as e:
+            logger.error(f"Memory monitor error: {e}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -208,6 +235,10 @@ async def main():
     logger.info("⏰ Starting background scheduler...")
     await BackgroundTasks.start_scheduler()
     
+    # Start memory monitor
+    logger.info("🧠 Starting memory monitor...")
+    memory_task = asyncio.create_task(memory_monitor())
+    
     logger.info("🌐 Starting subscription server...")
     server_task = asyncio.create_task(SubscriptionServer.start())
     
@@ -257,21 +288,47 @@ async def main():
     finally:
         logger.info("🛑 Shutting down...")
         
+        # Stop memory monitor
+        memory_task.cancel()
+        try:
+            await memory_task
+        except asyncio.CancelledError:
+            pass
+
         await BackgroundTasks.stop()
         server_task.cancel()
         try:
             await server_task
         except asyncio.CancelledError:
             pass
-        
+
         await bot.session.close()
         await payment_client.close()
         
+        # Force garbage collection on shutdown
+        gc.collect()
+
         logger.info("👋 Bot stopped")
 
+def set_process_affinity():
+    """Set CPU affinity to use all available cores"""
+    try:
+        import os
+        process = psutil.Process()
+        cpu_count = os.cpu_count()
+        if cpu_count:
+            # Use all CPUs
+            process.cpu_affinity(list(range(cpu_count)))
+            logger.info(f"✅ CPU affinity set to use all {cpu_count} cores")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not set CPU affinity: {e}")
+
 if __name__ == "__main__":
-    sys.excepthook = global_exception_handler
+    # Set CPU affinity for better multi-core utilization
+    set_process_affinity()
     
+    sys.excepthook = global_exception_handler
+
     if sys.platform != 'win32':
         signal.signal(signal.SIGTERM, handle_sigterm)
         signal.signal(signal.SIGINT, handle_sigterm)
