@@ -7,6 +7,7 @@ from sqlalchemy.orm import load_only
 from database.core import async_session_factory
 from database.models import Subscription
 from database.repo.blacklist import BlacklistRepo
+from config import config
 
 logger = logging.getLogger("SubRepo")
 
@@ -132,14 +133,14 @@ class SubRepo:
     @staticmethod
     async def get_all_keys_set() -> set:
         cache_key = "all_keys_set"
-        cached = _get_cached(cache_key, ttl=300)
-        if cached is not None:
-            return cached
-        
-        async with async_session_factory() as session:
-            result = await session.execute(select(Subscription.vless_key))
-            keys = set(result.scalars().all())
-            _set_cached(cache_key, keys, ttl=300)
+    cached = _get_cached(cache_key, ttl=config.CACHE_TTL)
+    if cached is not None:
+        return cached
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(Subscription.vless_key))
+        keys = set(result.scalars().all())
+        _set_cached(cache_key, keys, ttl=config.CACHE_TTL)
             return keys
 
     @staticmethod

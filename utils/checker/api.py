@@ -12,7 +12,7 @@ class CheckerAPI:
     async def get_session(cls) -> aiohttp.ClientSession:
         if cls._session is None or cls._session.closed:
             timeout = aiohttp.ClientTimeout(total=45.0, connect=10.0)
-            connector = aiohttp.TCPConnector(limit=100, ttl_dns_cache=300)
+            connector = aiohttp.TCPConnector(limit=100, ttl_dns_cache=config.DNS_CACHE_TTL)
             cls._session = aiohttp.ClientSession(
                 connector=connector, 
                 timeout=timeout,
