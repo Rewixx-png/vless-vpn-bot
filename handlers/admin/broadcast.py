@@ -56,7 +56,9 @@ async def do_broadcast(message: Message, state: FSMContext):
     message_id = message.message_id
     
     # Цикл по всем пользователям
-    for index, user_id in enumerate(users, 1):
+    for index, user in enumerate(users, 1):
+        # Extract user ID from User object
+        user_id = user.id if hasattr(user, 'id') else user
         try:
             # Пытаемся отправить копию сообщения
             # Используем wait_for чтобы избежать вечного зависания API

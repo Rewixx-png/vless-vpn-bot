@@ -82,11 +82,23 @@ class TelegramLogHandler(logging.Handler):
         self.admin_ids = list(admin_ids)
 
     def emit(self, record: logging.LogRecord) -> None:
-        if record.name == "aiohttp.server":
+        # Skip common non-critical loggers
+        if record.name in ["aiohttp.server", "aiogram.dispatcher", "aiogram.event"]:
             return
         if "BadStatusLine" in str(record.msg) or "BadHttpMessage" in str(record.msg):
             return
-            
+        
+        # Skip Telegram API errors (too spammy)
+        msg_str = str(record.msg)
+        if any(err in msg_str for err in [
+            "TelegramForbiddenError", 
+            "TelegramRetryAfter", 
+            "user is deactivated",
+            "Flood control exceeded",
+            "Too Many Requests"
+        ]):
+            return
+
         try:
             msg = self.format(record)
             if len(msg) > 3500:
