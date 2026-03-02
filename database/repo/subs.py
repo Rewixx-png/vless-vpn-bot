@@ -532,3 +532,74 @@ class SubRepo:
     @staticmethod
     async def enforce_limits():
         pass
+
+    @staticmethod
+    async def get_total_count() -> int:
+        """Get total number of subscriptions"""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(func.count(Subscription.id))
+            )
+            return result.scalar() or 0
+
+    @staticmethod
+    async def get_active_count() -> int:
+        """Get number of active subscriptions"""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(func.count(Subscription.id))
+                .where(Subscription.is_active == True)
+            )
+            return result.scalar() or 0
+
+    @staticmethod
+    async def get_dead_count() -> int:
+        """Get number of inactive subscriptions"""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(func.count(Subscription.id))
+                .where(Subscription.is_active == False)
+            )
+            return result.scalar() or 0
+
+    @staticmethod
+    async def get_unknown_region_count() -> int:
+        """Get number of subscriptions with unknown region"""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(func.count(Subscription.id))
+                .where(
+                    or_(
+                        Subscription.region.ilike("%unk%"),
+                        Subscription.region.ilike("%unknown%"),
+                        Subscription.region == "",
+                        Subscription.region.is_(None)
+                    )
+                )
+            )
+            return result.scalar() or 0
+
+    @staticmethod
+    async def get_stats_summary() -> dict:
+        """Get comprehensive statistics summary"""
+        async with async_session_factory() as session:
+            total = await session.execute(select(func.count(Subscription.id)))
+            active = await session.execute(
+                select(func.count(Subscription.id))
+                .where(Subscription.is_active == True)
+            )
+            dead = await session.execute(
+                select(func.count(Subscription.id))
+                .where(Subscription.is_active == False)
+            )
+            avg_speed = await session.execute(
+                select(func.avg(Subscription.speed_mbps))
+                .where(Subscription.is_active == True)
+            )
+            
+            return {
+                "total": total.scalar() or 0,
+                "active": active.scalar() or 0,
+                "dead": dead.scalar() or 0,
+                "avg_speed": round(avg_speed.scalar() or 0, 2)
+            }

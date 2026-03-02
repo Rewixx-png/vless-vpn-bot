@@ -84,6 +84,12 @@ class XrayExecutor:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return None, 0, "CONFIG_ERR: Invalid Link Format"
+        
+        # Validate UUID format
+        import re
+        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        if not re.match(uuid_pattern, parsed.get('uuid', ''), re.IGNORECASE):
+            return None, 0, "CONFIG_ERR: Invalid UUID Format"
 
         local_port = random.randint(20000, 60000)
         unique_id = uuid.uuid4().hex

@@ -27,31 +27,22 @@ class VlessChecker:
 
     @staticmethod
     async def check_ssl_handshake(host: str, port: int, sni: str, timeout: float = 3.0) -> bool:
-        writer = None
         try:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             
-            conn = asyncio.open_connection(host, port)
+            conn = asyncio.open_connection(host, port, ssl=ctx)
             reader, writer = await asyncio.wait_for(conn, timeout=timeout)
             
+            writer.close()
             try:
-                await asyncio.wait_for(
-                    writer.start_tls(ctx, server_hostname=sni if sni else host),
-                    timeout=timeout
-                )
-                return True
-            except Exception:
-                return False
+                await writer.wait_closed()
+            except:
+                pass
+            return True
         except Exception:
             return False
-        finally:
-            if writer:
-                try:
-                    writer.close()
-                except Exception:
-                    pass
 
     @staticmethod
     async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str, str]:
@@ -90,8 +81,9 @@ class VlessChecker:
 
         success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
         
-        if success and speed_mbps < 25.0:
-            return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 25)", config_url
+        # Speed check removed - configs with 0 speed are still valid if connectivity works
+        # if success and speed_mbps < 5.0:
+        #     return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 5)", config_url
             
         if not success and err and str(err).startswith("SYS_ERR"):
             return False, "", 0, 0.0, False, err, config_url
