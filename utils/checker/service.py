@@ -230,7 +230,7 @@ async def check_handler(request):
             
             async with aiohttp.ClientSession(
                 connector=connector_speed, 
-                timeout=aiohttp.ClientTimeout(total=8.0, connect=3.0)
+                timeout=aiohttp.ClientTimeout(total=config.SPEED_TEST_TIMEOUT + 3.0, connect=3.0)
             ) as st_session:
                 
                 st_start = time.monotonic()
@@ -239,17 +239,17 @@ async def check_handler(request):
                 
                 # Test first URL that works
                 for test_url in SPEED_TEST_URLS:
-                    if time.monotonic() - st_start > 7.0:  # Stop if taking too long
+                    if time.monotonic() - st_start > config.SPEED_TEST_TIMEOUT + 2.0: # Stop if taking too long
                         break
-                        
+                    
                     try:
                         url_bytes = 0
                         url_start = time.monotonic()
                         
                         async with st_session.get(test_url, allow_redirects=True) as resp:
                             if resp.status == 200:
-                                # Read chunks for up to 5 seconds per URL
-                                while time.monotonic() - url_start < 5.0:
+                                # Read chunks for up to SPEED_TEST_TIMEOUT seconds per URL
+                                while time.monotonic() - url_start < config.SPEED_TEST_TIMEOUT:
                                     try:
                                         chunk = await asyncio.wait_for(
                                             resp.content.read(131072), timeout=1.0
