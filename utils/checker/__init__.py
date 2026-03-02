@@ -80,14 +80,14 @@ class VlessChecker:
                             return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
         success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
-        
-        # Speed check removed - configs with 0 speed are still valid if connectivity works
-        # if success and speed_mbps < 5.0:
-        #     return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 5)", config_url
-            
+
+        # Check speed - reject configs with speed < 25 Mbps
+        if success and speed_mbps < 25.0:
+            return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < 25)", config_url
+
         if not success and err and str(err).startswith("SYS_ERR"):
             return False, "", 0, 0.0, False, err, config_url
-            
+
         return success, region, latency, speed_mbps, ai, err, config_url
 
     @classmethod

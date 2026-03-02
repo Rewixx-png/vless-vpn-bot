@@ -412,27 +412,48 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         stats["completed"] += 1
                     return (False, {"status": "error"})
 
-            try:
-                processor = CpuAdaptiveProcessor(
-                    initial_workers=30,
-                    min_workers=10,
-                    max_workers=80,
-                    target_cpu=85.0,
-                    target_ram=85.0
-                )
-                await processor.process(
+        processor = None
+        try:
+            processor = CpuAdaptiveProcessor(
+                initial_workers=30,
+                min_workers=10,
+                max_workers=80,
+                target_cpu=85.0,
+                target_ram=85.0
+            )
+            
+            # Run processing with overall timeout to prevent hanging
+            # 8 minutes max per pass (should be plenty for ~2400 configs)
+            await asyncio.wait_for(
+                processor.process(
                     items=current_subs,
                     process_func=process_sub,
                     on_progress=None,
                     collect_results=False
-                )
-                
-                if current_pass == total_passes:
-                    global_active = stats["active"]
-                    global_died = stats["died"]
-                
-            finally:
-                is_running = False
+                ),
+                timeout=480.0
+            )
+
+            if current_pass == total_passes:
+                global_active = stats["active"]
+                global_died = stats["died"]
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Pass {current_pass} timed out after 8 minutes")
+            # Force complete remaining stats
+            remaining = len(current_subs) - stats["completed"]
+            stats["completed"] += remaining
+            stats["failed"] += remaining
+            if current_pass == total_passes:
+                global_active = stats["active"]
+                global_died = stats["died"]
+        except Exception as e:
+            logger.error(f"Processing error in pass {current_pass}: {e}")
+            raise
+        finally:
+            is_running = False
+            if processor:
+                processor.cancel()
                 
                 try: await flusher_task
                 except Exception: pass
