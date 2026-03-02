@@ -14,19 +14,18 @@ from datetime import datetime, timedelta
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
-# Memory limit in MB before triggering GC and potential restart
-MEMORY_LIMIT_MB = 450
-MEMORY_CHECK_INTERVAL = 60  # Check every 60 seconds
+# Import config early for constants
+from config import config
 
 async def memory_monitor():
     """Monitor memory usage and trigger GC if needed"""
     process = psutil.Process(os.getpid())
     while True:
         try:
-            await asyncio.sleep(MEMORY_CHECK_INTERVAL)
+            await asyncio.sleep(config.MEMORY_CHECK_INTERVAL)
             memory_mb = process.memory_info().rss / 1024 / 1024
             
-            if memory_mb > MEMORY_LIMIT_MB:
+            if memory_mb > config.MEMORY_LIMIT_MB:
                 logger.warning(f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC...")
                 gc.collect()
                 
@@ -34,7 +33,7 @@ async def memory_monitor():
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 logger.info(f"📊 Memory after GC: {memory_mb:.0f}MB")
                 
-                if memory_mb > MEMORY_LIMIT_MB + 50:
+                if memory_mb > config.MEMORY_LIMIT_MB + 50:
                     logger.error(f"🚨 Memory still high after GC ({memory_mb:.0f}MB). Consider restarting.")
         except Exception as e:
             logger.error(f"Memory monitor error: {e}")
