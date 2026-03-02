@@ -64,7 +64,8 @@ async def do_broadcast(message: Message, state: FSMContext):
                 message.bot.copy_message(
                     chat_id=user_id,
                     from_chat_id=from_chat_id,
-                    message_id=message_id
+                    message_id=message_id,
+                    parse_mode=None  # Don't parse HTML entities in copied messages
                 ),
                 timeout=5.0
             )
@@ -88,7 +89,8 @@ async def do_broadcast(message: Message, state: FSMContext):
                 await message.bot.copy_message(
                     chat_id=user_id,
                     from_chat_id=from_chat_id,
-                    message_id=message_id
+                    message_id=message_id,
+                    parse_mode=None  # Don't parse HTML entities in copied messages
                 )
                 sent_count += 1
             except Exception as retry_err:
