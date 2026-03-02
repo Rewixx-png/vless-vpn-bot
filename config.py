@@ -40,7 +40,10 @@ class Settings(BaseSettings):
     
     # Recheck timeouts
     RECHECK_TIMEOUT_PER_PASS: int = 480  # 8 minutes per pass
-
+    
+    # Database
+    DB_POOL_RECYCLE: int = 3600  # 1 hour
+    
     # GeoIP
     DNS_CACHE_TTL: int = 86400
 

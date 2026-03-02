@@ -1,16 +1,17 @@
 import asyncio
 import logging
 from utils.state import BotState
+from config import config
 
 logger = logging.getLogger("Scheduler")
 
 class BackgroundTasks:
     _tasks = []
     _is_running = False
-    
-    COLLECT_INTERVAL = 1800       # 30 минут для сбора новых прокси (было 10)
-    STABILITY_INTERVAL = 1800     # 30 минут для проверки стабильности (было 10)
-    GEOIP_UPDATE_INTERVAL = 30 * 24 * 3600 # 30 дней
+
+    COLLECT_INTERVAL = config.COLLECTOR_INTERVAL
+    STABILITY_INTERVAL = config.STABILITY_CHECK_INTERVAL
+    GEOIP_UPDATE_INTERVAL = config.DNS_CACHE_TTL  # 30 days
     
     @classmethod
     async def start_scheduler(cls):
