@@ -441,9 +441,11 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         except asyncio.TimeoutError:
             logger.warning(f"Pass {current_pass} timed out after 8 minutes")
             # Force complete remaining stats
-            remaining = len(current_subs) - stats["completed"]
-            stats["completed"] += remaining
-            stats["failed"] += remaining
+            remaining = total - stats["completed"]
+            if remaining > 0:
+                logger.warning(f"Force completing {remaining} unfinished items")
+                stats["completed"] += remaining
+                stats["sys_err"] += remaining
             if current_pass == total_passes:
                 global_active = stats["active"]
                 global_died = stats["died"]

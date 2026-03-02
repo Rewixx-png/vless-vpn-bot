@@ -79,7 +79,14 @@ class VlessChecker:
                         else:
                             return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
-        success, region, latency, speed_mbps, ai, err = await CheckerAPI.check(config_url)
+        # Wrap CheckerAPI.check with timeout to prevent hanging
+        try:
+            success, region, latency, speed_mbps, ai, err = await asyncio.wait_for(
+                CheckerAPI.check(config_url),
+                timeout=25.0  # Max 25 seconds per config check
+            )
+        except asyncio.TimeoutError:
+            return False, "🌍 UNK", 9999, 0.0, False, "Factor 3: Config Check Timeout (>25s)", config_url
 
         # Check speed - reject configs with speed < 25 Mbps
         if success and speed_mbps < 25.0:

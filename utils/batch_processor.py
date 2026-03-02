@@ -278,8 +278,22 @@ class CpuAdaptiveProcessor(BatchProcessor):
 
         monitor_task = asyncio.create_task(monitor())
         workers =[asyncio.create_task(worker()) for _ in range(min(self.max_workers, len(items)))]
+
+        # Wait for all workers with a global timeout
+        # Timeout: 60 seconds per item + 300 seconds base
+        global_timeout = max(300.0, len(items) * 60.0)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*workers, return_exceptions=True),
+                timeout=global_timeout
+            )
+        except asyncio.TimeoutError:
+            # Force cancel all workers
+            self._cancelled = True
+            for w in workers:
+                if not w.done():
+                    w.cancel()
         
-        await asyncio.gather(*workers)
         self._cancelled = True
         monitor_task.cancel()
         if not prod_task.done():

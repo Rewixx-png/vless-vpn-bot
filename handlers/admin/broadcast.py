@@ -1,10 +1,11 @@
 import asyncio
 import time
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 
 from config import config
 from database.repo import UserRepo
@@ -13,6 +14,7 @@ from handlers.admin.states import AdminStates
 from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.callback_query(F.data == "admin_broadcast")
@@ -74,6 +76,11 @@ async def do_broadcast(message: Message, state: FSMContext):
         except TelegramForbiddenError:
             # Пользователь заблокировал бота
             blocked_count += 1
+            logger.info(f"User {user_id} blocked the bot")
+        except TelegramBadRequest as e:
+            # Ошибка запроса (например, пользователь удален или сообщение невалидно)
+            failed_count += 1
+            logger.warning(f"Bad request for user {user_id}: {e}")
         except TelegramRetryAfter as e:
             # Лимит превышен, ждем и пробуем снова (один раз)
             try:
@@ -84,11 +91,17 @@ async def do_broadcast(message: Message, state: FSMContext):
                     message_id=message_id
                 )
                 sent_count += 1
-            except Exception:
+            except Exception as retry_err:
                 failed_count += 1
-        except Exception:
+                logger.error(f"Retry failed for user {user_id}: {retry_err}")
+        except asyncio.TimeoutError:
+            # Таймаут отправки
+            failed_count += 1
+            logger.warning(f"Timeout sending to user {user_id}")
+        except Exception as e:
             # Любая другая ошибка (таймаут, удаленный аккаунт и т.д.)
             failed_count += 1
+            logger.error(f"Failed to send to user {user_id}: {type(e).__name__}: {e}")
         
         # Обновляем прогресс-бар (не чаще чем раз в 2 секунды или каждые 20 юзеров)
         # Это предотвращает "зависание" на этапе редактирования сообщения
