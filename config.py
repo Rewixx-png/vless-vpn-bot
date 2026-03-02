@@ -44,8 +44,12 @@ class Settings(BaseSettings):
     # Database
     DB_POOL_RECYCLE: int = 3600  # 1 hour
     
+    # Cache
+    CACHE_TTL: int = 300  # 5 minutes for Redis/local cache
+    DNS_CACHE_TTL: int = 300  # 5 minutes for DNS cache in connector
+    
     # GeoIP
-    DNS_CACHE_TTL: int = 86400
+    GEOIP_CACHE_TTL: int = 86400
 
     # Optional
     public_domain: str | None = None
