@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, time, timedelta
 from utils.state import BotState
 from config import config
 
@@ -25,6 +26,7 @@ class BackgroundTasks:
             asyncio.create_task(cls._collector_scheduler(), name="collector_scheduler"),
             asyncio.create_task(cls._stability_scheduler(), name="stability_scheduler"),
             asyncio.create_task(cls._geoip_scheduler(), name="geoip_scheduler"),
+            asyncio.create_task(cls._daily_digest_scheduler(), name="daily_digest_scheduler"),
         ]
     
     @classmethod
@@ -91,3 +93,39 @@ class BackgroundTasks:
                 logger.error(f"❌ GeoIP Scheduler Error: {e}")
             
             await asyncio.sleep(cls.GEOIP_UPDATE_INTERVAL)
+    
+    @classmethod
+    async def _daily_digest_scheduler(cls):
+        """Send daily digest at 12:00 MSK (09:00 UTC)"""
+        from utils.smart_alerts import SmartAlerts
+        
+        # Wait for system to be ready
+        await asyncio.sleep(60)
+        
+        while cls._is_running:
+            try:
+                now = datetime.now()
+                target_time = time(9, 0)  # 09:00 UTC = 12:00 MSK
+                
+                # Calculate time until next 12:00 MSK
+                if now.time() >= target_time:
+                    # Tomorrow
+                    next_run = datetime.combine(now.date(), target_time) + timedelta(days=1)
+                else:
+                    # Today
+                    next_run = datetime.combine(now.date(), target_time)
+                
+                wait_seconds = (next_run - now).total_seconds()
+                logger.info(f"⏰ Daily digest scheduled for {next_run.strftime('%Y-%m-%d %H:%M:%S')} UTC (12:00 MSK), waiting {wait_seconds/3600:.1f} hours")
+                
+                await asyncio.sleep(wait_seconds)
+                
+                if cls._is_running:
+                    logger.info("📬 Sending daily digest...")
+                    await SmartAlerts.send_daily_digest()
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ Daily Digest Scheduler Error: {e}")
+                await asyncio.sleep(3600)  # Retry in 1 hour on error
