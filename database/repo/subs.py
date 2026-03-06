@@ -182,6 +182,9 @@ class SubRepo:
                 if 'stable' in tags:
                     stmt = stmt.where(Subscription.stability_streak >= 144)
 
+                if 'no_ads' in tags:
+                    stmt = stmt.where(Subscription.no_ads == True)
+
             stmt = stmt.order_by(Subscription.speed_mbps.desc())
 
             if limit > 0:
@@ -239,7 +242,8 @@ class SubRepo:
             case_latency =[]
             case_speed = []
             case_ai = []
-            case_death =[]
+            case_no_ads =[]
+            case_death = []
             ids = []
 
             for upd in updates:
@@ -248,6 +252,7 @@ class SubRepo:
                 case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
                 case_speed.append(f"WHEN {upd['id']} THEN {upd.get('speed_mbps', 0.0)}")
                 case_ai.append(f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}")
+                case_no_ads.append(f"WHEN {upd['id']} THEN {str(upd.get('no_ads', False)).lower()}")
                 if not upd['is_active']:
                     case_death.append(f"WHEN {upd['id']} THEN death_count + 1")
                 else:
@@ -260,6 +265,7 @@ class SubRepo:
                     latency_ms = CASE id {' '.join(case_latency)} END,
                     speed_mbps = CASE id {' '.join(case_speed)} END,
                     ai_available = CASE id {' '.join(case_ai)} END,
+                    no_ads = CASE id {' '.join(case_no_ads)} END,
                     death_count = CASE id {' '.join(case_death)} END,
                     last_checked_at = NOW()
                 WHERE id IN ({','.join(map(str, ids))})
@@ -281,8 +287,8 @@ class SubRepo:
         updates.sort(key=lambda x: x['id'])
 
         async with async_session_factory() as session:
-            case_regions = []
-            ids =[]
+            case_regions =[]
+            ids = []
 
             for upd in updates:
                 ids.append(upd["id"])
@@ -437,13 +443,14 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
-    async def update_sub_status(sub_id: int, is_active: bool, latency: int, speed_mbps: float, ai_available: bool = False):
+    async def update_sub_status(sub_id: int, is_active: bool, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False):
         async with async_session_factory() as session:
             stmt = update(Subscription).where(Subscription.id == sub_id).values(
                 is_active=is_active,
                 latency_ms=latency,
                 speed_mbps=speed_mbps,
                 ai_available=ai_available,
+                no_ads=no_ads,
                 last_checked_at=func.now()
             )
             await session.execute(stmt)
@@ -457,7 +464,7 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
-    async def add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False):
+    async def add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False):
         async with async_session_factory() as session:
             existing = await session.scalar(select(Subscription).where(Subscription.vless_key == vless_key))
             if not existing:
@@ -466,7 +473,8 @@ class SubRepo:
                     region=region, 
                     latency_ms=latency,
                     speed_mbps=speed_mbps,
-                    ai_available=ai_available
+                    ai_available=ai_available,
+                    no_ads=no_ads
                 )
                 session.add(sub)
                 await session.commit()
@@ -492,7 +500,7 @@ class SubRepo:
             return result.scalars().first()
 
     @staticmethod
-    async def smart_add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False) -> bool:
+    async def smart_add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False) -> bool:
         is_banned = await BlacklistRepo.is_blacklisted(vless_key)
         if is_banned:
             return False
@@ -510,7 +518,8 @@ class SubRepo:
                 region=region, 
                 latency_ms=latency,
                 speed_mbps=speed_mbps,
-                ai_available=ai_available
+                ai_available=ai_available,
+                no_ads=no_ads
             )
             session.add(sub)
             await session.commit()

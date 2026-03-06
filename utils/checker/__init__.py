@@ -46,7 +46,7 @@ class VlessChecker:
             return False
 
     @staticmethod
-    async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, str, str]:
+    async def process_subscription(config_url: str) -> tuple[bool, str, int, float, bool, bool, str, str]:
         parsed = LinkParser.parse_vless(config_url)
 
         if parsed:
@@ -60,7 +60,7 @@ class VlessChecker:
                 is_tcp_alive = await VlessChecker.check_tcp_connectivity(check_ip, port, timeout=2.0)
                 if not is_tcp_alive:
                     await GeoIP.invalidate_cache(host)
-                    return False, "🌍 UNK", 9999, 0.0, False, "Factor 1: TCP Unreachable", config_url
+                    return False, "🌍 UNK", 9999, 0.0, False, False, "Factor 1: TCP Unreachable", config_url
 
                 security = parsed.get("security", "none")
                 if security in ["tls", "reality"]:
@@ -78,25 +78,25 @@ class VlessChecker:
                         if working_sni:
                             config_url = LinkParser.update_param(config_url, "sni", working_sni)
                         else:
-                            return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
+                            return False, "🌍 UNK", 9999, 0.0, False, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
                 try:
-                    success, region, latency, speed_mbps, ai, err = await asyncio.wait_for(
+                    success, region, latency, speed_mbps, ai, no_ads, err = await asyncio.wait_for(
                         CheckerAPI.check(config_url),
                         timeout=config.CHECKER_TIMEOUT
                     )
                 except asyncio.TimeoutError:
-                    return False, "🌍 UNK", 9999, 0.0, False, f"Factor 3: Config Check Timeout (>{config.CHECKER_TIMEOUT}s)", config_url
+                    return False, "🌍 UNK", 9999, 0.0, False, False, f"Factor 3: Config Check Timeout (>{config.CHECKER_TIMEOUT}s)", config_url
 
                 if success and speed_mbps < config.MIN_SPEED_MBPS:
-                    return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < {config.MIN_SPEED_MBPS})", config_url
+                    return False, region, latency, speed_mbps, False, False, f"Factor 6: Speed Too Low ({speed_mbps} < {config.MIN_SPEED_MBPS})", config_url
 
                 if not success and err and str(err).startswith("SYS_ERR"):
-                    return False, "", 0, 0.0, False, err, config_url
+                    return False, "", 0, 0.0, False, False, err, config_url
 
-                return success, region, latency, speed_mbps, ai, err, config_url
+                return success, region, latency, speed_mbps, ai, no_ads, err, config_url
 
-        return False, "🌍 UNK", 9999, 0.0, False, "Factor 0: Invalid Config", config_url
+        return False, "🌍 UNK", 9999, 0.0, False, False, "Factor 0: Invalid Config", config_url
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:

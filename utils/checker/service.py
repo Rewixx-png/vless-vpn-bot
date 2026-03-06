@@ -77,7 +77,7 @@ async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]
         sock_read=4.0
     )
     
-    CHECK_URLS = [
+    CHECK_URLS =[
         ("http://cp.cloudflare.com/generate_204", 204),
         ("http://www.gstatic.com/generate_204", 204),
         ("http://connectivitycheck.gstatic.com/generate_204", 204),
@@ -170,6 +170,17 @@ async def check_ai_availability(connector: ProxyConnector) -> bool:
         
     return openai_ok and google_ok
 
+async def check_no_ads(connector: ProxyConnector) -> bool:
+    timeout = aiohttp.ClientTimeout(total=3.0)
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get('https://googleads.g.doubleclick.net/', allow_redirects=False) as resp:
+                if resp.status in[200, 301, 302, 400, 403, 404]:
+                    return False
+    except Exception:
+        return True
+    return False
+
 async def check_handler(request):
     try: data = await request.json()
     except: return web.json_response({"error": "Invalid JSON"}, status=400)
@@ -187,6 +198,7 @@ async def check_handler(request):
         "latency": 9999,
         "speed_mbps": 0.0,
         "ai": False,
+        "no_ads": False,
         "error": "Init"
     }
 
@@ -216,7 +228,10 @@ async def check_handler(request):
                 connector_ai = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
                 response_data["ai"] = await check_ai_availability(connector_ai)
                 
-        SPEED_TEST_URLS = [
+                connector_ads = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
+                response_data["no_ads"] = await check_no_ads(connector_ads)
+                
+        SPEED_TEST_URLS =[
             'https://speed.cloudflare.com/__down?bytes=25000000',
             'https://speed.hetzner.de/10MB.bin',
             'https://ash-speed.hetzner.com/10MB.bin',
@@ -234,7 +249,7 @@ async def check_handler(request):
                 
                 st_start = time.monotonic()
                 total_bytes = 0
-                bytes_per_url = []
+                bytes_per_url =[]
                 
                 for test_url in SPEED_TEST_URLS:
                     if time.monotonic() - st_start > config.SPEED_TEST_TIMEOUT + 2.0:

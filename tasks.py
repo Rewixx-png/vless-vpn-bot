@@ -150,13 +150,13 @@ async def check_stability_task() -> Dict[str, Any]:
     def check_one(sub):
         async def _check():
             try:
-                is_alive, _, latency, speed_mbps, _, err, _ = await VlessChecker.process_subscription(sub.vless_key)
+                is_alive, _, latency, speed_mbps, ai_avail, no_ads, err, _ = await VlessChecker.process_subscription(sub.vless_key)
 
                 is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
                 if not is_alive and not is_standard_err:
                     return (True, None)
 
-                return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
+                return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps, "ai": ai_avail, "no_ads": no_ads})
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -180,7 +180,8 @@ async def check_stability_task() -> Dict[str, Any]:
                     "is_active": u["is_alive"], 
                     "latency_ms": u["latency"],
                     "speed_mbps": u["speed_mbps"],
-                    "ai_available": False
+                    "ai_available": u["ai"],
+                    "no_ads": u["no_ads"]
                 } 
                 for u in updates
             ]
@@ -250,8 +251,8 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
             total = len(current_subs)
             update_lock = asyncio.Lock()
-            status_buffer =[]
-            region_buffer =[]
+            status_buffer = []
+            region_buffer = []
             key_buffer =[]
 
             stats = {
@@ -344,7 +345,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
             async def process_sub(sub):
                 try:
-                    is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(sub["vless_key"])
+                    is_alive, region, latency, speed_mbps, ai_avail, no_ads, err, updated_link = await VlessChecker.process_subscription(sub["vless_key"])
 
                     status_upd = None
                     region_upd = None
@@ -373,7 +374,8 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                             "is_active": True,
                             "latency_ms": latency,
                             "speed_mbps": speed_mbps,
-                            "ai_available": ai_avail
+                            "ai_available": ai_avail,
+                            "no_ads": no_ads
                         }
                         if region and "Unk" not in region:
                             region_upd = {"id": sub["id"], "region": region}
@@ -395,7 +397,8 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                             "is_active": False,
                             "latency_ms": 9999,
                             "speed_mbps": 0.0,
-                            "ai_available": False
+                            "ai_available": False,
+                            "no_ads": False
                         }
                         result_status = "dead"
 

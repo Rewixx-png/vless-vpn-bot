@@ -71,7 +71,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         return
 
     links = re.findall(r'(vless://[^\s\n<>"]+)', text_content)
-    links =[link.strip() for link in links if link.strip()]
+    links = [link.strip() for link in links if link.strip()]
 
     if not links:
         await message.answer(
@@ -100,7 +100,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     async def process_link(link: str):
         try:
-            is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(link)
+            is_alive, region, latency, speed_mbps, ai_avail, no_ads, err, updated_link = await VlessChecker.process_subscription(link)
             
             if not is_alive and err and str(err).startswith("SYS_ERR"):
                 return (False, {"status": "failed", "error": "System Overload. Try again later."})
@@ -111,7 +111,8 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                     region=region,
                     latency=latency,
                     speed_mbps=speed_mbps,
-                    ai_available=ai_avail
+                    ai_available=ai_avail,
+                    no_ads=no_ads
                 )
                 if added:
                     return (True, {"status": "added", "region": region, "speed_mbps": speed_mbps})

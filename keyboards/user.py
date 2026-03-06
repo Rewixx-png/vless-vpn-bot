@@ -55,6 +55,7 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
     kb.button(text=get_btn("ai", "🤖 AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
     kb.button(text=get_btn("fast", "⚡ High Speed (>100Mbps)"), callback_data=f"{prefix}_fast")
     kb.button(text=get_btn("wl", "🔐 Reality / Vision (Stealth)"), callback_data=f"{prefix}_wl")
+    kb.button(text=get_btn("no_ads", "🚫 No-Ads (AdBlock)"), callback_data=f"{prefix}_no_ads")
     
     kb.adjust(1)
     
@@ -67,7 +68,7 @@ def settings_tags_kb(selected_tags: list, group_id: int = None):
 
 def settings_limit_kb(current: int):
     kb = InlineKeyboardBuilder()
-    options = [10, 50, 100, 200, 0]
+    options =[10, 50, 100, 200, 0]
     
     for opt in options:
         text = "♾️ MAX" if opt == 0 else f"{opt}"
@@ -86,7 +87,7 @@ def settings_countries_kb(all_regions: list, selected_regions: list | None, grou
     
     real_selection = selected_regions
     if selected_regions == ["__EMPTY__"]:
-        real_selection = []
+        real_selection =[]
     
     is_all_on = real_selection is None
 
@@ -169,7 +170,7 @@ def donate_selection_kb():
 
 def crypto_amount_kb():
     kb = InlineKeyboardBuilder()
-    amounts = [1, 3, 5, 10, 25, 50]
+    amounts =[1, 3, 5, 10, 25, 50]
     for amt in amounts:
         kb.button(text=f"{amt} $", callback_data=f"pay_create_{amt}")
     kb.button(text="✏️ Своя сумма", callback_data="pay_custom")
@@ -185,6 +186,5 @@ def pay_link_kb(url: str):
     return kb.as_markup()
 
 def back_to_home():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="home")]
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Главное меню", callback_data="home")]
     ])

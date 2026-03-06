@@ -70,7 +70,8 @@ async def show_sub_details(callback: CallbackQuery, state: FSMContext):
         return
 
     status_emoji = "🟢 АКТИВЕН" if sub.is_active else "🔴 ОТКЛЮЧЕН"
-    ai_status = "✅ Есть" if sub.ai_available else "❌ Нет"
+    ai_status = "✅ Да" if sub.ai_available else "❌ Нет"
+    no_ads_status = "✅ Да" if sub.no_ads else "❌ Нет"
     
     short_config = sub.vless_key
     if len(short_config) > 50:
@@ -81,7 +82,8 @@ async def show_sub_details(callback: CallbackQuery, state: FSMContext):
         f"🌍 Страна: {sub.region}\n"
         f"📶 Статус: <b>{status_emoji}</b>\n"
         f"⚡️ Скорость: {sub.speed_mbps:.1f} Mbps\n"
-        f"🤖 AI доступ: {ai_status}\n\n"
+        f"🤖 AI доступ: {ai_status}\n"
+        f"🛡 No-Ads: {no_ads_status}\n\n"
         f"🔑 <b>Конфиг (Full):</b>\n<pre>{sub.vless_key}</pre></blockquote>"
     )
     

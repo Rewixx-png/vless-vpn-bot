@@ -107,7 +107,7 @@ class SubscriptionCollector:
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "fmt_err"
 
-                is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(link)
+                is_alive, region, latency, speed_mbps, ai_avail, no_ads, err, updated_link = await VlessChecker.process_subscription(link)
                 
                 is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
                 
@@ -122,7 +122,8 @@ class SubscriptionCollector:
                         region=region,
                         latency=latency,
                         speed_mbps=speed_mbps,
-                        ai_available=ai_avail
+                        ai_available=ai_avail,
+                        no_ads=no_ads
                     )
                     
                     if added:

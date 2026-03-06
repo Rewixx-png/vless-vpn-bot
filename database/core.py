@@ -45,6 +45,7 @@ async def init_db():
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR DEFAULT 'ru'",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS use_fragment BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ai_available BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS no_ads BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS death_count INTEGER DEFAULT 0",
                 "ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS tags_filter TEXT DEFAULT NULL",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stable_state INTEGER DEFAULT 0",

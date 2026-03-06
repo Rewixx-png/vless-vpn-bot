@@ -46,6 +46,7 @@ class Subscription(Base):
     latency_ms = Column(Integer, default=9999)
     speed_mbps = Column(Float, default=0.0)
     ai_available = Column(Boolean, default=False)
+    no_ads = Column(Boolean, default=False)
     
     is_active = Column(Boolean, default=True)
     death_count = Column(Integer, default=0)

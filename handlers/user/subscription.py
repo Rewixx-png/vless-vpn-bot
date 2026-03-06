@@ -138,7 +138,8 @@ async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
         "🛡 <b>Stable (Elite):</b> Серверы с аптаймом 24ч+ без единого сбоя.\n"
         "▫️ <b>AI Ready:</b> Разблокирует ChatGPT, Gemini, Claude.\n"
         "▫️ <b>High Speed:</b> Серверы со скоростью &gt; 100 Mbps.\n"
-        "▫️ <b>Reality/Vision:</b> Высокая скрытность от блокировок.\n\n"
+        "▫️ <b>Reality/Vision:</b> Высокая скрытность от блокировок.\n"
+        "🚫 <b>No-Ads:</b> Встроенная блокировка рекламы (DNS).\n\n"
         "<i>✅ - Включено в подписку\n⬜️ - Обычные серверы</i>"
     )
     
@@ -220,7 +221,7 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
         await edit_or_answer(
             message, 
             f"✅ Лимит установлен: <b>{limit}</b>",
-            settings_main_kb(limit, True), # Passing dummy True as user.use_fragment will update on next open
+            settings_main_kb(limit, True), 
             state,
             media_url="video"
         )
@@ -231,7 +232,7 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
 @router.callback_query(F.data == "settings_countries")
 async def open_settings_countries(callback: CallbackQuery, state: FSMContext):
     all_regions = await SubRepo.get_regions()
-    user_filter = await UserRepo.get_user_filter(callback.from_user.id)
+    user_filter = await UserRepo.get_user_filter(callback.fromuser.id if hasattr(callback, 'fromuser') else callback.from_user.id)
 
     text = (
         "<b>🌍 REGIONS FILTER | СТРАНЫ</b>\n"
@@ -258,7 +259,7 @@ async def toggle_country(callback: CallbackQuery):
     user_filter = await UserRepo.get_user_filter(user_id)
 
     if user_filter is None:
-        new_filter = [r for r in all_regions if r != region]
+        new_filter =[r for r in all_regions if r != region]
     else:
         new_filter = user_filter.copy()
         if region in new_filter:
@@ -267,7 +268,7 @@ async def toggle_country(callback: CallbackQuery):
             new_filter.append(region)
 
     if not new_filter:
-        new_filter = ["__EMPTY__"]
+        new_filter =["__EMPTY__"]
     elif set(new_filter) == set(all_regions):
         new_filter = None
 

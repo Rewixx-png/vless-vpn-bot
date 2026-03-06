@@ -35,7 +35,7 @@ class CheckerAPI:
                             err_msg = data.get("error", "Unknown Error")
                             if "Worker Busy" in err_msg and "SYS_ERR" not in err_msg:
                                 err_msg = f"SYS_ERR: {err_msg}"
-                            return False, "", 0, 0.0, False, err_msg
+                            return False, "", 0, 0.0, False, False, err_msg
                     
                     return (
                         data.get("success", False),
@@ -43,19 +43,20 @@ class CheckerAPI:
                         data.get("latency", 9999),
                         data.get("speed_mbps", 0.0),
                         data.get("ai", False),
+                        data.get("no_ads", False),
                         data.get("error", "OK")
                     )
                 elif resp.status == 503:
-                    return False, "", 0, 0.0, False, "SYS_ERR: Worker Busy (503)"
+                    return False, "", 0, 0.0, False, False, "SYS_ERR: Worker Busy (503)"
                 else:
-                    return False, "", 0, 0.0, False, f"SYS_ERR: Service Error {resp.status}"
+                    return False, "", 0, 0.0, False, False, f"SYS_ERR: Service Error {resp.status}"
                     
         except aiohttp.ClientConnectorError:
-            return False, "", 0, 0.0, False, "SYS_ERR: Checker Service Offline"
+            return False, "", 0, 0.0, False, False, "SYS_ERR: Checker Service Offline"
         except asyncio.TimeoutError:
-            return False, "", 0, 0.0, False, "SYS_ERR: Checker API Timeout"
+            return False, "", 0, 0.0, False, False, "SYS_ERR: Checker API Timeout"
         except Exception as e:
-            return False, "", 0, 0.0, False, f"SYS_ERR: API Error: {str(e)}"
+            return False, "", 0, 0.0, False, False, f"SYS_ERR: API Error: {str(e)}"
 
     @classmethod
     async def close(cls):
