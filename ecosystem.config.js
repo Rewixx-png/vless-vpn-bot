@@ -2,8 +2,9 @@ module.exports = {
   apps:[
     {
       name: "CheckerSVC",
-      script: "utils/checker/service.py",
-      interpreter: "python3",
+      script: "python3",
+      args: "utils/checker/service.py",
+      interpreter: "none",
       instances: 1,
       autorestart: true,
       watch: false,
@@ -17,7 +18,7 @@ module.exports = {
     {
       name: "VPN_Worker",
       script: "python3",
-      args: "-m celery -A celery_app worker -Q high_priority,low_priority -c 8 --prefetch-multiplier=1",
+      args: "-m celery -A celery_app worker -Q high_priority,low_priority -c 1 --prefetch-multiplier=1",
       interpreter: "none",
       instances: 1,
       autorestart: true,

@@ -158,7 +158,6 @@ class ClashGenerator:
 
     @staticmethod
     def escape_yaml_str(s):
-        # Remove or replace problematic characters for FlClash
         s = s.replace('"', '')
         s = s.replace('\\', '')
         s = s.replace('•', '-')

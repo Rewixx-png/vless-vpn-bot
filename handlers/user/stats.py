@@ -9,7 +9,6 @@ router = Router()
 
 @router.callback_query(F.data == "public_stats")
 async def show_public_network_stats(callback: CallbackQuery, state: FSMContext):
-    """Network Statistics Dashboard"""
     stats = await StatsRepo.get_network_stats()
     
     regions_text = stats['regions_list']

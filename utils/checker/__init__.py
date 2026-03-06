@@ -80,7 +80,6 @@ class VlessChecker:
                         else:
                             return False, "🌍 UNK", 9999, 0.0, False, "Factor 2: SSL Handshake Failed (All SNIs)", config_url
 
-                # Wrap CheckerAPI.check with timeout to prevent hanging
                 try:
                     success, region, latency, speed_mbps, ai, err = await asyncio.wait_for(
                         CheckerAPI.check(config_url),
@@ -89,7 +88,6 @@ class VlessChecker:
                 except asyncio.TimeoutError:
                     return False, "🌍 UNK", 9999, 0.0, False, f"Factor 3: Config Check Timeout (>{config.CHECKER_TIMEOUT}s)", config_url
 
-                # Check speed - reject configs with speed < MIN_SPEED_MBPS
                 if success and speed_mbps < config.MIN_SPEED_MBPS:
                     return False, region, latency, speed_mbps, False, f"Factor 6: Speed Too Low ({speed_mbps} < {config.MIN_SPEED_MBPS})", config_url
 
@@ -101,7 +99,7 @@ class VlessChecker:
         return False, "🌍 UNK", 9999, 0.0, False, "Factor 0: Invalid Config", config_url
 
     @classmethod
-    async def get_regions_batch(cls, hosts_data: list[tuple[str, str]], session: aiohttp.ClientSession) -> dict[str, str]:
+    async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:
         if hosts_data and isinstance(hosts_data[0], str):
             hosts_data =[(h, "") for h in hosts_data]
 

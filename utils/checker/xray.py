@@ -85,7 +85,6 @@ class XrayExecutor:
         if not parsed:
             return None, 0, "CONFIG_ERR: Invalid Link Format"
         
-        # Validate UUID format
         import re
         uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         if not re.match(uuid_pattern, parsed.get('uuid', ''), re.IGNORECASE):

@@ -30,7 +30,6 @@ async def show_users_list(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_user_view_"))
 async def show_user_detail(callback: CallbackQuery, state: FSMContext):
-    # data format: admin_user_view_{user_id}_{back_offset}
     parts = callback.data.split("_")
     user_id = int(parts[3])
     back_offset = int(parts[4])

@@ -1,9 +1,9 @@
 import os
+import re
+import socket
 import aiohttp
 import asyncio
 import geoip2.database
-import aiodns
-import socket
 import redis.asyncio as redis
 from typing import Optional
 from config import config
@@ -14,11 +14,10 @@ class GeoIP:
         "https://git.io/GeoLite2-Country.mmdb"
     ]
     DB_PATH = "utils/checker/mmdb/Country.mmdb"
-    
+
     _reader: Optional[geoip2.database.Reader] = None
-    _resolver: Optional[aiodns.DNSResolver] = None
     _redis: Optional[redis.Redis] = None
-    
+
     FLAGS = {
         'AD': '🇦🇩', 'AE': '🇦🇪', 'AF': '🇦🇫', 'AG': '🇦🇬', 'AI': '🇦🇮', 'AL': '🇦🇱', 'AM': '🇦🇲', 'AO': '🇦🇴',
         'AQ': '🇦🇶', 'AR': '🇦🇷', 'AS': '🇦🇸', 'AT': '🇦🇹', 'AU': '🇦🇺', 'AW': '🇦🇼', 'AX': '🇦🇽', 'AZ': '🇦🇿',
@@ -55,12 +54,6 @@ class GeoIP:
     }
 
     @classmethod
-    async def get_resolver(cls):
-        if cls._resolver is None:
-            cls._resolver = aiodns.DNSResolver()
-        return cls._resolver
-
-    @classmethod
     async def get_redis(cls):
         if cls._redis is None:
             try:
@@ -82,18 +75,32 @@ class GeoIP:
 
     @classmethod
     async def resolve_host(cls, host: str) -> str | None:
-        if not host:
+        if not host or not isinstance(host, str):
             return None
+
+        host = host.strip()
+        
+        if ':' in host and not host.startswith('['):
+            host = host.split(':')[0]
             
+        if host.startswith('[') and host.endswith(']'):
+            host = host[1:-1]
+
         try:
             socket.inet_aton(host)
             return host
         except socket.error:
             pass
 
+        try:
+            socket.inet_pton(socket.AF_INET6, host)
+            return host
+        except socket.error:
+            pass
+
         r = await cls.get_redis()
         cache_key = f"dns:{host}"
-        
+
         if r:
             try:
                 cached = await r.get(cache_key)
@@ -103,24 +110,31 @@ class GeoIP:
                 pass
 
         try:
-            resolver = await cls.get_resolver()
-            res = await resolver.query(host, 'A')
-            ip = res[0].host
+            try:
+                encoded_host = host.encode('idna').decode('ascii')
+            except Exception:
+                encoded_host = host
+                
+            loop = asyncio.get_running_loop()
+            res = await loop.getaddrinfo(encoded_host, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
             
-            if r:
-                try:
-                    await r.setex(cache_key, config.DNS_CACHE_TTL, ip)
-                except Exception:
-                    pass
-                    
-            return ip
+            if res:
+                ip = res[0][4][0]
+                if r:
+                    try:
+                        await r.setex(cache_key, config.DNS_CACHE_TTL, ip)
+                    except Exception:
+                        pass
+                return ip
         except Exception:
-            return None
+            pass
+            
+        return None
 
     @classmethod
     async def initialize(cls):
         await cls.get_redis()
-        
+
         dir_path = os.path.dirname(cls.DB_PATH)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
@@ -146,7 +160,7 @@ class GeoIP:
         dir_path = os.path.dirname(cls.DB_PATH)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
-            
+
         success = False
         try:
             async with aiohttp.ClientSession() as session:
@@ -159,7 +173,7 @@ class GeoIP:
                             break
         except Exception:
             pass
-            
+
         if success:
             try:
                 cls._reader = geoip2.database.Reader(cls.DB_PATH)
@@ -171,10 +185,10 @@ class GeoIP:
     def code_to_region(cls, code: str) -> str:
         if not code or len(code) != 2:
             return "🌍 UNK"
-        
+
         code = code.upper()
         flag = cls.FLAGS.get(code, "🌍")
-        
+
         names = {
             "DE": "Germany", "US": "USA", "NL": "Netherlands", "RU": "Russia",
             "FI": "Finland", "FR": "France", "GB": "UK", "UA": "Ukraine",
@@ -182,64 +196,85 @@ class GeoIP:
             "CH": "Switzerland", "IT": "Italy", "ES": "Spain", "CA": "Canada",
             "JP": "Japan", "KR": "South Korea", "SG": "Singapore", "AE": "UAE"
         }
-        
+
         name = names.get(code, code)
         return f"{flag} {name}"
 
     @classmethod
     async def identify_region(cls, session=None, host: str = None, remark: str = None) -> str:
         if remark:
-            remark = remark.lower()
-            if "germany" in remark or "de" in remark: return "🇩🇪 Germany"
-            if "usa" in remark or "united states" in remark: return "🇺🇸 USA"
-            if "russia" in remark or "ru" in remark: return "🇷🇺 Russia"
-            if "nl" in remark or "netherlands" in remark: return "🇳🇱 Netherlands"
+            for code, flag in cls.FLAGS.items():
+                if flag in remark:
+                    return cls.code_to_region(code)
+
+            remark_lower = remark.lower()
+            keyword_map = {
+                "germany": "DE", "deutschland": "DE",
+                "russia": "RU", "россия": "RU", "msk": "RU",
+                "netherlands": "NL", "holland": "NL",
+                "usa": "US", "united states": "US", "america": "US",
+                "uk": "GB", "united kingdom": "GB", "england": "GB",
+                "france": "FR", "finland": "FI", "turkey": "TR",
+                "poland": "PL", "sweden": "SE", "ukraine": "UA",
+                "kazakhstan": "KZ", "switzerland": "CH", "italy": "IT",
+                "spain": "ES", "canada": "CA", "japan": "JP",
+                "singapore": "SG", "uae": "AE", "dubai": "AE"
+            }
+            for kw, code in keyword_map.items():
+                if re.search(r'\b' + re.escape(kw) + r'\b', remark_lower):
+                    return cls.code_to_region(code)
 
         if host:
-            if host.endswith(".ru"): return "🇷🇺 Russia"
-            if host.endswith(".de"): return "🇩🇪 Germany"
-            if host.endswith(".uk"): return "🇬🇧 UK"
-        
+            host_lower = host.lower()
+            tld_match = re.search(r'\.([a-z]{2})$', host_lower)
+            if tld_match:
+                tld = tld_match.group(1).upper()
+                if tld in cls.FLAGS and tld not in ['CO', 'COM', 'NET', 'ORG', 'IO', 'ME', 'CC', 'TV']: 
+                    return cls.code_to_region(tld)
+
         return "🌍 UNK"
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:
         results = {}
-        
+
         async def process_host(host, remark):
             region = await cls.identify_region(session, host, remark)
             if region != "🌍 UNK":
-                return host, region
-            
+                return host, region, "remark"
+
             ip = await cls.resolve_host(host)
             if ip and cls._reader:
                 try:
                     response = cls._reader.country(ip)
                     code = response.country.iso_code
                     if code:
-                        return host, cls.code_to_region(code)
+                        return host, cls.code_to_region(code), "ip"
                 except Exception:
                     pass
-            
+
             if ip:
                 try:
                     async with session.get(f"http://ip-api.com/json/{ip}?fields=countryCode", timeout=2) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if data.get("countryCode"):
-                                return host, cls.code_to_region(data["countryCode"])
-                except:
+                                return host, cls.code_to_region(data["countryCode"]), "ip"
+                except Exception:
                     pass
-            return host, "🌍 UNK"
+            return host, "🌍 UNK", "none"
 
-        sem = asyncio.Semaphore(50)
+        sem = asyncio.Semaphore(10)
         async def bounded_process(h, r):
             async with sem:
                 return await process_host(h, r)
 
-        tasks =[bounded_process(h, r) for h, r in hosts_data]
-        res_list = await asyncio.gather(*tasks)
-        for h, r in res_list:
-            results[h] = r
-            
+        tasks = [bounded_process(h, r) for h, r in hosts_data]
+        res_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for res in res_list:
+            if isinstance(res, tuple) and len(res) == 3:
+                h, r, src = res
+                results[h] = (r, src)
+
         return results

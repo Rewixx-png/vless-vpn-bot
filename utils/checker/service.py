@@ -216,7 +216,6 @@ async def check_handler(request):
                 connector_ai = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
                 response_data["ai"] = await check_ai_availability(connector_ai)
                 
-        # Improved speed test - multi-source like Speedtest Ookla
         SPEED_TEST_URLS = [
             'https://speed.cloudflare.com/__down?bytes=25000000',
             'https://speed.hetzner.de/10MB.bin',
@@ -237,9 +236,8 @@ async def check_handler(request):
                 total_bytes = 0
                 bytes_per_url = []
                 
-                # Test first URL that works
                 for test_url in SPEED_TEST_URLS:
-                    if time.monotonic() - st_start > config.SPEED_TEST_TIMEOUT + 2.0: # Stop if taking too long
+                    if time.monotonic() - st_start > config.SPEED_TEST_TIMEOUT + 2.0:
                         break
                     
                     try:
@@ -248,7 +246,6 @@ async def check_handler(request):
                         
                         async with st_session.get(test_url, allow_redirects=True) as resp:
                             if resp.status == 200:
-                                # Read chunks for up to SPEED_TEST_TIMEOUT seconds per URL
                                 while time.monotonic() - url_start < config.SPEED_TEST_TIMEOUT:
                                     try:
                                         chunk = await asyncio.wait_for(
@@ -266,12 +263,9 @@ async def check_handler(request):
                     except Exception:
                         continue
                 
-                # Calculate speed: use average of successful downloads
                 if bytes_per_url:
                     duration = time.monotonic() - st_start
-                    if duration > 0.1:  # At least 100ms
-                        # Calculate speed in Mbps
-                        # Multiply by 1.2 correction factor for more realistic results
+                    if duration > 0.1:
                         speed = (total_bytes * 8) / (duration * 1_000_000) * 1.2
                         response_data["speed_mbps"] = round(speed, 2)
                         
@@ -326,18 +320,13 @@ class GunicornApp(BaseApplication):
         return app_factory()
 
 def main():
-    workers = CHECKER_SETTINGS.get("workers", 2)
-    GunicornApp({
-        'bind': f'0.0.0.0:{config.CHECKER_PORT}',
-        'workers': workers,
-        'worker_class': 'aiohttp.GunicornWebWorker',
-        'timeout': 120,
-        'graceful_timeout': 30,
-        'keepalive': 5,
-        'loglevel': 'warning',
-        'accesslog': None,
-        'errorlog': '-'
-    }).run()
+    app = app_factory()
+    web.run_app(
+        app,
+        host='0.0.0.0',
+        port=config.CHECKER_PORT,
+        shutdown_timeout=10
+    )
 
 if __name__ == "__main__":
     if os.name == 'nt':

@@ -12,10 +12,7 @@ logger = logging.getLogger("VideoManager")
 
 
 class VideoManager:
-    """Async video manager with background preparation"""
-    
-    # Ссылка на исходное видео
-    SOURCE_URL = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
+    SOURCE_URL = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
     
     RAW_PATH = "storage/video_raw.mp4"
     PROCESSED_PATH = "storage/video_smooth_60fps.mp4"
@@ -26,7 +23,6 @@ class VideoManager:
     
     @classmethod
     async def prepare(cls):
-        """Start background video preparation - non-blocking"""
         if not os.path.exists("storage"):
             os.makedirs("storage")
         
@@ -39,7 +35,6 @@ class VideoManager:
     
     @classmethod
     async def _prepare_video(cls):
-        """Background video processing"""
         try:
             if not os.path.exists(cls.RAW_PATH):
                 await cls._download_video()
@@ -56,7 +51,6 @@ class VideoManager:
     
     @classmethod
     async def _download_video(cls):
-        """Download video from source"""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(cls.SOURCE_URL, timeout=30) as resp:
@@ -76,7 +70,6 @@ class VideoManager:
     
     @classmethod
     async def _process_video(cls):
-        """Process video with ffmpeg"""
         try:
             cmd = [
                 "ffmpeg",
@@ -122,7 +115,6 @@ class VideoManager:
     
     @classmethod
     def get_file(cls):
-        """Get video file (may return None if not ready)"""
         if cls._file_id:
             return cls._file_id
         
@@ -136,19 +128,16 @@ class VideoManager:
     
     @classmethod
     def is_ready(cls) -> bool:
-        """Check if video is ready"""
         return cls._ready
     
     @classmethod
     def set_file_id(cls, file_id: str):
-        """Set Telegram file_id after successful upload"""
         if file_id:
             cls._file_id = file_id
             logger.info("📎 Video file_id cached")
     
     @classmethod
     async def wait_for_ready(cls, timeout: float = 30.0):
-        """Wait for video to be ready (optional)"""
         start = asyncio.get_event_loop().time()
         while not cls._ready:
             if asyncio.get_event_loop().time() - start > timeout:

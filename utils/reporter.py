@@ -6,11 +6,6 @@ from config import config
 logger = logging.getLogger("Reporter")
 
 class Reporter:
-    """Reporter for sending notifications to admin chat.
-    
-    Uses REPORT_CHAT_ID from config for all notifications.
-    """
-    
     @classmethod
     async def _get_or_create_topic(cls, bot: Bot, topic_name: str, config_key: str) -> int:
         thread_id_str = await SystemRepo.get_config(config_key)

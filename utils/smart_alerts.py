@@ -8,16 +8,12 @@ from database.repo import UserRepo
 logger = logging.getLogger("SmartAlerts")
 
 class SmartAlerts:
-    """Accumulates notifications about region changes and sends daily digest at 12:00 MSK"""
-    
-    # Accumulated notifications storage
-    _accumulated_adds = {}  # {region: count}
-    _accumulated_drops = set()  # {regions that became unavailable}
+    _accumulated_adds = {}
+    _accumulated_drops = set()
     _lock = asyncio.Lock()
     
     @classmethod
     async def process_changes(cls, old_counts: dict, new_counts: dict):
-        """Process changes and accumulate notifications instead of sending immediately"""
         all_regions = set(old_counts.keys()).union(set(new_counts.keys()))
         
         async with cls._lock:
@@ -28,12 +24,10 @@ class SmartAlerts:
                 old_c = old_counts.get(region, 0)
                 new_c = new_counts.get(region, 0)
                 
-                # Region became unavailable
                 if old_c > 0 and new_c == 0:
                     cls._accumulated_drops.add(region)
                     logger.info(f"📉 Region {region} marked as down (accumulated)")
                 
-                # New servers added
                 added = new_c - old_c
                 if added >= 20:
                     if region in cls._accumulated_adds:
@@ -44,13 +38,11 @@ class SmartAlerts:
     
     @classmethod
     async def send_daily_digest(cls, bot: Bot = None):
-        """Send daily digest at 12:00 MSK with all accumulated changes"""
         async with cls._lock:
             if not cls._accumulated_adds and not cls._accumulated_drops:
                 logger.info("📭 No notifications to send in daily digest")
                 return
             
-            # Get all active users
             all_users = await UserRepo.get_all_users()
             all_ids = set(all_users)
             
@@ -58,40 +50,32 @@ class SmartAlerts:
                 logger.warning("⚠️ No users to notify")
                 return
             
-            # Build digest message
             messages = []
             
-            # Header
             messages.append("🚀 <b>Ежедневная сводка по серверам</b>\n")
             messages.append(f"📅 <i>{datetime.now().strftime('%d.%m.%Y')}</i>\n")
             messages.append("━" * 20 + "\n\n")
             
-            # New servers added
             if cls._accumulated_adds:
                 total_added = sum(cls._accumulated_adds.values())
                 messages.append(f"📈 <b>Добавлено серверов:</b> {total_added}\n\n")
                 
-                # Sort by count descending
                 sorted_regions = sorted(cls._accumulated_adds.items(), key=lambda x: x[1], reverse=True)
                 for region, count in sorted_regions:
                     messages.append(f"  • {region}: +{count} серверов\n")
                 messages.append("\n")
             
-            # Regions that became unavailable
             if cls._accumulated_drops:
                 messages.append(f"⚠️ <b>Стали недоступны регионы:</b> {len(cls._accumulated_drops)}\n\n")
                 for region in sorted(cls._accumulated_drops):
                     messages.append(f"  • {region}\n")
                 messages.append("\n")
             
-            # Footer
             messages.append("━" * 20 + "\n")
             messages.append("💡 <i>Обновите подписку в вашем приложении для получения новых серверов</i>")
             
-            # Combine message
             full_message = "".join(messages)
             
-            # Split if too long
             max_length = 3500
             message_parts = []
             current_part = ""
@@ -106,7 +90,6 @@ class SmartAlerts:
             if current_part:
                 message_parts.append(current_part)
             
-            # Send to all users
             if bot is None:
                 bot = Bot(token=config.BOT_TOKEN.get_secret_value())
                 close_bot = True
@@ -121,7 +104,7 @@ class SmartAlerts:
                     try:
                         for part in message_parts:
                             await bot.send_message(user_id, part, parse_mode="HTML")
-                            await asyncio.sleep(0.1)  # Rate limiting
+                            await asyncio.sleep(0.1)
                         sent_count += 1
                     except Exception as e:
                         logger.debug(f"Failed to send digest to {user_id}: {e}")
@@ -133,16 +116,13 @@ class SmartAlerts:
                 if close_bot:
                     await bot.session.close()
             
-            # Clear accumulated notifications
             cls._accumulated_adds.clear()
             cls._accumulated_drops.clear()
     
     @staticmethod
     async def _notify_region_down(bot: Bot, region: str):
-        """Legacy method - now handled in daily digest"""
-        pass  # Moved to accumulate in process_changes
+        pass
     
     @staticmethod
     async def _notify_region_boost(bot: Bot, region: str, added: int):
-        """Legacy method - now handled in daily digest"""
-        pass  # Moved to accumulate in process_changes
+        pass

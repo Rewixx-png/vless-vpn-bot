@@ -11,17 +11,12 @@ from utils.video import VideoManager
 router = Router()
 
 async def clean_start(message: Message):
-    """Clean up previous messages to keep chat clean"""
     try:
         await message.delete()
     except Exception:
         pass
 
 async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
-    """
-    Universal method to update UI.
-    Handles 'Message Caption Too Long' by falling back to simple text message.
-    """
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id

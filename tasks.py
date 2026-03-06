@@ -71,7 +71,9 @@ async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
 async def run_collector_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
-    if BotState.is_maintenance():
+    
+    is_maint = await BotState.is_maintenance()
+    if is_maint:
         return {"status": "skipped", "reason": "maintenance"}
 
     enabled_str = await SystemRepo.get_config("collector_enabled")
@@ -80,16 +82,16 @@ async def run_collector_task() -> Dict[str, Any]:
 
     start_time = asyncio.get_event_loop().time()
     result = {}
-    
+
     try:
         old_counts = await StatsRepo.get_regions_counts()
         result = await SubscriptionCollector.run_collection()
         cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
         new_counts = await StatsRepo.get_regions_counts()
-        
+
         await SmartAlerts.process_changes(old_counts, new_counts)
         duration = asyncio.get_event_loop().time() - start_time
-        
+
         try:
             bot_instance = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
             await Reporter.send_new_configs(bot_instance, result.get("added", 0), result.get("region_stats", {}))
@@ -102,7 +104,7 @@ async def run_collector_task() -> Dict[str, Any]:
                 logger.error(f"Failed to send reports: {e}")
 
         return {"success": True, "duration": duration, "result": result, "cleaned": cleaned}
-    
+
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -118,7 +120,7 @@ async def run_collector_task() -> Dict[str, Any]:
             except Exception:
                 pass
             return {"status": "timeout_graceful"}
-            
+
         try:
             bot_instance = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
             await Reporter.send_error(bot_instance, f"Collector failed: {str(e)}")
@@ -131,7 +133,9 @@ async def run_collector_task() -> Dict[str, Any]:
 async def check_stability_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
-    if BotState.is_maintenance():
+    
+    is_maint = await BotState.is_maintenance()
+    if is_maint:
         return {"status": "skipped", "reason": "maintenance"}
 
     subs = await SubRepo.get_candidates_for_stability()
@@ -140,18 +144,18 @@ async def check_stability_task() -> Dict[str, Any]:
 
     worker_count = min(config.MAX_WORKERS, max(config.MIN_WORKERS, len(subs) // 10))
     processor = SmartBatchProcessor(worker_count=worker_count)
-    
+
     old_counts = await StatsRepo.get_regions_counts()
-    
+
     def check_one(sub):
         async def _check():
             try:
                 is_alive, _, latency, speed_mbps, _, err, _ = await VlessChecker.process_subscription(sub.vless_key)
-                
+
                 is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
                 if not is_alive and not is_standard_err:
                     return (True, None)
-                    
+
                 return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps})
             except asyncio.CancelledError:
                 raise
@@ -165,9 +169,9 @@ async def check_stability_task() -> Dict[str, Any]:
             process_func=check_one,
             collect_results=True
         )
-        
+
         updates = [item["result"] for item in batch_res.items if item["success"] and item["result"] is not None]
-        
+
         if updates:
             await SubRepo.batch_update_stability(updates)
             status_updates =[
@@ -206,10 +210,10 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
     _setup_loop_exception_handler()
     from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
     from keyboards.admin import recheck_menu_kb
-    
+
     session = AiohttpSession()
     bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=session)
-    
+
     raw_subs =[]
     if mode == "all":
         raw_subs = await SubRepo.get_all_subscriptions_for_check()
@@ -219,7 +223,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         raw_subs = await SubRepo.get_dead_subscriptions_for_check()
 
     if not raw_subs:
-        BotState.set_maintenance(False)
+        await BotState.set_maintenance(False)
         try:
             await bot.edit_message_text(
                 chat_id=chat_id,
@@ -243,7 +247,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         for current_pass in range(1, total_passes + 1):
             if not current_subs:
                 break
-                
+
             total = len(current_subs)
             update_lock = asyncio.Lock()
             status_buffer =[]
@@ -254,7 +258,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                 "completed": 0, "active": 0, "died": 0, "revived": 0, "saved": 0, 
                 "f1_dead": 0, "f2_dead": 0, "f3_dead": 0, "f4_dead": 0, "f5_dead": 0, "f6_dead": 0, "sys_err": 0
             }
-            
+
             survived_ids = set()
             start_time = asyncio.get_event_loop().time()
             is_running = True
@@ -263,7 +267,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                 to_save_status = None
                 to_save_region = None
                 to_save_keys = None
-                
+
                 async with update_lock:
                     if status_buffer:
                         to_save_status = list(status_buffer)
@@ -305,7 +309,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
                         cpu = psutil.cpu_percent()
                         ram = psutil.virtual_memory().percent
-                        
+
                         remaining_str = format_time(remaining)
 
                         await bot.edit_message_text(
@@ -341,7 +345,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
             async def process_sub(sub):
                 try:
                     is_alive, region, latency, speed_mbps, ai_avail, err, updated_link = await VlessChecker.process_subscription(sub["vless_key"])
-                    
+
                     status_upd = None
                     region_upd = None
                     key_upd = None
@@ -349,9 +353,9 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                     if updated_link != sub["vless_key"]:
                         key_upd = {"id": sub["id"], "vless_key": updated_link}
                         sub["vless_key"] = updated_link
-                    
+
                     is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
-                    
+
                     if not is_alive and not is_standard_err:
                         async with update_lock:
                             stats["sys_err"] += 1
@@ -385,7 +389,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
                         if sub["is_active"]:
                             stats["died"] += 1
-                        
+
                         status_upd = {
                             "id": sub["id"],
                             "is_active": False,
@@ -415,14 +419,13 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         processor = None
         try:
             processor = CpuAdaptiveProcessor(
-                initial_workers=config.MAX_WORKERS // 2,  # Start with half capacity
+                initial_workers=config.MAX_WORKERS // 2,
                 min_workers=config.MIN_WORKERS,
                 max_workers=config.MAX_WORKERS,
                 target_cpu=85.0,
                 target_ram=85.0
             )
-            
-            # Run processing with overall timeout to prevent hanging
+
             await asyncio.wait_for(
                 processor.process(
                     items=current_subs,
@@ -439,7 +442,6 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
         except asyncio.TimeoutError:
             logger.warning(f"Pass {current_pass} timed out after 8 minutes")
-            # Force complete remaining stats
             remaining = total - stats["completed"]
             if remaining > 0:
                 logger.warning(f"Force completing {remaining} unfinished items")
@@ -455,28 +457,27 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
             is_running = False
             if processor:
                 processor.cancel()
-                
+
                 try: await flusher_task
                 except Exception: pass
-                
+
                 await flush_buffers()
-                
+
                 ui_task.cancel()
                 try: await ui_task
                 except Exception: pass
-                    
+
         if current_pass < total_passes:
             current_subs =[s for s in current_subs if s["id"] in survived_ids]
             await asyncio.sleep(2)
-                
+
         await SubRepo.cleanup_dead_subs(max_deaths=3)
-        BotState.set_maintenance(False)
+        await BotState.set_maintenance(False)
         del current_subs
 
         try:
-            # Формируем статистику по причинам отказа
             total_dead = stats['f1_dead'] + stats['f2_dead'] + stats['f3_dead'] + stats['f4_dead'] + stats['f5_dead'] + stats['f6_dead']
-            
+
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -524,6 +525,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
         await Reporter.send_error(bot, f"Admin Recheck failed: {str(e)}")
         raise
     finally:
+        await BotState.set_maintenance(False)
         await bot.session.close()
 
     return {"status": "done"}

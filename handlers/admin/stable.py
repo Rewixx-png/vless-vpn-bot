@@ -22,13 +22,10 @@ async def show_stable_list(callback: CallbackQuery, state: FSMContext):
 
     lines = []
     for i, sub in enumerate(candidates, 1):
-        # Calculate time based on streak
-        # 1 streak point = 10 minutes (approx check interval)
         total_mins = sub.stability_streak * 10
         hours = total_mins // 60
         mins = total_mins % 60
         
-        # Region format: 🇫🇮 Fi
         region = sub.region if sub.region else "UNK"
         
         lines.append(f"{i}. {region} {sub.id} – {hours}ч. {mins}мин.")

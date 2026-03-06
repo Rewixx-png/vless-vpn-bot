@@ -30,7 +30,6 @@ async def ask_broadcast(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(AdminStates.waiting_for_broadcast), F.from_user.id.in_(config.ADMIN_IDS))
 async def do_broadcast(message: Message, state: FSMContext):
-    # Получаем пользователей
     users = await UserRepo.get_all_users()
     total = len(users)
     
@@ -39,7 +38,6 @@ async def do_broadcast(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Отправляем стартовое сообщение
     status_msg = await message.answer(
         f"<blockquote>🚀 Начинаю рассылку на {total} пользователей...\n"
         f"📊 Прогресс: 0/{total} (0%)</blockquote>",
@@ -51,64 +49,51 @@ async def do_broadcast(message: Message, state: FSMContext):
     blocked_count = 0
     last_update_time = time.time()
     
-    # ID чата и ID сообщения для копирования
     from_chat_id = message.chat.id
     message_id = message.message_id
     
-    # Цикл по всем пользователям
     for index, user in enumerate(users, 1):
-        # Extract user ID from User object
         user_id = user.id if hasattr(user, 'id') else user
         try:
-            # Пытаемся отправить копию сообщения
-            # Используем wait_for чтобы избежать вечного зависания API
             await asyncio.wait_for(
                 message.bot.copy_message(
                     chat_id=user_id,
                     from_chat_id=from_chat_id,
                     message_id=message_id,
-                    parse_mode=None  # Don't parse HTML entities in copied messages
+                    parse_mode=None
                 ),
                 timeout=5.0
             )
             sent_count += 1
             
-            # Небольшая пауза, чтобы не превысить лимиты Telegram (макс 30/сек, делаем ~20/сек)
             await asyncio.sleep(0.05)
             
         except TelegramForbiddenError:
-            # Пользователь заблокировал бота
             blocked_count += 1
             logger.info(f"User {user_id} blocked the bot")
         except TelegramBadRequest as e:
-            # Ошибка запроса (например, пользователь удален или сообщение невалидно)
             failed_count += 1
             logger.warning(f"Bad request for user {user_id}: {e}")
         except TelegramRetryAfter as e:
-            # Лимит превышен, ждем и пробуем снова (один раз)
             try:
                 await asyncio.sleep(e.retry_after)
                 await message.bot.copy_message(
                     chat_id=user_id,
                     from_chat_id=from_chat_id,
                     message_id=message_id,
-                    parse_mode=None  # Don't parse HTML entities in copied messages
+                    parse_mode=None
                 )
                 sent_count += 1
             except Exception as retry_err:
                 failed_count += 1
                 logger.error(f"Retry failed for user {user_id}: {retry_err}")
         except asyncio.TimeoutError:
-            # Таймаут отправки
             failed_count += 1
             logger.warning(f"Timeout sending to user {user_id}")
         except Exception as e:
-            # Любая другая ошибка (таймаут, удаленный аккаунт и т.д.)
             failed_count += 1
             logger.error(f"Failed to send to user {user_id}: {type(e).__name__}: {e}")
         
-        # Обновляем прогресс-бар (не чаще чем раз в 2 секунды или каждые 20 юзеров)
-        # Это предотвращает "зависание" на этапе редактирования сообщения
         current_time = time.time()
         if (current_time - last_update_time > 2.0) or (index == total):
             percent = int((index / total) * 100)
@@ -123,7 +108,6 @@ async def do_broadcast(message: Message, state: FSMContext):
             )
             last_update_time = current_time
 
-    # Финальный отчет
     final_percent = int((sent_count / total) * 100) if total > 0 else 0
     
     await safe_edit_message(

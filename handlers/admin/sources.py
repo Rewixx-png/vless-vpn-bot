@@ -47,7 +47,6 @@ async def add_source(message: Message, state: FSMContext):
     if success:
         await message.answer("✅ Источник добавлен!", reply_markup=back_to_admin())
         await state.clear()
-        # Показываем меню снова (новое сообщение)
         sources = await SourceRepo.get_all_sources()
         await message.answer("🔗 Источники", reply_markup=sources_list_kb(sources))
     else:

@@ -54,7 +54,6 @@ async def clear_blacklist_action(callback: CallbackQuery, state: FSMContext):
         await BlacklistRepo.clear_all()
         await callback.answer(f"✅ Удалено {count} записей из ЧС", show_alert=True)
         
-        # Обновляем статистику
         await show_stats(callback, state)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}", show_alert=True)

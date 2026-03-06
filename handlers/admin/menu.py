@@ -37,7 +37,6 @@ async def toggle_collector(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"Сборщик серверов {status_text}", show_alert=True)
     
     if new_state:
-        # ПРИНУДИТЕЛЬНЫЙ ЗАПУСК КОЛЛЕКТОРА
         run_collector_task.delay()
         await callback.message.answer("🚀 <b>Коллектор запущен принудительно!</b>\nРезультаты появятся в логах.", parse_mode="HTML")
     

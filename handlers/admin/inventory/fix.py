@@ -15,7 +15,7 @@ router = Router()
 @router.callback_query(F.data == "admin_recheck_regions_force")
 async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
     is_force = "force" in callback.data
-    
+
     try: await callback.answer()
     except: pass
 
@@ -38,23 +38,22 @@ async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
         await safe_edit_message(status_msg, "<blockquote>✅ <b>Нет ключей для проверки!</b></blockquote>")
         return
 
-    # Extract unique hosts to check
     hosts_data = [] 
     seen_hosts = set()
     host_to_subs = {}
-    
+
     for sub in subs:
         parsed = VlessChecker.parse_config(sub.vless_key)
         if parsed and parsed.get("host") or parsed.get("server"):
             host = parsed.get("host") or parsed.get("server")
             remark = parsed.get("ps", "") or parsed.get("name", "")
-            
+
             if host in ["127.0.0.1", "localhost"]: continue
-                
+
             if host not in seen_hosts:
                 seen_hosts.add(host)
                 hosts_data.append((host, remark))
-            
+
             if host not in host_to_subs:
                 host_to_subs[host] = []
             host_to_subs[host].append(sub)
@@ -70,27 +69,27 @@ async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
         f"🚀 Отправка запросов к GeoIP провайдерам...</blockquote>"
     )
 
-    # Use a new session to ensure clean state
     async with aiohttp.ClientSession() as session:
-        # Calls the updated GeoIP logic
         results = await VlessChecker.get_regions_batch(hosts_data, session)
 
     updates = []
     fixed_count = 0
-    
-    for host, region in results.items():
+
+    for host, (region, source) in results.items():
         if not region or "Unk" in region:
             continue
-            
+
         if host in host_to_subs:
             for sub in host_to_subs[host]:
-                # In force mode, update even if different. In fix mode, update if UNK.
                 if is_force:
+                    old_is_unk = not sub.region or "Unk" in sub.region
+                    if not old_is_unk and source == "ip":
+                        continue
+
                     if sub.region != region:
                         updates.append({"id": sub.id, "region": region})
                         fixed_count += 1
                 else:
-                    # Logic for "Fix Unknowns" - update if current DB is UNK
                     if "Unk" in sub.region or not sub.region:
                          updates.append({"id": sub.id, "region": region})
                          fixed_count += 1
@@ -113,7 +112,7 @@ async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
     )
 
     await safe_edit_message(status_msg, final_text)
-    
+
     kb = recheck_menu_kb() if is_force else back_to_admin()
     try:
         await status_msg.edit_reply_markup(reply_markup=kb)

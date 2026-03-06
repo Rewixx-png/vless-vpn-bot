@@ -1,21 +1,17 @@
 import multiprocessing
 
-# Базовые настройки
 CPU_COUNT = multiprocessing.cpu_count()
-WORKER_CONCURRENCY = min(CPU_COUNT * 4, 32)  # До 32 воркеров
+WORKER_CONCURRENCY = min(CPU_COUNT * 4, 32)
 PREFETCH_MULTIPLIER = 2
 
-# Настройки Redis
 REDIS_MAX_CONNECTIONS = 1000
 REDIS_SOCKET_TIMEOUT = 10
 REDIS_SOCKET_CONNECT_TIMEOUT = 5
 
-# Настройки базы данных
 DB_POOL_SIZE = 25
 DB_MAX_OVERFLOW = 35
-DB_POOL_RECYCLE = 1800  # 30 минут
+DB_POOL_RECYCLE = 1800
 
-# Настройки очередей
 QUEUES = {
     'high_priority': {
         'concurrency': WORKER_CONCURRENCY // 2,
@@ -35,12 +31,11 @@ QUEUES = {
     }
 }
 
-# Настройки таймаутов
 TASK_TIMEOUTS = {
-    'short': 30,      # Быстрые задачи
-    'medium': 60,     # Средние задачи
-    'long': 300,      # Длительные задачи
-    'collector': 600  # Сбор подписок
+    'short': 30,
+    'medium': 60,
+    'long': 300,
+    'collector': 600
 }
 
 print(f"Оптимизированные настройки для {CPU_COUNT} ядер CPU:")

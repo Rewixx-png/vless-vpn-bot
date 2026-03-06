@@ -14,11 +14,9 @@ from datetime import datetime, timedelta
 from typing import Iterable
 from aiogram import Bot, Dispatcher
 
-# Import config early for constants
 from config import config
 
 async def memory_monitor():
-    """Monitor memory usage and trigger GC if needed"""
     process = psutil.Process(os.getpid())
     while True:
         try:
@@ -29,7 +27,6 @@ async def memory_monitor():
                 logger.warning(f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC...")
                 gc.collect()
                 
-                # Check again after GC
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 logger.info(f"📊 Memory after GC: {memory_mb:.0f}MB")
                 
@@ -81,13 +78,11 @@ class TelegramLogHandler(logging.Handler):
         self.admin_ids = list(admin_ids)
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Skip common non-critical loggers
         if record.name in ["aiohttp.server", "aiogram.dispatcher", "aiogram.event"]:
             return
         if "BadStatusLine" in str(record.msg) or "BadHttpMessage" in str(record.msg):
             return
         
-        # Skip Telegram API errors (too spammy)
         msg_str = str(record.msg)
         if any(err in msg_str for err in [
             "TelegramForbiddenError", 
@@ -103,7 +98,6 @@ class TelegramLogHandler(logging.Handler):
             if len(msg) > 3500:
                 msg = msg[:3500] + "..."
 
-            # Escape HTML entities in message to prevent parsing errors
             safe_msg = html.escape(msg)
 
             try:
@@ -250,7 +244,6 @@ async def main():
     logger.info("⏰ Starting background scheduler...")
     await BackgroundTasks.start_scheduler()
     
-    # Start memory monitor
     logger.info("🧠 Starting memory monitor...")
     memory_task = asyncio.create_task(memory_monitor())
     
@@ -303,7 +296,6 @@ async def main():
     finally:
         logger.info("🛑 Shutting down...")
         
-        # Stop memory monitor
         memory_task.cancel()
         try:
             await memory_task
@@ -320,26 +312,22 @@ async def main():
         await bot.session.close()
         await payment_client.close()
         
-        # Force garbage collection on shutdown
         gc.collect()
 
         logger.info("👋 Bot stopped")
 
 def set_process_affinity():
-    """Set CPU affinity to use all available cores"""
     try:
         import os
         process = psutil.Process()
         cpu_count = os.cpu_count()
         if cpu_count:
-            # Use all CPUs
             process.cpu_affinity(list(range(cpu_count)))
             logger.info(f"✅ CPU affinity set to use all {cpu_count} cores")
     except Exception as e:
         logger.warning(f"⚠️ Could not set CPU affinity: {e}")
 
 if __name__ == "__main__":
-    # Set CPU affinity for better multi-core utilization
     set_process_affinity()
     
     sys.excepthook = global_exception_handler

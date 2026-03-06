@@ -1,10 +1,9 @@
 import os
-import sys
 import argparse
 import re
 from pathlib import Path
 
-DEFAULT_MAX_CHUNK_SIZE = 500 * 1024 
+DEFAULT_MAX_CHUNK_SIZE = 800 * 1024
 OUTPUT_DIR = "project_chunks"
 
 IGNORE_DIRS = {
@@ -28,12 +27,24 @@ IGNORE_EXTENSIONS = {
     '.map', '.min.js', '.min.css'
 }
 
+EXT_TO_LANG = {
+    '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
+    '.html': 'html', '.css': 'css', '.json': 'json',
+    '.md': 'markdown', '.yml': 'yaml', '.yaml': 'yaml',
+    '.sh': 'bash', '.bash': 'bash', '.sql': 'sql',
+    '.go': 'go', '.rs': 'rust', '.c': 'c', '.cpp': 'cpp',
+    '.h': 'c', '.hpp': 'cpp', '.java': 'java', '.kt': 'kotlin'
+}
+
+def get_language(extension):
+    return EXT_TO_LANG.get(extension.lower(), '')
+
 def is_text_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             f.read(1024)
             return True
-    except (UnicodeDecodeError, PermissionError):
+    except (UnicodeDecodeError, PermissionError, OSError):
         return False
 
 def clean_content(text):
@@ -47,7 +58,7 @@ def format_size(size):
     return f"{size:.1f}TB"
 
 def generate_tree(source_path):
-    tree_lines = ["<project_structure>"]
+    tree_lines = ["### Project Structure\n```text"]
     source_path = Path(source_path)
     
     for root, dirs, files in os.walk(source_path):
@@ -66,6 +77,8 @@ def generate_tree(source_path):
         subindent = '  ' * (level + 1)
         for f in files:
             f_path = os.path.join(root, f)
+            if not os.path.isfile(f_path):
+                continue
             try:
                 size = os.path.getsize(f_path)
                 size_str = format_size(size)
@@ -73,8 +86,14 @@ def generate_tree(source_path):
             except OSError:
                 tree_lines.append(f"{subindent}{f}")
             
-    tree_lines.append("</project_structure>\n")
+    tree_lines.append("```\n")
     return "\n".join(tree_lines)
+
+def get_chunk_header(chunk_number):
+    return (
+        f"This is chunk {chunk_number} of a codebase export.\n"
+        "Please analyze the following files and maintain context.\n\n"
+    )
 
 def save_chunk(chunk_data, chunk_number, output_folder):
     if not chunk_data:
@@ -107,10 +126,12 @@ def main():
 
     print(f"🚀 Start: {source_path}")
     
-    project_tree = generate_tree(source_path)
-    current_chunk = [project_tree]
-    current_size = len(project_tree.encode('utf-8'))
     chunk_counter = 1
+    project_tree = generate_tree(source_path)
+    
+    initial_header = get_chunk_header(chunk_counter)
+    current_chunk = [initial_header, project_tree]
+    current_size = len("".join(current_chunk).encode('utf-8'))
 
     script_name = os.path.basename(__file__)
 
@@ -124,6 +145,9 @@ def main():
             if file == script_name:
                 continue
 
+            if not file_path.is_file():
+                continue
+
             if file_path.suffix.lower() in IGNORE_EXTENSIONS:
                 continue
 
@@ -132,34 +156,37 @@ def main():
 
             try:
                 relative_path = file_path.relative_to(source_path).as_posix()
+                lang = get_language(file_path.suffix)
                 
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     raw_content = f.read()
 
                 cleaned_content = clean_content(raw_content)
                 
-                xml_entry = (
-                    f'<file path="{relative_path}">\n'
+                md_entry = (
+                    f'### File: {relative_path}\n'
+                    f'```{lang}\n'
                     f'{cleaned_content}\n'
-                    f'</file>\n\n'
+                    f'```\n\n'
                 )
 
-                entry_size = len(xml_entry.encode('utf-8'))
+                entry_size = len(md_entry.encode('utf-8'))
 
                 if current_size + entry_size > args.size:
-                    if current_chunk:
+                    if len(current_chunk) > 1:
                         save_chunk(current_chunk, chunk_counter, output_path)
                         chunk_counter += 1
-                        current_chunk = []
-                        current_size = 0
+                        new_header = get_chunk_header(chunk_counter)
+                        current_chunk = [new_header]
+                        current_size = len(new_header.encode('utf-8'))
 
-                current_chunk.append(xml_entry)
+                current_chunk.append(md_entry)
                 current_size += entry_size
 
             except Exception as e:
                 print(f"⚠️ Error {file}: {e}")
 
-    if current_chunk:
+    if len(current_chunk) > 1 or (len(current_chunk) == 1 and chunk_counter == 1):
         save_chunk(current_chunk, chunk_counter, output_path)
 
     print(f"\n✅ Done! Path: {output_path.absolute()}")

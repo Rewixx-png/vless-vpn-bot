@@ -7,32 +7,23 @@ from utils.video import VideoManager
 
 
 async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="HTML"):
-    """Safely edit admin message; robust handling for media/text types"""
     if not message:
         return
     try:
-        # Сначала пробуем edit_text (для обычных сообщений)
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
     except TelegramBadRequest as e:
         err = str(e)
-        # Если сообщение не изменилось - игнорируем
         if "message is not modified" in err:
             return
             
-        # Если ошибка связана с тем, что сообщение имеет медиа (видео/фото)
-        # "There is no text in the message to edit" или "Message content type mismatch"
         if "no text in the message to edit" in err or "message content type" in err or "media caption" in err:
             try:
-                # Пробуем изменить подпись
                 await message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
                 return
             except TelegramBadRequest:
-                # Если и капшн не меняется (например, ошибка формата), 
-                # или мы пытаемся превратить медиа в текст (невозможно напрямую)
                 pass
         
-        # Если ничего не помогло, удаляем и шлем новое (как крайняя мера)
         try:
             await message.delete()
         except:
@@ -47,10 +38,6 @@ async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="H
 
 
 async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text: str, reply_markup=None):
-    """
-    Admin version with video support. 
-    Prioritizes editing the current message (from callback) to avoid jumping UI.
-    """
     message = callback.message
     if not message:
         return
@@ -127,7 +114,6 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
         except Exception:
             pass
     
-    # If editing failed (e.g. type mismatch), delete old and send new
     try:
         if video_file:
             sent_msg = await callback.bot.send_video(

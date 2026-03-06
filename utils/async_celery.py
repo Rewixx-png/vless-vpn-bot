@@ -9,12 +9,8 @@ from celery_app import app
 
 
 class AsyncTask(Task):
-    """Celery Task with native async support"""
-    
     def __call__(self, *args, **kwargs):
-        """Override call to run async functions properly"""
         if asyncio.iscoroutinefunction(self.run):
-            # Get or create event loop
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_closed():
@@ -29,7 +25,6 @@ class AsyncTask(Task):
 
 
 def async_task(*args, **kwargs):
-    """Decorator for creating async celery tasks"""
     def decorator(func: Callable) -> Task:
         @functools.wraps(func)
         @app.task(*args, **kwargs, base=AsyncTask)
@@ -40,8 +35,6 @@ def async_task(*args, **kwargs):
 
 
 class AsyncWorkerPool:
-    """Pool of async workers for processing batches"""
-    
     def __init__(self, worker_count: int = 10):
         self.worker_count = worker_count
         self.semaphore = asyncio.Semaphore(worker_count)
@@ -52,7 +45,6 @@ class AsyncWorkerPool:
         process_func: Callable[[Any], Any],
         on_progress: Callable[[int, int], None] = None
     ) -> list[Any]:
-        """Process items with limited concurrency"""
         results = []
         completed = 0
         total = len(items)
@@ -76,8 +68,6 @@ class AsyncWorkerPool:
 
 
 class RateLimiter:
-    """Rate limiter for API calls"""
-    
     def __init__(self, max_calls: int, period: float = 1.0):
         self.max_calls = max_calls
         self.period = period
@@ -85,14 +75,11 @@ class RateLimiter:
         self.lock = asyncio.Lock()
     
     async def acquire(self):
-        """Acquire permission to make a call"""
         async with self.lock:
             now = asyncio.get_event_loop().time()
-            # Remove old calls outside the period
             self.calls = [c for c in self.calls if now - c < self.period]
             
             if len(self.calls) >= self.max_calls:
-                # Wait until we can make another call
                 sleep_time = self.calls[0] + self.period - now
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
