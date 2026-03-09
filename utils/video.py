@@ -1,18 +1,15 @@
-"""
-VideoManager with non-blocking background processing.
-Video is prepared asynchronously without blocking bot startup.
-"""
 import os
 import logging
 import asyncio
 import aiohttp
 from aiogram.types import FSInputFile
+from config import config
 
 logger = logging.getLogger("VideoManager")
 
 
 class VideoManager:
-    SOURCE_URL = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
+    SOURCE_URL = config.VIDEO_SOURCE_URL
     
     RAW_PATH = "storage/video_raw.mp4"
     PROCESSED_PATH = "storage/video_smooth_60fps.mp4"
@@ -71,7 +68,7 @@ class VideoManager:
     @classmethod
     async def _process_video(cls):
         try:
-            cmd = [
+            cmd =[
                 "ffmpeg",
                 "-i", cls.RAW_PATH,
                 "-vf", "fps=30,scale=480:-1:flags=lanczos",

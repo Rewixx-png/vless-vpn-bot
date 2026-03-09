@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
@@ -112,14 +112,17 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
 ⚠️ Бот временно недоступен для пользователей
 Во время проверки подписки не выдаются</blockquote>"""
 
+        msg_obj = callback.message
         try:
-            msg = await callback.message.edit_text(
+            res = await callback.message.edit_text(
                 text=start_text,
                 reply_markup=None,
                 parse_mode="HTML"
             )
+            if isinstance(res, Message):
+                msg_obj = res
         except TelegramBadRequest:
-            msg = await callback.message.answer(
+            msg_obj = await callback.message.answer(
                 text=start_text,
                 parse_mode="HTML"
             )
@@ -129,8 +132,8 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         task = run_admin_recheck_task.delay(
             mode=mode,
             total_passes=passes,
-            chat_id=msg.chat.id,
-            message_id=msg.message_id
+            chat_id=msg_obj.chat.id,
+            message_id=msg_obj.message_id
         )
 
         logger.info(f"Recheck task started: task_id={task.id}")
@@ -161,52 +164,3 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
             )
         except Exception:
             await callback.answer("❌ Критическая ошибка!", show_alert=True)
-
-@router.callback_query(F.data == "admin_recheck_regions_force")
-async def run_regions_recheck(callback: CallbackQuery, state: FSMContext):
-    try:
-        await callback.answer("⏳ Запуск обновления регионов...", show_alert=False)
-    except Exception:
-        pass
-
-    try:
-        unknown_count = await SubRepo.get_unknown_region_count()
-
-        if unknown_count == 0:
-            await callback.answer(
-                "✅ Все конфиги имеют определённый регион!",
-                show_alert=True
-            )
-            return
-
-        await BotState.set_maintenance(True)
-
-        start_text = f"""<blockquote>🌍 <b>Обновление геолокации</b>
-
-📊 Найдено конфигов без региона: <b>{unknown_count}</b>
-
-⏳ Начинаю определение стран...
-━━━━━━━━━━━━━━━━━━
-⚠️ Это может занять несколько минут</blockquote>"""
-
-        try:
-            msg = await callback.message.edit_text(
-                text=start_text,
-                reply_markup=None,
-                parse_mode="HTML"
-            )
-        except TelegramBadRequest:
-            msg = await callback.message.answer(
-                text=start_text,
-                parse_mode="HTML"
-            )
-
-        await callback.answer(
-            "✅ Задача запущена!",
-            show_alert=True
-        )
-
-    except Exception as e:
-        logger.error(f"Error starting regions update: {e}")
-        await BotState.set_maintenance(False)
-        await callback.answer(f"❌ Ошибка: {str(e)[:100]}", show_alert=True)

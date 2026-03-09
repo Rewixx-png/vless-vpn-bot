@@ -1,211 +1,20 @@
 import asyncio
-import logging
-import logging.handlers
 import psutil
 from typing import Dict, Any
 
 from celery_app import app
-from utils.async_celery import AsyncTask
-from utils.collector import SubscriptionCollector
-from database.repo import SubRepo, SystemRepo, StatsRepo
+from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler, format_time, logger
+from database.repo import SubRepo
 from utils.checker import VlessChecker
-from utils.batch_processor import SmartBatchProcessor, CpuAdaptiveProcessor
+from utils.batch_processor import CpuAdaptiveProcessor
 from utils.state import BotState
-from utils.smart_alerts import SmartAlerts
-from utils.checker.geo_ip import GeoIP
 from utils.reporter import Reporter
 from config import config
 
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 
-def setup_log_rotation():
-    root_logger = logging.getLogger()
-    if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in root_logger.handlers):
-        handler = logging.handlers.RotatingFileHandler("worker.log", maxBytes=15*1024*1024, backupCount=3)
-        formatter = logging.Formatter('[%(asctime)s] %(levelname)s in %(name)s: %(message)s')
-        handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
-
-logger = logging.getLogger("Worker")
-
-def _setup_loop_exception_handler():
-    try:
-        loop = asyncio.get_running_loop()
-        def custom_exc_handler(loop, context):
-            msg = context.get("message", "")
-            exc = context.get("exception")
-            if exc:
-                exc_type = str(type(exc)).lower()
-                if any(err in exc_type for err in["gaierror", "dnserror", "clientconnectorerror", "timeouterror", "cancellederror", "softtimelimitexceeded"]):
-                    return
-            if "Future exception was never retrieved" in msg or "Task was destroyed but it is pending" in msg:
-                return
-            loop.default_exception_handler(context)
-        loop.set_exception_handler(custom_exc_handler)
-    except Exception:
-        pass
-
-def format_time(seconds: int) -> str:
-    if seconds < 60:
-        return f"{seconds} сек"
-    elif seconds < 3600:
-        m = seconds // 60
-        s = seconds % 60
-        return f"{m} мин {s} сек"
-    else:
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        return f"{h} ч {m} мин"
-
-class OptimizedTask(AsyncTask):
-    pass
-
-@app.task(base=OptimizedTask, bind=True, max_retries=3, time_limit=3600, soft_time_limit=3540)
-async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
-    setup_log_rotation()
-    _setup_loop_exception_handler()
-    return {"status": "disabled"}
-
-@app.task(base=OptimizedTask, time_limit=3600, soft_time_limit=3540)
-async def run_collector_task() -> Dict[str, Any]:
-    setup_log_rotation()
-    _setup_loop_exception_handler()
-    
-    is_maint = await BotState.is_maintenance()
-    if is_maint:
-        return {"status": "skipped", "reason": "maintenance"}
-
-    enabled_str = await SystemRepo.get_config("collector_enabled")
-    if enabled_str == "false":
-        return {"status": "skipped", "reason": "admin_disabled"}
-
-    start_time = asyncio.get_event_loop().time()
-    result = {}
-
-    try:
-        old_counts = await StatsRepo.get_regions_counts()
-        result = await SubscriptionCollector.run_collection()
-        cleaned = await SubRepo.cleanup_dead_subs(max_deaths=3)
-        new_counts = await StatsRepo.get_regions_counts()
-
-        await SmartAlerts.process_changes(old_counts, new_counts)
-        duration = asyncio.get_event_loop().time() - start_time
-
-        try:
-            bot_instance = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
-            await Reporter.send_new_configs(bot_instance, result.get("added", 0), result.get("region_stats", {}))
-            await Reporter.send_not_configs(bot_instance, result.get("rejected", 0), result.get("rejected_reasons", {}))
-            await bot_instance.session.close()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            if "SoftTimeLimitExceeded" not in type(e).__name__:
-                logger.error(f"Failed to send reports: {e}")
-
-        return {"success": True, "duration": duration, "result": result, "cleaned": cleaned}
-
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        if "SoftTimeLimitExceeded" in type(e).__name__:
-            logger.warning("Collector task hit SoftTimeLimitExceeded, completing gracefully.")
-            try:
-                bot_instance = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
-                if result:
-                    await Reporter.send_new_configs(bot_instance, result.get("added", 0), result.get("region_stats", {}))
-                    await Reporter.send_not_configs(bot_instance, result.get("rejected", 0), result.get("rejected_reasons", {}))
-                await Reporter.send_info(bot_instance, "⚠️ Сборщик прерван по таймауту (достигнут лимит времени).")
-                await bot_instance.session.close()
-            except Exception:
-                pass
-            return {"status": "timeout_graceful"}
-
-        try:
-            bot_instance = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
-            await Reporter.send_error(bot_instance, f"Collector failed: {str(e)}")
-            await bot_instance.session.close()
-        except Exception:
-            pass
-        raise
-
-@app.task(base=OptimizedTask, time_limit=3600, soft_time_limit=3540)
-async def check_stability_task() -> Dict[str, Any]:
-    setup_log_rotation()
-    _setup_loop_exception_handler()
-    
-    is_maint = await BotState.is_maintenance()
-    if is_maint:
-        return {"status": "skipped", "reason": "maintenance"}
-
-    subs = await SubRepo.get_candidates_for_stability()
-    if not subs:
-        return {"checked": 0}
-
-    worker_count = min(config.MAX_WORKERS, max(config.MIN_WORKERS, len(subs) // 10))
-    processor = SmartBatchProcessor(worker_count=worker_count)
-
-    old_counts = await StatsRepo.get_regions_counts()
-
-    def check_one(sub):
-        async def _check():
-            try:
-                is_alive, _, latency, speed_mbps, ai_avail, no_ads, err, _ = await VlessChecker.process_subscription(sub.vless_key)
-
-                is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
-                if not is_alive and not is_standard_err:
-                    return (True, None)
-
-                return (True, {"id": sub.id, "is_alive": is_alive, "latency": latency, "speed_mbps": speed_mbps, "ai": ai_avail, "no_ads": no_ads})
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return (True, None)
-        return _check()
-
-    try:
-        batch_res = await processor.process(
-            items=subs,
-            process_func=check_one,
-            collect_results=True
-        )
-
-        updates = [item["result"] for item in batch_res.items if item["success"] and item["result"] is not None]
-
-        if updates:
-            await SubRepo.batch_update_stability(updates)
-            status_updates =[
-                {
-                    "id": u["id"], 
-                    "is_active": u["is_alive"], 
-                    "latency_ms": u["latency"],
-                    "speed_mbps": u["speed_mbps"],
-                    "ai_available": u["ai"],
-                    "no_ads": u["no_ads"]
-                } 
-                for u in updates
-            ]
-            await SubRepo.batch_update_status(status_updates)
-            await SubRepo.cleanup_dead_subs(max_deaths=3)
-
-        new_counts = await StatsRepo.get_regions_counts()
-        await SmartAlerts.process_changes(old_counts, new_counts)
-
-        return {"checked": len(updates)}
-    except Exception as e:
-        if "SoftTimeLimitExceeded" in type(e).__name__:
-            logger.warning("Stability check hit SoftTimeLimitExceeded.")
-            return {"status": "timeout_graceful"}
-        raise
-
-@app.task(base=OptimizedTask, time_limit=600, soft_time_limit=540)
-async def update_geoip_task() -> Dict[str, Any]:
-    setup_log_rotation()
-    _setup_loop_exception_handler()
-    success = await GeoIP.update_database()
-    return {"status": "updated" if success else "failed"}
-
-@app.task(base=OptimizedTask, bind=True, time_limit=7200, soft_time_limit=7140)
+@app.task(name="tasks.run_admin_recheck_task", base=OptimizedTask, bind=True, time_limit=7200, soft_time_limit=7140)
 async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: int, message_id: int) -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
@@ -251,7 +60,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
             total = len(current_subs)
             update_lock = asyncio.Lock()
-            status_buffer = []
+            status_buffer =[]
             region_buffer = []
             key_buffer =[]
 
@@ -289,29 +98,45 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                     await SubRepo.batch_update_keys(to_save_keys)
 
             async def db_flusher():
-                try:
-                    while is_running:
+                while is_running:
+                    try:
                         await asyncio.sleep(2.0)
+                        if not is_running:
+                            break
                         await flush_buffers()
-                except asyncio.CancelledError:
-                    pass
+                    except asyncio.CancelledError:
+                        break
+                    except Exception as e:
+                        logger.error(f"DB Flusher Error: {e}")
 
             flusher_task = asyncio.create_task(db_flusher())
 
             async def ui_loop():
-                try:
-                    while is_running:
+                while is_running:
+                    try:
                         await asyncio.sleep(4.0)
-                        completed = stats["completed"]
+                        if not is_running:
+                            break
 
+                        completed = stats["completed"]
                         elapsed = asyncio.get_event_loop().time() - start_time
+                        
                         percent = int((completed / total) * 100) if total > 0 else 0
                         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
-                        remaining = int((total - completed) / (completed / elapsed)) if completed > 0 else 0
+                        
+                        if completed > 0 and elapsed > 0:
+                            calc_speed = completed / elapsed
+                            if calc_speed > 0:
+                                remaining = int((total - completed) / calc_speed)
+                            else:
+                                remaining = 9999
+                        else:
+                            remaining = 0
+                            
+                        remaining_str = format_time(remaining)
+                        
                         cpu = psutil.cpu_percent()
                         ram = psutil.virtual_memory().percent
-
-                        remaining_str = format_time(remaining)
 
                         await bot.edit_message_text(
                             chat_id=chat_id,
@@ -330,16 +155,16 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         f"└ ⚙️ SysErr: {stats['sys_err']}</blockquote>",
                             parse_mode="HTML"
                         )
-                except asyncio.CancelledError:
-                    pass
-                except TelegramRetryAfter as e:
-                    await asyncio.sleep(e.retry_after)
-                except TelegramBadRequest as e:
-                    if "message is not modified" not in str(e).lower():
-                        logger.error(f"UI Loop Bad Request: {e}")
-                except Exception as e:
-                    if "SoftTimeLimitExceeded" not in type(e).__name__:
-                        logger.error(f"UI Loop Error: {e}")
+                    except asyncio.CancelledError:
+                        break
+                    except TelegramRetryAfter as e:
+                        await asyncio.sleep(e.retry_after)
+                    except TelegramBadRequest as e:
+                        if "message is not modified" not in str(e).lower():
+                            logger.error(f"UI Loop Bad Request: {e}")
+                    except Exception as e:
+                        if "SoftTimeLimitExceeded" not in type(e).__name__:
+                            logger.error(f"UI Loop Error: {e}")
 
             ui_task = asyncio.create_task(ui_loop())
 

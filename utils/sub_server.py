@@ -15,22 +15,25 @@ from utils.clash import ClashGenerator
 logger = logging.getLogger("SubServer")
 
 _sub_cache = {"ts": 0.0, "data": None, "params_hash": ""}
-_SUB_CACHE_TTL = 60  # Кэш на 60 секунд
+_SUB_CACHE_TTL = 60
 
 class SubscriptionServer:
-    _external_cache = {"ts": 0.0, "links": []}
+    _external_cache = {"ts": 0.0, "links":[]}
+    
     @staticmethod
-    def _format_name(region_name: str, count: int, speed_mbps: float, ai_available: bool, whitelist: bool) -> str:
+    def _format_name(region_name: str, count: int, speed_mbps: float, ai_available: bool, whitelist: bool, no_ads: bool) -> str:
         parts = [region_name, f"{count:02d}"]
 
         if speed_mbps > 0:
             parts.append(f"⚡ {speed_mbps:.1f}Mb/s")
 
-        tags = []
+        tags =[]
         if ai_available:
             tags.append("AI")
         if whitelist:
             tags.append("WL")
+        if no_ads:
+            tags.append("🚫 NoAds")
 
         if tags:
             parts.append("|".join(tags))
@@ -50,7 +53,7 @@ class SubscriptionServer:
 
     @staticmethod
     def _extract_links(text: str, allowed_schemes: set[str]) -> list[str]:
-        links = []
+        links =[]
         if not text:
             return links
 
@@ -87,21 +90,21 @@ class SubscriptionServer:
     async def _get_external_links(cls, allowed_schemes: set[str]) -> list[str]:
         now = time.time()
         if now - cls._external_cache["ts"] < 300:
-            return [k for k in cls._external_cache["links"] if k.split("://", 1)[0].lower() in allowed_schemes]
+            return[k for k in cls._external_cache["links"] if k.split("://", 1)[0].lower() in allowed_schemes]
 
         external_url = await SystemRepo.get_config("external_sub_url")
         if not external_url:
             external_url = getattr(config, "EXTERNAL_SUB_URL", None)
 
         if not external_url:
-            return []
+            return[]
 
         try:
             timeout = aiohttp.ClientTimeout(total=8)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(external_url) as resp:
                     if resp.status != 200:
-                        return []
+                        return[]
                     raw_text = await resp.text()
 
             text = cls._decode_subscription_text(raw_text)
@@ -111,7 +114,7 @@ class SubscriptionServer:
             return links
         except Exception as e:
             logger.warning(f"External subscription fetch failed: {e}")
-            return []
+            return[]
 
     @staticmethod
     async def handle_subscription(request):
@@ -128,7 +131,7 @@ class SubscriptionServer:
             is_v2raytun = 'v2raytun' in user_agent
             is_happ = 'happ' in user_agent.lower()
 
-            subs = []
+            subs =[]
             use_fragment = False
             
             if user_id_raw:
@@ -183,7 +186,7 @@ class SubscriptionServer:
             if not subs:
                 return web.Response(text="", status=200)
 
-            renamed_links = []
+            renamed_links =[]
             region_counters = {}
 
             for sub in subs:
@@ -198,7 +201,8 @@ class SubscriptionServer:
                     count=count,
                     speed_mbps=sub.speed_mbps,
                     ai_available=sub.ai_available,
-                    whitelist=is_wl
+                    whitelist=is_wl,
+                    no_ads=sub.no_ads
                 )
 
                 base_link = (sub.vless_key or "").strip()
@@ -206,7 +210,7 @@ class SubscriptionServer:
                 if use_fragment:
                     if "security=tls" in base_link or "security=reality" in base_link:
                          if "fragment=" not in base_link:
-                              base_link += "&fragment=10-30,10-30,tlshello"
+                              base_link = LinkParser.update_param(base_link, "fragment", "10-30,10-30,tlshello")
                               
                 new_link = SubscriptionServer._rename_vless(base_link, final_name)
                 renamed_links.append(new_link)
@@ -225,13 +229,13 @@ class SubscriptionServer:
             if not allowed_schemes:
                 allowed_schemes = {"vless"}
 
-            renamed_links = [k for k in renamed_links if k.split("://", 1)[0].lower() in allowed_schemes]
+            renamed_links =[k for k in renamed_links if k.split("://", 1)[0].lower() in allowed_schemes]
 
             external_links = await SubscriptionServer._get_external_links(allowed_schemes)
             combined_links = renamed_links + external_links
 
             if format_param in ["clash", "yaml", "yml"] or is_clash:
-                parsed_configs = []
+                parsed_configs =[]
                 for k in combined_links:
                     cfg = LinkParser.parse_vless(k)
                     if cfg: parsed_configs.append(cfg)
@@ -239,11 +243,11 @@ class SubscriptionServer:
                 response_text = ClashGenerator.generate_conf(parsed_configs)
                 filename = "config.yaml"
                 content_type = "application/x-yaml; charset=utf-8"
-            elif format_param in ["raw", "plain", "txt"] or is_v2raytun or is_happ:
+            elif format_param in["raw", "plain", "txt"] or is_v2raytun or is_happ:
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
-            elif format_param in ["base64", "b64"]:
+            elif format_param in["base64", "b64"]:
                 text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
                 filename = "config.txt"

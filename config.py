@@ -9,13 +9,15 @@ class Settings(BaseSettings):
     CRYPTO_BOT_TOKEN: SecretStr
 
     REDIS_URL: str = "redis://localhost:6379/0"
-    PUBLIC_IP: str = "108.165.164.160"
+    PUBLIC_IP: str = "127.0.0.1"
     WEB_PORT: int = 2082
 
     CHECKER_PORT: int = 8081
     CHECKER_URL: str = "http://127.0.0.1:8081"
 
     REPORT_CHAT_ID: int = -1003724265330
+
+    VIDEO_SOURCE_URL: str = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
 
     CHECKER_TIMEOUT: float = 25.0
     CONNECTIVITY_TIMEOUT: float = 8.0

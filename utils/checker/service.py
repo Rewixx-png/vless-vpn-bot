@@ -14,6 +14,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp_socks import ProxyConnector
 from gunicorn.app.base import BaseApplication
+import redis.asyncio as redis
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 if str(BASE_DIR) not in sys.path:
@@ -37,6 +38,17 @@ try:
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 except Exception:
     pass
+
+_redis_pool = None
+
+async def get_redis_pool():
+    global _redis_pool
+    if _redis_pool is None:
+        try:
+            _redis_pool = redis.from_url(config.REDIS_URL)
+        except Exception:
+            pass
+    return _redis_pool
 
 def custom_exception_handler(loop, context):
     msg = context.get("message", "")
@@ -70,7 +82,7 @@ async def cleanup_zombie_xrays():
     except asyncio.CancelledError:
         pass
 
-async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]:
+async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
     timeout = aiohttp.ClientTimeout(
         total=config.CONNECTIVITY_TIMEOUT,
         connect=4.0,
@@ -83,6 +95,7 @@ async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]
         ("http://connectivitycheck.gstatic.com/generate_204", 204),
     ]
     
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             start_time = time.monotonic()
@@ -111,7 +124,7 @@ async def check_connectivity(connector: ProxyConnector) -> tuple[bool, int, str]
     except Exception as e:
         return False, 9999, f"Factor 4/5: {str(e)}"
 
-async def probe_geoip(connector: ProxyConnector) -> dict:
+async def probe_geoip(local_port: int) -> dict:
     timeout = aiohttp.ClientTimeout(total=5.0, connect=3.0)
     result = {"region": "🌍 UNK", "ip": None}
     
@@ -121,26 +134,31 @@ async def probe_geoip(connector: ProxyConnector) -> dict:
         "http://ip-api.com/json/?fields=countryCode,query",
     ]
 
-    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        for url in GEO_PROBES:
-            try:
-                async with session.get(url, allow_redirects=True) as response:
-                    if response.status == 200:
-                        data = await response.json(content_type=None)
-                        code = data.get("countryCode") or data.get("country_code") or data.get("country_iso")
-                        ip = data.get("query") or data.get("ip")
-                        if code: result["region"] = GeoIP.code_to_region(code)
-                        if ip: result["ip"] = ip
-                        return result
-            except:
-                continue
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            for url in GEO_PROBES:
+                try:
+                    async with session.get(url, allow_redirects=True) as response:
+                        if response.status == 200:
+                            data = await response.json(content_type=None)
+                            code = data.get("countryCode") or data.get("country_code") or data.get("country_iso")
+                            ip = data.get("query") or data.get("ip")
+                            if code: result["region"] = GeoIP.code_to_region(code)
+                            if ip: result["ip"] = ip
+                            return result
+                except:
+                    continue
+    except:
+        pass
     return result
 
-async def check_ai_availability(connector: ProxyConnector) -> bool:
+async def check_ai_availability(local_port: int) -> bool:
     timeout = aiohttp.ClientTimeout(total=5.0)
     openai_ok = False
     google_ok = False
     
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             try:
@@ -164,22 +182,33 @@ async def check_ai_availability(connector: ProxyConnector) -> bool:
                             google_ok = True
                 except:
                     pass
-
     except:
         pass
         
     return openai_ok and google_ok
 
-async def check_no_ads(connector: ProxyConnector) -> bool:
-    timeout = aiohttp.ClientTimeout(total=3.0)
+async def check_no_ads(local_port: int) -> bool:
+    timeout = aiohttp.ClientTimeout(total=4.0, connect=2.0)
+    ad_domains =[
+        'https://googleads.g.doubleclick.net/',
+        'https://pagead2.googlesyndication.com/',
+        'https://adservice.google.com/'
+    ]
+    fails = 0
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            async with session.get('https://googleads.g.doubleclick.net/', allow_redirects=False) as resp:
-                if resp.status in[200, 301, 302, 400, 403, 404]:
-                    return False
+            for domain in ad_domains:
+                try:
+                    async with session.get(domain, allow_redirects=False) as resp:
+                        if resp.status in[200, 301, 302, 400, 403, 404]:
+                            return False
+                except Exception:
+                    fails += 1
     except Exception:
-        return True
-    return False
+        fails = len(ad_domains)
+        
+    return fails == len(ad_domains)
 
 async def check_handler(request):
     try: data = await request.json()
@@ -209,27 +238,47 @@ async def check_handler(request):
             response_data["error"] = config_path 
             return web.json_response(response_data)
 
-        connector_strict = ProxyConnector.from_url(
-            f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True, enable_cleanup_closed=True
-        )
-        
-        is_alive, latency, error_msg = await check_connectivity(connector_strict)
+        is_alive, latency, error_msg = await check_connectivity(local_port)
         
         if is_alive:
             response_data["success"] = True
             response_data["latency"] = latency
             response_data["error"] = "OK"
             
-            connector_geo = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-            geo_info = await probe_geoip(connector_geo)
+            geo_info = await probe_geoip(local_port)
             response_data["region"] = geo_info["region"]
+            ip = geo_info.get("ip")
+            
+            r_client = await get_redis_pool()
             
             if latency < 1200:
-                connector_ai = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-                response_data["ai"] = await check_ai_availability(connector_ai)
+                cached_ai = None
+                cached_ads = None
                 
-                connector_ads = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True)
-                response_data["no_ads"] = await check_no_ads(connector_ads)
+                if ip and r_client:
+                    try:
+                        keys = [f"chk:ai:{ip}", f"chk:ads:{ip}"]
+                        vals = await r_client.mget(keys)
+                        if vals[0] is not None: cached_ai = vals[0].decode() == '1'
+                        if vals[1] is not None: cached_ads = vals[1].decode() == '1'
+                    except:
+                        pass
+                
+                if cached_ai is not None:
+                    response_data["ai"] = cached_ai
+                else:
+                    response_data["ai"] = await check_ai_availability(local_port)
+                    if ip and r_client:
+                        try: await r_client.setex(f"chk:ai:{ip}", 3600, "1" if response_data["ai"] else "0")
+                        except: pass
+                        
+                if cached_ads is not None:
+                    response_data["no_ads"] = cached_ads
+                else:
+                    response_data["no_ads"] = await check_no_ads(local_port)
+                    if ip and r_client:
+                        try: await r_client.setex(f"chk:ads:{ip}", 3600, "1" if response_data["no_ads"] else "0")
+                        except: pass
                 
         SPEED_TEST_URLS =[
             'https://speed.cloudflare.com/__down?bytes=25000000',
@@ -238,10 +287,7 @@ async def check_handler(request):
         ]
         
         try:
-            connector_speed = ProxyConnector.from_url(
-                f"socks5://127.0.0.1:{local_port}", rdns=True, force_close=True
-            )
-            
+            connector_speed = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
             async with aiohttp.ClientSession(
                 connector=connector_speed, 
                 timeout=aiohttp.ClientTimeout(total=config.SPEED_TEST_TIMEOUT + 3.0, connect=3.0)

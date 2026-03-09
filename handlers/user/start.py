@@ -184,6 +184,8 @@ async def show_instruction(callback: CallbackQuery, state: FSMContext):
         "<b>3️⃣ Шаг: Запуск</b>\n"
         "Выберите любой сервер из списка (например, 🇩🇪 De) и нажмите большую кнопку запуска.\n\n"
         "<i>💡 Если возникли проблемы:</i>\n"
-        "✉️ <b>Связь с админом:</b> @RewiX_X"
+        "✉️ <b>Связь с админом:</b> @RewiX_X\n\n"
+        "<b>⚠️ Спам блок:</b>\n"
+        "Если у вас <b>спам блок</b>, напишите нашему боту: @RewFeedBackBot"
     )
     await edit_or_answer(callback.message, text, back_to_home(), state)
