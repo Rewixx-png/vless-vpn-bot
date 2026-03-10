@@ -23,5 +23,5 @@ WORKER_SETTINGS = {
 }
 
 BEAT_SCHEDULE = {
-    "collector_interval": 1800,
+    "collector_interval": 3600,
 }

@@ -1,155 +1,163 @@
-# 🚀 VLESS VPN Telegram Bot (High Performance Edition)
+# VLESS VPN Telegram Bot
 
-Профессиональный Telegram бот для автоматической продажи, выдачи и управления VLESS/Reality конфигурациями.
-Построен на микросервисной архитектуре для работы под высокой нагрузкой (10k+ подписок).
+Telegram-бот и набор сервисов для автоматической выдачи и управления VLESS/Reality подписками.
+Проект ориентирован на продакшен-нагрузку: отдельный checker-сервис, очереди Celery, фоновая очистка и мониторинг.
 
----
+## Что умеет
 
-## ✨ Ключевые возможности
+- Автоматически выдает подписки пользователям через Telegram.
+- Поддерживает группы подписок и фильтры по странам/тегам.
+- Проверяет прокси в фоне через отдельный сервис (`CheckerSVC`), не блокируя бота.
+- Разделяет тяжелые задачи по очередям (`high_priority` / `low_priority`) через Celery.
+- Ведет админ-инструменты: массовый импорт, статистика, рассылки и обслуживание базы.
 
-### ⚡️ High-Performance Architecture
-*   **Микросервисы:** Проверка прокси вынесена в отдельный легковесный сервис (`CheckerSVC`), который не блокирует основного бота.
-*   **Очереди задач (Celery):** Разделение на `High Priority` (проверка пользовательских подписок) и `Low Priority` (сбор мусора из интернета).
-*   **Turbo Mode:** Поддержка 50+ одновременных процессов Xray и 100+ HTTP-воркеров.
-*   **Smart Cleanup:** Автоматическое удаление "мертвых" серверов и удержание ТОП-100 лучших по пингу для каждой страны.
+## Архитектура в двух словах
 
-### 👤 Для Пользователей
-*   **Гибкие подписки:**
-    *   **Группы:** Возможность создавать отдельные ссылки (например, "Для работы", "Только Германия").
-    *   **Фильтры:** Настройка стран и тегов (AI, Fast, Reality) для каждой группы.
-*   **AI Ready:** Специальный фильтр для ChatGPT и Google Gemini (строгая проверка доступа к API).
-*   **Клиенты:** Ссылки адаптированы для v2rayNG, Streisand, NekoBox, Hiddify, FlClash (поддержка `clash.yaml`).
+- `VPN_Bot` (`bot.py`) - Telegram-бот на Aiogram.
+- `CheckerSVC` (`utils/checker/service.py`) - микросервис проверки прокси.
+- `VPN_Worker` + `VPN_Beat` (`celery_app.py`) - обработка и планирование фоновых задач.
+- `SubscriptionServer` (`utils/sub_server.py`) - HTTP endpoint для ссылок подписки (по умолчанию порт `2082`).
+- PostgreSQL - хранение пользователей, подписок, групп, источников.
+- Redis - брокер и backend очередей Celery.
 
-### 🛠 Для Администратора
-*   **Массовый импорт:** Загрузка `.txt` файлов с тысячами ключей.
-*   **Deep Check:** Двухуровневая проверка качества:
-    1.  Быстрый HTTP Ping.
-    2.  Строгий HTTPS Handshake (отсеивает прокси с перехватом SSL).
-*   **GeoIP:** Автоматическое определение страны и флага.
-*   **Рассылка:** Отправка сообщений всем пользователям.
-*   **Статистика:** Детальный отчет по регионам и нагрузке.
+## Требования
 
----
+- Ubuntu 20.04+ или Debian 11+
+- Python 3.10+
+- PostgreSQL
+- Redis
+- Xray-core
+- Node.js/npm (для PM2)
 
-## ⚙️ Требования
+## Быстрый старт
 
-*   **OS:** Ubuntu 20.04+ / Debian 11+
-*   **Python:** 3.10+
-*   **Database:** PostgreSQL
-*   **Broker:** Redis (для очередей задач)
-*   **Core:** Xray-core (бинарный файл)
+1) Установите системные зависимости:
 
----
-
-## 🚀 Установка
-
-### 1. Подготовка системы
-Установите необходимые пакеты:
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv postgresql redis-server git unzip curl
+sudo apt install -y python3 python3-pip python3-venv postgresql redis-server git curl
 ```
 
-Установите **Xray Core**:
+2) Установите Xray-core:
+
 ```bash
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 ```
 
-### 2. Клонирование и зависимости
+3) Клонируйте проект и установите Python-зависимости:
+
 ```bash
 git clone https://github.com/your-username/vless-vpn-bot.git
 cd vless-vpn-bot
-
-# Создание виртуального окружения (рекомендуется)
 python3 -m venv venv
 source venv/bin/activate
-
-# Установка библиотек
 pip install -r requirements.txt
 ```
 
-### 3. Настройка окружения
-Создайте файл `.env` на основе примера:
+4) Создайте `.env` в корне проекта:
+
 ```ini
-BOT_TOKEN=123456:AAH...
+BOT_TOKEN=123456:AA...
 ADMIN_IDS=[12345678]
 DB_URL=postgresql+asyncpg://user:pass@localhost/dbname
 CRYPTO_BOT_TOKEN=1234:AA...
-REDIS_URL=redis://localhost:6379/0
 
-# Публичный IP вашего сервера (для ссылок подписки)
+REDIS_URL=redis://localhost:6379/0
 PUBLIC_IP=1.2.3.4
-# Порт микросервиса чекера (не менять, если не знаете зачем)
+WEB_PORT=2082
+
 CHECKER_PORT=8081
 CHECKER_URL=http://127.0.0.1:8081
+
+# Опционально
+EXTERNAL_SUB_URL=
+public_domain=
 ```
 
-### 4. Инициализация БД
-При первом запуске бот сам создаст таблицы. Просто запустите его один раз вручную:
+5) Первый запуск для инициализации таблиц:
+
 ```bash
 python3 bot.py
-# После успешного старта нажмите Ctrl+C
 ```
 
----
+После успешного старта остановите процесс `Ctrl+C`.
 
-## 🔥 Запуск в Production (PM2)
+## Продакшен-запуск через PM2
 
-Проект использует скрипт `start_services.sh` для правильного запуска всех микросервисов в нужном порядке.
+Установите PM2:
 
-1.  **Установите PM2:**
-    ```bash
-    sudo npm install -g pm2
-    ```
-
-2.  **Запустите проект:**
-    ```bash
-    chmod +x start_services.sh
-    ./start_services.sh
-    ```
-
-Скрипт автоматически:
-1.  Очистит старые процессы.
-2.  Запустит **Checker Microservice** (порт 8081).
-3.  Запустит **Celery Worker** (с concurrency=30).
-4.  Запустит **Telegram Bot**.
-
-### Управление
-*   `pm2 list` — статус сервисов.
-*   `pm2 logs` — просмотр логов.
-*   `pm2 restart VPN_Bot` — перезагрузка только бота.
-*   `pm2 restart VPN_Worker` — перезагрузка воркера обработки задач.
-
----
-
-## 🧩 Структура проекта
-
-*   `bot.py` — Точка входа Telegram бота.
-*   `celery_app.py` — Конфигурация Celery и очередей.
-*   `utils/checker/service.py` — **Микросервис** проверки прокси (aiohttp).
-*   `utils/sub_server.py` — Веб-сервер для отдачи подписок (порт 2082).
-*   `database/` — Модели и репозитории (SQLAlchemy).
-*   `handlers/` — Логика бота (Aiogram routers).
-*   `MD/` — Документация проекта.
-
----
-
-## 📖 Документация
-
-Подробная документация доступна в папке [`MD/`](MD/):
-
-| Файл | Описание |
-|------|----------|
-| [MD/README.md](MD/README.md) | Главная страница документации |
-| [MD/ARCHITECTURE.md](MD/ARCHITECTURE.md) | Архитектура системы, компоненты, БД |
-| [MD/API.md](MD/API.md) | API endpoints, форматы подписки |
-| [MD/USER_COMMANDS.md](MD/USER_COMMANDS.md) | Команды для пользователей |
-| [MD/ADMIN_COMMANDS.md](MD/ADMIN_COMMANDS.md) | Команды для администраторов |
-| [MD/TROUBLESHOOTING.md](MD/TROUBLESHOOTING.md) | Устранение неполадок |
-
----
-
-## ⚠️ Важно
-Для корректной работы ссылок подписки убедитесь, что порт `2082` (или тот, который вы указали в конфиге) открыт в Firewall:
 ```bash
-sudo ufw allow 2082/tcp
+sudo npm install -g pm2
+```
+
+Запустите все сервисы из `ecosystem.config.js`:
+
+```bash
+chmod +x start_services.sh
+./start_services.sh
+```
+
+Скрипт запускает:
+
+- `CheckerSVC`
+- `VPN_Worker`
+- `VPN_Beat`
+- `VPN_Bot`
+
+Полезные команды:
+
+- `pm2 list` - статус процессов
+- `pm2 logs` - агрегированные логи
+- `pm2 restart VPN_Bot` - перезапуск бота
+- `pm2 restart VPN_Worker` - перезапуск воркера
+- `pm2 restart CheckerSVC` - перезапуск checker-сервиса
+
+## Ручной запуск (для отладки)
+
+В отдельных терминалах:
+
+```bash
+python3 utils/checker/service.py
+python3 -m celery -A celery_app worker -Q high_priority,low_priority -c 1 --prefetch-multiplier=1
+python3 -m celery -A celery_app beat
+python3 bot.py
+```
+
+## Полезные URL
+
+- Подписка пользователя: `http://<SERVER_IP>:2082/sub?id=<TELEGRAM_ID>`
+- Admin API (если запущен `api/main.py`): `http://<SERVER_IP>:3000/api/health`
+
+## Структура проекта
+
+- `bot.py` - точка входа бота
+- `celery_app.py` - конфигурация Celery и расписания
+- `api/main.py` - FastAPI для админ-панели/автоматизации
+- `handlers/` - роутеры и сценарии Telegram
+- `database/` - модели, репозитории, инициализация БД
+- `tasks/` - фоновые задачи Celery
+- `utils/` - checker, генерация подписок, вспомогательные сервисы
+- `MD/` - расширенная документация
+
+## Документация
+
+Основные документы находятся в `MD/`:
+
+- `MD/README.md` - индекс документации
+- `MD/ARCHITECTURE.md` - устройство системы
+- `MD/API.md` - API и форматы подписок
+- `MD/USER_COMMANDS.md` - команды для пользователей
+- `MD/ADMIN_COMMANDS.md` - команды для админов
+- `MD/TROUBLESHOOTING.md` - диагностика проблем
+
+## Частые проблемы
+
+- Не открывается ссылка подписки - проверьте firewall: `sudo ufw allow 2082/tcp`.
+- Задачи Celery не выполняются - проверьте Redis (`redis-cli ping`) и `pm2 logs VPN_Worker`.
+- Checker недоступен - проверьте `CHECKER_PORT`, `CHECKER_URL` и статус `CheckerSVC`.
+
+## Безопасность
+
+- Не коммитьте `.env` и токены.
+- Ограничьте доступ к портам `3000` (Admin API) и `2082` (подписки) через firewall/reverse proxy.
+- Для продакшена рекомендуется поставить Nginx/Caddy перед публичными endpoint.

@@ -39,7 +39,7 @@ module.exports = {
       watch: false,
       out_file: "/dev/null",
       error_file: "/dev/null",
-      max_memory_restart: "100M",
+      max_memory_restart: "256M",
       kill_timeout: 5000
     },
     {

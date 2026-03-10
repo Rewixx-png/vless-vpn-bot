@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from typing import List
 from pydantic import SecretStr
 
+
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     ADMIN_IDS: List[int]
@@ -30,16 +31,16 @@ class Settings(BaseSettings):
     MIN_WORKERS: int = 10
 
     MEMORY_CHECK_INTERVAL: int = 60
-    COLLECTOR_INTERVAL: int = 1800
+    COLLECTOR_INTERVAL: int = 3600
     STABILITY_CHECK_INTERVAL: int = 1800
-    
+
     RECHECK_TIMEOUT_PER_PASS: int = 480
-    
+
     DB_POOL_RECYCLE: int = 3600
-    
+
     CACHE_TTL: int = 300
     DNS_CACHE_TTL: int = 300
-    
+
     GEOIP_CACHE_TTL: int = 86400
 
     public_domain: str | None = None
@@ -48,5 +49,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
 
 config = Settings()

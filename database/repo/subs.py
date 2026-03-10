@@ -16,6 +16,7 @@ _session_factory = async_session_factory
 _cache = {}
 _cache_ttl = {}
 
+
 def _get_cached(key: str, ttl: int = 300):
     now = time.time()
     if key in _cache and key in _cache_ttl:
@@ -26,9 +27,11 @@ def _get_cached(key: str, ttl: int = 300):
             del _cache_ttl[key]
     return None
 
+
 def _set_cached(key: str, value: Any, ttl: int = 300):
     _cache[key] = value
     _cache_ttl[key] = time.time() + ttl
+
 
 def _invalidate_cache(pattern: str = None):
     global _cache, _cache_ttl
@@ -36,11 +39,12 @@ def _invalidate_cache(pattern: str = None):
         _cache.clear()
         _cache_ttl.clear()
     else:
-        keys_to_remove =[k for k in _cache.keys() if pattern in k]
+        keys_to_remove = [k for k in _cache.keys() if pattern in k]
         for k in keys_to_remove:
             del _cache[k]
             if k in _cache_ttl:
                 del _cache_ttl[k]
+
 
 class SubRepo:
     @staticmethod
@@ -52,7 +56,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
-                        Subscription.region
+                        Subscription.region,
                     )
                 )
             )
@@ -69,7 +73,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
-                        Subscription.region
+                        Subscription.region,
                     )
                 )
             )
@@ -86,7 +90,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
-                        Subscription.region
+                        Subscription.region,
                     )
                 )
             )
@@ -98,7 +102,9 @@ class SubRepo:
             result = await session.execute(
                 select(Subscription)
                 .where(Subscription.is_active == True)
-                .order_by(desc(Subscription.stability_streak), desc(Subscription.speed_mbps))
+                .order_by(
+                    desc(Subscription.stability_streak), desc(Subscription.speed_mbps)
+                )
                 .limit(limit)
             )
             return result.scalars().all()
@@ -107,13 +113,12 @@ class SubRepo:
     async def get_unknown_regions_subs():
         async with async_session_factory() as session:
             result = await session.execute(
-                select(Subscription)
-                .where(
+                select(Subscription).where(
                     or_(
                         Subscription.region.ilike("%unk%"),
                         Subscription.region.ilike("%unknown%"),
                         Subscription.region == "",
-                        Subscription.region.is_(None)
+                        Subscription.region.is_(None),
                     )
                 )
             )
@@ -145,16 +150,13 @@ class SubRepo:
 
     @staticmethod
     async def get_smart_keys(
-        regions: list | None, 
+        regions: list | None,
         tags: list | None = None,
         limit: int = 0,
-        auto_clean: bool = False
+        auto_clean: bool = False,
     ) -> list:
         async with async_session_factory() as session:
-            stmt = (
-                select(Subscription)
-                .where(Subscription.is_active == True)
-            )
+            stmt = select(Subscription).where(Subscription.is_active == True)
 
             if auto_clean:
                 time_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -167,22 +169,22 @@ class SubRepo:
                     stmt = stmt.where(Subscription.region.in_(regions))
 
             if tags:
-                if 'ai' in tags:
+                if "ai" in tags:
                     stmt = stmt.where(Subscription.ai_available == True)
 
-                if 'fast' in tags:
+                if "fast" in tags:
                     stmt = stmt.where(Subscription.speed_mbps >= 100.0)
 
-                if 'wl' in tags:
+                if "wl" in tags:
                     stmt = stmt.where(
-                        (Subscription.vless_key.like("%security=reality%")) | 
-                        (Subscription.vless_key.like("%flow=xtls-rprx-vision%"))
+                        (Subscription.vless_key.like("%security=reality%"))
+                        | (Subscription.vless_key.like("%flow=xtls-rprx-vision%"))
                     )
 
-                if 'stable' in tags:
+                if "stable" in tags:
                     stmt = stmt.where(Subscription.stability_streak >= 144)
 
-                if 'no_ads' in tags:
+                if "no_ads" in tags:
                     stmt = stmt.where(Subscription.no_ads == True)
 
             stmt = stmt.order_by(Subscription.speed_mbps.desc())
@@ -224,7 +226,7 @@ class SubRepo:
     @staticmethod
     async def get_subs_by_ids(sub_ids: List[int]) -> List[Subscription]:
         if not sub_ids:
-            return[]
+            return []
         async with async_session_factory() as session:
             stmt = select(Subscription).where(Subscription.id.in_(sub_ids))
             result = await session.execute(stmt)
@@ -235,40 +237,46 @@ class SubRepo:
         if not updates:
             return
 
-        updates.sort(key=lambda x: x['id'])
+        updates.sort(key=lambda x: x["id"])
 
         async with async_session_factory() as session:
             case_active = []
-            case_latency =[]
+            case_latency = []
             case_speed = []
             case_ai = []
-            case_no_ads =[]
+            case_no_ads = []
             case_death = []
             ids = []
 
             for upd in updates:
                 ids.append(upd["id"])
-                case_active.append(f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}")
+                case_active.append(
+                    f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}"
+                )
                 case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
                 case_speed.append(f"WHEN {upd['id']} THEN {upd.get('speed_mbps', 0.0)}")
-                case_ai.append(f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}")
-                case_no_ads.append(f"WHEN {upd['id']} THEN {str(upd.get('no_ads', False)).lower()}")
-                if not upd['is_active']:
+                case_ai.append(
+                    f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}"
+                )
+                case_no_ads.append(
+                    f"WHEN {upd['id']} THEN {str(upd.get('no_ads', False)).lower()}"
+                )
+                if (not upd["is_active"]) and upd.get("was_active", False):
                     case_death.append(f"WHEN {upd['id']} THEN death_count + 1")
                 else:
-                    case_death.append(f"WHEN {upd['id']} THEN 0")
+                    case_death.append(f"WHEN {upd['id']} THEN death_count")
 
             sql = text(f"""
                 UPDATE subscriptions
                 SET 
-                    is_active = CASE id {' '.join(case_active)} END,
-                    latency_ms = CASE id {' '.join(case_latency)} END,
-                    speed_mbps = CASE id {' '.join(case_speed)} END,
-                    ai_available = CASE id {' '.join(case_ai)} END,
-                    no_ads = CASE id {' '.join(case_no_ads)} END,
-                    death_count = CASE id {' '.join(case_death)} END,
+                    is_active = CASE id {" ".join(case_active)} END,
+                    latency_ms = CASE id {" ".join(case_latency)} END,
+                    speed_mbps = CASE id {" ".join(case_speed)} END,
+                    ai_available = CASE id {" ".join(case_ai)} END,
+                    no_ads = CASE id {" ".join(case_no_ads)} END,
+                    death_count = CASE id {" ".join(case_death)} END,
                     last_checked_at = NOW()
-                WHERE id IN ({','.join(map(str, ids))})
+                WHERE id IN ({",".join(map(str, ids))})
             """)
 
             try:
@@ -284,10 +292,10 @@ class SubRepo:
         if not updates:
             return
 
-        updates.sort(key=lambda x: x['id'])
+        updates.sort(key=lambda x: x["id"])
 
         async with async_session_factory() as session:
-            case_regions =[]
+            case_regions = []
             ids = []
 
             for upd in updates:
@@ -297,8 +305,8 @@ class SubRepo:
 
             sql = text(f"""
                 UPDATE subscriptions
-                SET region = CASE id {' '.join(case_regions)} END
-                WHERE id IN ({','.join(map(str, ids))})
+                SET region = CASE id {" ".join(case_regions)} END
+                WHERE id IN ({",".join(map(str, ids))})
             """)
 
             try:
@@ -314,11 +322,11 @@ class SubRepo:
         if not updates:
             return
 
-        updates.sort(key=lambda x: x['id'])
+        updates.sort(key=lambda x: x["id"])
 
         async with async_session_factory() as session:
             case_streak = []
-            ids =[]
+            ids = []
 
             for upd in updates:
                 sub_id = upd["id"]
@@ -331,8 +339,8 @@ class SubRepo:
 
             sql = text(f"""
                 UPDATE subscriptions
-                SET stability_streak = CASE id {' '.join(case_streak)} END
-                WHERE id IN ({','.join(map(str, ids))})
+                SET stability_streak = CASE id {" ".join(case_streak)} END
+                WHERE id IN ({",".join(map(str, ids))})
             """)
 
             try:
@@ -350,19 +358,27 @@ class SubRepo:
         async with async_session_factory() as session:
             for upd in updates:
                 try:
-                    stmt = update(Subscription).where(Subscription.id == upd['id']).values(vless_key=upd['vless_key'])
+                    stmt = (
+                        update(Subscription)
+                        .where(Subscription.id == upd["id"])
+                        .values(vless_key=upd["vless_key"])
+                    )
                     await session.execute(stmt)
                     await session.commit()
                 except Exception as e:
                     await session.rollback()
                     logger.warning(f"Batch update key skipped for sub {upd['id']}: {e}")
-            
+
             _invalidate_cache("subscription")
 
     @staticmethod
     async def update_sub_key(sub_id: int, new_key: str):
         async with async_session_factory() as session:
-            stmt = update(Subscription).where(Subscription.id == sub_id).values(vless_key=new_key)
+            stmt = (
+                update(Subscription)
+                .where(Subscription.id == sub_id)
+                .values(vless_key=new_key)
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -395,7 +411,7 @@ class SubRepo:
                     Subscription.region.ilike("%unk%"),
                     Subscription.region.ilike("%unknown%"),
                     Subscription.region == "",
-                    Subscription.region.is_(None)
+                    Subscription.region.is_(None),
                 )
             )
             result = await session.execute(stmt)
@@ -409,10 +425,13 @@ class SubRepo:
 
             count = 0
             for sub in subs:
-                ins = pg_insert(BlacklistedItem).values(
-                    vless_key=sub.vless_key, 
-                    reason="Unknown Region (Admin Action)"
-                ).on_conflict_do_nothing()
+                ins = (
+                    pg_insert(BlacklistedItem)
+                    .values(
+                        vless_key=sub.vless_key, reason="Unknown Region (Admin Action)"
+                    )
+                    .on_conflict_do_nothing()
+                )
                 await session.execute(ins)
                 count += 1
 
@@ -421,7 +440,7 @@ class SubRepo:
                     Subscription.region.ilike("%unk%"),
                     Subscription.region.ilike("%unknown%"),
                     Subscription.region == "",
-                    Subscription.region.is_(None)
+                    Subscription.region.is_(None),
                 )
             )
             await session.execute(del_stmt)
@@ -438,20 +457,35 @@ class SubRepo:
     @staticmethod
     async def toggle_active(sub_id: int, current_state: bool):
         async with async_session_factory() as session:
-            stmt = update(Subscription).where(Subscription.id == sub_id).values(is_active=not current_state)
+            stmt = (
+                update(Subscription)
+                .where(Subscription.id == sub_id)
+                .values(is_active=not current_state)
+            )
             await session.execute(stmt)
             await session.commit()
 
     @staticmethod
-    async def update_sub_status(sub_id: int, is_active: bool, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False):
+    async def update_sub_status(
+        sub_id: int,
+        is_active: bool,
+        latency: int,
+        speed_mbps: float,
+        ai_available: bool = False,
+        no_ads: bool = False,
+    ):
         async with async_session_factory() as session:
-            stmt = update(Subscription).where(Subscription.id == sub_id).values(
-                is_active=is_active,
-                latency_ms=latency,
-                speed_mbps=speed_mbps,
-                ai_available=ai_available,
-                no_ads=no_ads,
-                last_checked_at=func.now()
+            stmt = (
+                update(Subscription)
+                .where(Subscription.id == sub_id)
+                .values(
+                    is_active=is_active,
+                    latency_ms=latency,
+                    speed_mbps=speed_mbps,
+                    ai_available=ai_available,
+                    no_ads=no_ads,
+                    last_checked_at=func.now(),
+                )
             )
             await session.execute(stmt)
             await session.commit()
@@ -459,22 +493,35 @@ class SubRepo:
     @staticmethod
     async def update_sub_region(sub_id: int, region: str):
         async with async_session_factory() as session:
-            stmt = update(Subscription).where(Subscription.id == sub_id).values(region=region)
+            stmt = (
+                update(Subscription)
+                .where(Subscription.id == sub_id)
+                .values(region=region)
+            )
             await session.execute(stmt)
             await session.commit()
 
     @staticmethod
-    async def add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False):
+    async def add_subscription(
+        vless_key: str,
+        region: str,
+        latency: int,
+        speed_mbps: float,
+        ai_available: bool = False,
+        no_ads: bool = False,
+    ):
         async with async_session_factory() as session:
-            existing = await session.scalar(select(Subscription).where(Subscription.vless_key == vless_key))
+            existing = await session.scalar(
+                select(Subscription).where(Subscription.vless_key == vless_key)
+            )
             if not existing:
                 sub = Subscription(
-                    vless_key=vless_key, 
-                    region=region, 
+                    vless_key=vless_key,
+                    region=region,
                     latency_ms=latency,
                     speed_mbps=speed_mbps,
                     ai_available=ai_available,
-                    no_ads=no_ads
+                    no_ads=no_ads,
                 )
                 session.add(sub)
                 await session.commit()
@@ -500,7 +547,14 @@ class SubRepo:
             return result.scalars().first()
 
     @staticmethod
-    async def smart_add_subscription(vless_key: str, region: str, latency: int, speed_mbps: float, ai_available: bool = False, no_ads: bool = False) -> bool:
+    async def smart_add_subscription(
+        vless_key: str,
+        region: str,
+        latency: int,
+        speed_mbps: float,
+        ai_available: bool = False,
+        no_ads: bool = False,
+    ) -> bool:
         is_banned = await BlacklistRepo.is_blacklisted(vless_key)
         if is_banned:
             return False
@@ -509,17 +563,19 @@ class SubRepo:
             region = "🌍 Unk"
 
         async with async_session_factory() as session:
-            existing = await session.scalar(select(Subscription.id).where(Subscription.vless_key == vless_key))
+            existing = await session.scalar(
+                select(Subscription.id).where(Subscription.vless_key == vless_key)
+            )
             if existing:
                 return False
 
             sub = Subscription(
-                vless_key=vless_key, 
-                region=region, 
+                vless_key=vless_key,
+                region=region,
                 latency_ms=latency,
                 speed_mbps=speed_mbps,
                 ai_available=ai_available,
-                no_ads=no_ads
+                no_ads=no_ads,
             )
             session.add(sub)
             await session.commit()
@@ -533,17 +589,16 @@ class SubRepo:
     @staticmethod
     async def get_total_count() -> int:
         async with async_session_factory() as session:
-            result = await session.execute(
-                select(func.count(Subscription.id))
-            )
+            result = await session.execute(select(func.count(Subscription.id)))
             return result.scalar() or 0
 
     @staticmethod
     async def get_active_count() -> int:
         async with async_session_factory() as session:
             result = await session.execute(
-                select(func.count(Subscription.id))
-                .where(Subscription.is_active == True)
+                select(func.count(Subscription.id)).where(
+                    Subscription.is_active == True
+                )
             )
             return result.scalar() or 0
 
@@ -551,8 +606,9 @@ class SubRepo:
     async def get_dead_count() -> int:
         async with async_session_factory() as session:
             result = await session.execute(
-                select(func.count(Subscription.id))
-                .where(Subscription.is_active == False)
+                select(func.count(Subscription.id)).where(
+                    Subscription.is_active == False
+                )
             )
             return result.scalar() or 0
 
@@ -560,13 +616,12 @@ class SubRepo:
     async def get_unknown_region_count() -> int:
         async with async_session_factory() as session:
             result = await session.execute(
-                select(func.count(Subscription.id))
-                .where(
+                select(func.count(Subscription.id)).where(
                     or_(
                         Subscription.region.ilike("%unk%"),
                         Subscription.region.ilike("%unknown%"),
                         Subscription.region == "",
-                        Subscription.region.is_(None)
+                        Subscription.region.is_(None),
                     )
                 )
             )
@@ -577,21 +632,24 @@ class SubRepo:
         async with async_session_factory() as session:
             total = await session.execute(select(func.count(Subscription.id)))
             active = await session.execute(
-                select(func.count(Subscription.id))
-                .where(Subscription.is_active == True)
+                select(func.count(Subscription.id)).where(
+                    Subscription.is_active == True
+                )
             )
             dead = await session.execute(
-                select(func.count(Subscription.id))
-                .where(Subscription.is_active == False)
+                select(func.count(Subscription.id)).where(
+                    Subscription.is_active == False
+                )
             )
             avg_speed = await session.execute(
-                select(func.avg(Subscription.speed_mbps))
-                .where(Subscription.is_active == True)
+                select(func.avg(Subscription.speed_mbps)).where(
+                    Subscription.is_active == True
+                )
             )
 
             return {
                 "total": total.scalar() or 0,
                 "active": active.scalar() or 0,
                 "dead": dead.scalar() or 0,
-                "avg_speed": round(avg_speed.scalar() or 0, 2)
+                "avg_speed": round(avg_speed.scalar() or 0, 2),
             }

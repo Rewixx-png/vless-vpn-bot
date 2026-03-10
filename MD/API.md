@@ -1,132 +1,128 @@
-# Справочник API VLESS VPN Bot
+# API и endpoints
 
-## Endpoint подписки
+Документ описывает три HTTP-контрагента проекта:
 
-### GET /sub
+- подписочный сервер (`utils/sub_server.py`),
+- checker-сервис (`utils/checker/service.py`),
+- Admin API (`api/main.py`).
 
-Основной endpoint для получения конфигураций подписки.
+## 1) Subscription Server
 
-**URL:**
+### `GET /sub`
+
+Выдает подписку для пользователя Telegram.
+
+Пример:
+
+```text
+http://<SERVER_IP>:2082/sub?id=<TELEGRAM_ID>
 ```
-http://YOUR_SERVER:2082/sub?id={user_id}
-```
 
-**Параметры:**
+Параметры запроса:
 
 | Параметр | Тип | Описание |
-|----------|-----|----------|
+|---|---|---|
 | `id` | int | Telegram ID пользователя |
-| `format` | string | Формат: `clash`, `yaml`, `base64`, `raw` |
-| `types` | string | Типы протоколов через запятую: `vless,vmess,trojan` |
+| `format` | string | Формат выдачи (например, `clash`, `base64`, `raw`) |
 
-**Примеры:**
+Примеры:
 
 ```bash
-# Базовая ссылка (plain text)
-http://108.165.164.160:2082/sub?id=123456789
+# Базовая выдача
+curl "http://127.0.0.1:2082/sub?id=123456789"
 
-# С группой
-http://108.165.164.160:2082/sub?id=123456789/Work
-
-# Clash формат
-http://108.165.164.160:2082/sub?id=123456789&format=clash
-
-# Только VLESS
-http://108.165.164.160:2082/sub?id=123456789&types=vless
+# Для Clash-совместимого клиента
+curl "http://127.0.0.1:2082/sub?id=123456789&format=clash"
 ```
 
-**User-Agent Определение:**
-- `clash`, `flclash`, `stash`, `meta`, `verge` → Clash YAML
-- `v2raytun` → Raw text
-- `happ` → Raw text
+Примечания:
 
----
+- Если пользователь не найден или нет доступных серверов, endpoint может вернуть пустой/ограниченный ответ.
+- Для продакшена рекомендуется reverse proxy (Nginx/Caddy) и ограничение публичного доступа.
 
-## Checker API (внутренний)
+## 2) Checker Service (внутренний)
 
-### POST /check
+### `POST /check`
 
-Проверка одного прокси.
+Проверяет один прокси-конфиг.
 
-**URL:**
-```
+URL по умолчанию:
+
+```text
 http://127.0.0.1:8081/check
 ```
 
-**Тело запроса:**
+Тело запроса:
+
 ```json
 {
   "config": "vless://..."
 }
 ```
 
-**Ответ:**
+Типичный ответ:
+
 ```json
 {
   "success": true,
-  "region": "🇩🇪 Germany",
+  "region": "Germany",
   "latency": 45,
   "ai": true,
   "error": "OK"
 }
 ```
 
----
+## 3) Admin API
 
-## База данных
+Base URL (по умолчанию):
 
-### Async Session Factory
-
-```python
-from database.core import async_session_factory
-
-async with async_session_factory() as session:
-    # работа с БД
-    await session.commit()
+```text
+http://<SERVER_IP>:3000/api
 ```
 
-### Пример запроса
+Основные endpoints:
 
-```python
-from database.repo import UserRepo, SubRepo
+| Метод | Путь | Назначение |
+|---|---|---|
+| `GET` | `/health` | Быстрый health-check (CPU/Memory/Uptime) |
+| `GET` | `/stats` | Системная статистика подписок |
+| `GET` | `/subs` | Список подписок с фильтрами/пагинацией |
+| `DELETE` | `/subs/{sub_id}` | Удаление подписки |
+| `POST` | `/subs/cleanup` | Очистка «мертвых» подписок |
+| `GET` | `/sources` | Список источников |
+| `POST` | `/sources` | Добавление источника |
+| `PUT` | `/sources/{source_id}` | Вкл/выкл источника |
+| `DELETE` | `/sources/{source_id}` | Удаление источника |
+| `GET` | `/users` | Список пользователей |
+| `GET` | `/groups` | Список групп |
+| `GET` | `/system` | Статусы PM2/Redis/DB |
+| `POST` | `/system/restart/{service}` | Перезапуск сервиса через PM2 |
+| `POST` | `/tasks/run-collector` | Принудительный запуск collector-задачи |
+| `POST` | `/tasks/run-stability` | Принудительный запуск stability-задачи |
 
-# Получить пользователя
-user = await UserRepo.get_user(telegram_id)
+Примеры:
 
-# Получить подписки
-subs = await SubRepo.get_smart_keys(
-    regions=["DE", "US"],
-    tags=["ai", "fast"],
-    limit=10
-)
+```bash
+curl "http://127.0.0.1:3000/api/health"
+curl "http://127.0.0.1:3000/api/subs?page=1&per_page=20&is_active=true"
+curl -X POST "http://127.0.0.1:3000/api/tasks/run-collector"
 ```
 
----
+## Модель VLESS-ссылки (кратко)
 
-## Структура VLESS ссылки
-
-```
-vless://UUID@HOST:PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=SNI&fp=random&type=tcp#NAME
+```text
+vless://UUID@HOST:PORT?encryption=none&security=reality&sni=example.com&type=tcp#NAME
 ```
 
-**Параметры:**
-- `encryption` - шифрование (обычно `none`)
-- `flow` - поток (`xtls-rprx-vision`, `xtls-rprx`, `none`)
-- `security` - безопасность (`tls`, `reality`)
-- `sni` - Server Name Indication
-- `fp` - отпечаток (`random`, `chrome`, `firefox`)
-- `type` - тип транспорта (`tcp`, `grpc`, `ws`)
+Ключевые параметры:
 
----
+- `security` - режим безопасности (`tls`/`reality`).
+- `sni` - SNI домен.
+- `type` - транспорт (`tcp`, `ws`, `grpc`).
+- `flow` - вариант flow для XTLS/Reality (если используется).
 
-## Клиенты и совместимость
+## Безопасность API
 
-| Клиент | Формат | Особенности |
-|--------|--------|-------------|
-| v2rayNG | vless:// | Требует `AllowInsecure` для HTTP |
-| FlClash | vless:// | Рекомендуется |
-| Streisand | vless:// | |
-| NekoBox | vless:// | |
-| Hiddify | vless:// | |
-| Clash | clash:// | Требует `?format=clash` |
-| V2RayTun | raw | Автоопределение по UA |
+- Не публикуйте checker-порт (`8081`) наружу.
+- Ограничьте доступ к Admin API (`3000`) по IP или через auth на reverse proxy.
+- Не передавайте токены и внутренние URL в публичные клиентские конфиги.

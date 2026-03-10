@@ -16,29 +16,35 @@ from aiogram import Bot, Dispatcher
 
 from config import config
 
+
 async def memory_monitor():
     process = psutil.Process(os.getpid())
     while True:
         try:
             await asyncio.sleep(config.MEMORY_CHECK_INTERVAL)
             memory_mb = process.memory_info().rss / 1024 / 1024
-            
+
             if memory_mb > config.MEMORY_LIMIT_MB:
-                logger.warning(f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC...")
+                logger.warning(
+                    f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC..."
+                )
                 gc.collect()
-                
+
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 logger.info(f"📊 Memory after GC: {memory_mb:.0f}MB")
-                
+
                 if memory_mb > config.MEMORY_LIMIT_MB + 50:
-                    logger.error(f"🚨 Memory still high after GC ({memory_mb:.0f}MB). Consider restarting.")
+                    logger.error(
+                        f"🚨 Memory still high after GC ({memory_mb:.0f}MB). Consider restarting."
+                    )
         except Exception as e:
             logger.error(f"Memory monitor error: {e}")
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    force=True
+    force=True,
 )
 
 from config import config
@@ -50,16 +56,17 @@ from utils.background import BackgroundTasks
 from utils.sub_server import SubscriptionServer
 from utils.video import VideoManager
 from utils.checker.api import CheckerAPI
+from utils.reporter import Reporter
 
-loggers_to_silence =[
-    "aiogram", 
-    "aiogram.event", 
-    "aiogram.dispatcher", 
-    "VideoManager", 
-    "Scheduler", 
+loggers_to_silence = [
+    "aiogram",
+    "aiogram.event",
+    "aiogram.dispatcher",
+    "VideoManager",
+    "Scheduler",
     "aiohttp.access",
     "aiohttp.server",
-    "asyncio"
+    "asyncio",
 ]
 
 for logger_name in loggers_to_silence:
@@ -70,6 +77,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CRASH_FILE = os.path.join(BASE_DIR, "crash_log.txt")
 OOM_HISTORY = os.path.join(BASE_DIR, ".oom_history")
+
 
 class TelegramLogHandler(logging.Handler):
     def __init__(self, bot: Bot, admin_ids: Iterable[int]):
@@ -82,15 +90,18 @@ class TelegramLogHandler(logging.Handler):
             return
         if "BadStatusLine" in str(record.msg) or "BadHttpMessage" in str(record.msg):
             return
-        
+
         msg_str = str(record.msg)
-        if any(err in msg_str for err in [
-            "TelegramForbiddenError", 
-            "TelegramRetryAfter", 
-            "user is deactivated",
-            "Flood control exceeded",
-            "Too Many Requests"
-        ]):
+        if any(
+            err in msg_str
+            for err in [
+                "TelegramForbiddenError",
+                "TelegramRetryAfter",
+                "user is deactivated",
+                "Flood control exceeded",
+                "Too Many Requests",
+            ]
+        ):
             return
 
         try:
@@ -108,12 +119,17 @@ class TelegramLogHandler(logging.Handler):
             for admin_id in self.admin_ids:
                 try:
                     loop.create_task(
-                        self.bot.send_message(admin_id, f"❗️ <b>Ошибка:</b>\n<pre>{safe_msg}</pre>", parse_mode="HTML")
+                        self.bot.send_message(
+                            admin_id,
+                            f"❗️ <b>Ошибка:</b>\n<pre>{safe_msg}</pre>",
+                            parse_mode="HTML",
+                        )
                     )
                 except Exception:
                     pass
         except Exception:
             pass
+
 
 async def notify_admins(bot: Bot, message: str):
     for admin_id in config.ADMIN_IDS:
@@ -122,45 +138,51 @@ async def notify_admins(bot: Bot, message: str):
         except Exception as e:
             logger.warning(f"Failed to notify admin {admin_id}: {e}")
 
+
+async def notify_info_topic(bot: Bot, message: str):
+    try:
+        await Reporter.send_info(bot, message)
+    except Exception as e:
+        logger.warning(f"Failed to notify INFO topic: {e}")
+
+
 async def check_services() -> dict:
-    results = {
-        "checker": False,
-        "database": False,
-        "video": False,
-        "db_error": None
-    }
-    
+    results = {"checker": False, "database": False, "video": False, "db_error": None}
+
     try:
         from database.repo import StatsRepo
+
         await StatsRepo.get_public_stats()
         results["database"] = True
     except Exception as e:
         logger.error(f"Database check failed: {e}")
         results["db_error"] = str(e)
-    
+
     try:
         test_result = await CheckerAPI.check("vless://test@localhost:443?security=none")
         err_msg = str(test_result[5])
         results["checker"] = "Offline" not in err_msg and "SYS_ERR" not in err_msg
     except Exception:
         results["checker"] = False
-    
+
     results["video"] = VideoManager.is_ready()
-    
+
     return results
+
 
 async def report_crash(bot: Bot) -> bool:
     crash_reported = False
-    
+
     if os.path.exists(CRASH_FILE):
         try:
             with open(CRASH_FILE, "r", encoding="utf-8") as f:
                 crash_reason = f.read()
-            
+
             os.remove(CRASH_FILE)
-            
+
             if crash_reason.strip():
-                await notify_admins(bot, f"☠️ <b>Бот был перезагружен!</b>\n\n<pre>{crash_reason[:3500]}</pre>")
+                crash_text = f"☠️ <b>Бот был перезагружен!</b>\n\n<pre>{crash_reason[:3500]}</pre>"
+                await notify_info_topic(bot, crash_text)
                 crash_reported = True
         except Exception:
             pass
@@ -169,94 +191,100 @@ async def report_crash(bot: Bot) -> bool:
         cmd = "LC_ALL=C dmesg -T | grep -i -E 'killed process.*(python|node|xray|celery)' | tail -n 20"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.stdout.strip():
-            new_ooms =[]
+            new_ooms = []
             history = ""
             if os.path.exists(OOM_HISTORY):
                 with open(OOM_HISTORY, "r", encoding="utf-8") as hf:
                     history = hf.read()
-            
-            lines = result.stdout.strip().split('\n')
+
+            lines = result.stdout.strip().split("\n")
             for line in lines:
                 if line not in history:
                     new_ooms.append(line)
-            
+
             if new_ooms:
                 with open(OOM_HISTORY, "a", encoding="utf-8") as hf:
                     for oom in new_ooms:
                         hf.write(oom + "\n")
-                
+
                 oom_text = "\n".join(new_ooms)
-                await notify_admins(bot, f"🔪 <b>Процесс убит системой (OOM Killer)!</b>\nВозможно, серверу не хватило памяти.\n\n<pre>{oom_text[:3500]}</pre>")
+                oom_alert = f"🔪 <b>Процесс убит системой (OOM Killer)!</b>\nВозможно, серверу не хватило памяти.\n\n<pre>{oom_text[:3500]}</pre>"
+                await notify_info_topic(bot, oom_alert)
                 crash_reported = True
     except Exception:
         pass
-            
+
     return crash_reported
+
 
 def handle_sigterm(signum, frame):
     try:
         with open(CRASH_FILE, "w", encoding="utf-8") as f:
-            f.write(f"🛑 ВНЕШНИЙ СИГНАЛ (SIGTERM/SIGINT: {signum}):\nБот принудительно остановлен менеджером процессов (PM2 / Systemd).\nВероятная причина: PM2 перезапустил процесс из-за достижения лимита оперативной памяти (--max-memory-restart) или была выполнена команда 'pm2 restart'.")
+            f.write(
+                f"🛑 ВНЕШНИЙ СИГНАЛ (SIGTERM/SIGINT: {signum}):\nБот принудительно остановлен менеджером процессов (PM2 / Systemd).\nВероятная причина: PM2 перезапустил процесс из-за достижения лимита оперативной памяти (--max-memory-restart) или была выполнена команда 'pm2 restart'."
+            )
     except Exception:
         pass
     os._exit(1)
+
 
 def global_exception_handler(exctype, value, tb):
     if issubclass(exctype, KeyboardInterrupt):
         sys.__excepthook__(exctype, value, tb)
         return
-    
+
     crash_msg = "".join(traceback.format_exception(exctype, value, tb))
     try:
         with open(CRASH_FILE, "w", encoding="utf-8") as f:
             f.write(f"FATAL UNHANDLED EXCEPTION:\n{crash_msg}")
     except Exception:
         pass
-    
+
     sys.__excepthook__(exctype, value, tb)
+
 
 async def main():
     start_time = time.time()
-    
+
     logger.info("🚀 Starting VLESS VPN Bot...")
-    
+
     logger.info("📦 Initializing database...")
     try:
         await init_db()
     except Exception as e:
         logger.critical(f"🔥 DATABASE INIT FAILED: {e}")
-    
+
     logger.info("🎬 Starting video preparation...")
     await VideoManager.prepare()
-    
+
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
-    
+
     crashed = await report_crash(bot)
-    
+
     tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
     tg_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     logging.getLogger().addHandler(tg_handler)
-    
+
     dp.include_router(user_router)
     dp.include_router(admin_router)
-    
+
     logger.info("⏰ Starting background scheduler...")
     await BackgroundTasks.start_scheduler()
-    
+
     logger.info("🧠 Starting memory monitor...")
     memory_task = asyncio.create_task(memory_monitor())
-    
+
     logger.info("🌐 Starting subscription server...")
     server_task = asyncio.create_task(SubscriptionServer.start())
-    
+
     await asyncio.sleep(2)
-    
+
     logger.info("🔍 Checking services...")
     service_status = await check_services()
-    
+
     startup_duration = time.time() - start_time
-    
+
     status_emoji = lambda x: "✅" if x else "❌"
     startup_msg = (
         f"🚀 <b>Бот запущен!</b>\n\n"
@@ -266,36 +294,38 @@ async def main():
         f"{status_emoji(service_status['checker'])} Checker Service\n"
         f"{status_emoji(service_status['video'])} Видео UI\n"
     )
-    
+
     if not crashed:
         startup_msg += "\nℹ️ <i>Обычный запуск (без обнаружения критических сбоев). Если рестарт был внезапным — возможно, процесс убит жестким сигналом SIGKILL (-9).</i>"
-    
+
     if not service_status["checker"]:
         startup_msg += (
             f"\n\n⚠️ <b>Внимание!</b>\n"
             f"Checker Service не запущен или недоступен.\n"
             f"Запустите: <code>python utils/checker/service.py</code>"
         )
-        
+
     if not service_status["database"]:
         startup_msg += (
             f"\n\n🛑 <b>Ошибка БД:</b>\n"
             f"<pre>{service_status.get('db_error', 'Unknown Error')}</pre>"
         )
-    
-    await notify_admins(bot, startup_msg)
+
+    await notify_info_topic(bot, startup_msg)
     logger.info(f"✅ Bot started in {startup_duration:.1f}s")
-    
+
     await bot.delete_webhook(drop_pending_updates=True)
-    
+
     try:
         await dp.start_polling(bot, handle_signals=False)
     except Exception as e:
         logger.error(f"❌ Polling error: {e}")
-        await notify_admins(bot, f"❌ <b>Критическая ошибка (Polling):</b>\n<pre>{str(e)[:1000]}</pre>")
+        await notify_admins(
+            bot, f"❌ <b>Критическая ошибка (Polling):</b>\n<pre>{str(e)[:1000]}</pre>"
+        )
     finally:
         logger.info("🛑 Shutting down...")
-        
+
         memory_task.cancel()
         try:
             await memory_task
@@ -311,14 +341,16 @@ async def main():
 
         await bot.session.close()
         await payment_client.close()
-        
+
         gc.collect()
 
         logger.info("👋 Bot stopped")
 
+
 def set_process_affinity():
     try:
         import os
+
         process = psutil.Process()
         cpu_count = os.cpu_count()
         if cpu_count:
@@ -327,37 +359,42 @@ def set_process_affinity():
     except Exception as e:
         logger.warning(f"⚠️ Could not set CPU affinity: {e}")
 
+
 if __name__ == "__main__":
     set_process_affinity()
-    
+
     sys.excepthook = global_exception_handler
 
-    if sys.platform != 'win32':
+    if sys.platform != "win32":
         signal.signal(signal.SIGTERM, handle_sigterm)
-        signal.signal(signal.SIGINT, handle_sigterm)
 
     restart_count = 0
     max_restarts = 10
-    
+
     while restart_count < max_restarts:
         try:
-            if sys.platform == 'win32':
+            if sys.platform == "win32":
                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            
+
             asyncio.run(main())
             break
-            
+
         except KeyboardInterrupt:
             logger.info("👋 Interrupted by user")
             break
-            
+
         except Exception as e:
             try:
                 with open(CRASH_FILE, "w", encoding="utf-8") as f:
-                    f.write(f"MAIN LOOP CRASH:\n{type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
+                    f.write(
+                        f"MAIN LOOP CRASH:\n{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+                    )
             except Exception:
                 pass
-                
+
             restart_count += 1
-            logger.error(f"❌ Fatal error (restart {restart_count}/{max_restarts}): {e}", exc_info=True)
+            logger.error(
+                f"❌ Fatal error (restart {restart_count}/{max_restarts}): {e}",
+                exc_info=True,
+            )
             time.sleep(5)

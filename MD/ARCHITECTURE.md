@@ -2,219 +2,90 @@
 
 ## Общая схема
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Telegram Users                                │
-└─────────────────────────────────┬───────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        Telegram Bot (bot.py)                           │
-│                  Aiogram 3.x + FSM (States)                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │  Handlers   │  │  Keyboards  │  │   Repos     │  │  Services   │  │
-│  │  /user/     │  │  /user/     │  │  /repo/     │  │  /utils/    │  │
-│  │  /admin/    │  │  /admin/    │  │             │  │             │  │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  │
-└────────────────────────────┬────────────────────────────────────────────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  PostgreSQL     │  │  Redis          │  │  Web Server    │
-│  (database/)    │  │  (Celery)       │  │  (sub_server)  │
-│                 │  │                 │  │  Port: 2082    │
-│  - users        │  │  - Queue        │  │  /sub?id=xxx   │
-│  - subs         │  │  - Cache        │  │                │
-│  - groups       │  │                 │  │                │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-         │                   │                   │
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  Celery Worker │  │  Checker SVC   │  │  VPN Clients   │
-│  (tasks.py)    │  │  Port: 8081    │  │  v2rayNG       │
-│                 │  │  Proxy Check   │  │  FlClash       │
-│  - collector   │  │                 │  │  Clash         │
-│  - stability   │  │                 │  │                │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+```text
+Telegram users
+    |
+    v
+VPN_Bot (Aiogram, polling)
+    |\
+    | +--> SubscriptionServer (HTTP :2082, /sub)
+    |
+    +--> PostgreSQL (users, groups, subscriptions, config)
+    |
+    +--> Redis (Celery broker/backend)
+            |
+            +--> VPN_Worker (queues: high_priority, low_priority)
+            +--> VPN_Beat (periodic tasks)
+
+CheckerSVC (HTTP :8081) <--- bot/worker отправляют проверки прокси
+Admin API (FastAPI :3000) ---> чтение статистики/управление сервисами
 ```
 
-## Компоненты системы
+## Ключевые процессы
 
-### 1. Telegram Bot (`bot.py`)
-Основной процесс бота, обрабатывающий команды пользователей.
+### `VPN_Bot` (`bot.py`)
 
-**Функции:**
-- Инициализация БД при старте
-- Регистрация роутеров (user/admin)
-- Запуск фоновых задач (BackgroundTasks)
-- Подписка на обновления (polling)
-- Уведомление админов об ошибках
+- Точка входа Telegram-бота.
+- Инициализирует БД и роутеры (`handlers/user`, `handlers/admin`).
+- Запускает фоновые процессы и `SubscriptionServer`.
+- Отправляет админам уведомления об ошибках и статусе старта.
 
-**Запуск:**
-```bash
-pm2 start bot.py --name VPN_Bot
+### `SubscriptionServer` (`utils/sub_server.py`)
+
+- Отдает подписки по HTTP.
+- Базовый endpoint: `/sub?id=<telegram_id>`.
+- Порт берется из `WEB_PORT` (по умолчанию `2082`).
+
+### `CheckerSVC` (`utils/checker/service.py`)
+
+- Изолированный сервис проверки прокси.
+- Выполняет сетевые проверки и определяет качество/регион.
+- Обычно работает локально на `127.0.0.1:8081`.
+
+### `Celery` (`celery_app.py`, `tasks/`)
+
+- `VPN_Worker` обрабатывает фоновые задачи в очередях:
+  - `high_priority`: критичные проверки и админские действия.
+  - `low_priority`: коллектор, стабильность, GeoIP.
+- `VPN_Beat` планирует периодические задачи.
+
+Текущие periodic-задачи:
+
+- `run_collector_task` - каждые 30 минут.
+- `check_stability_task` - каждые 30 минут.
+- `update_geoip_task` - раз в 30 дней.
+
+### `Admin API` (`api/main.py`)
+
+- Дополнительный FastAPI-сервис для администрирования.
+- Предоставляет endpoints статистики, инвентаря, system status и действий с PM2.
+- По умолчанию порт `3000`.
+
+## Данные и репозитории
+
+- Модели и engine: `database/core.py`, `database/models.py`.
+- Репозитории доступа к данным: `database/repo/`.
+- Основные сущности: пользователи, группы, подписки, источники, системные настройки.
+
+## Поток запроса пользователя
+
+```text
+Telegram update -> Aiogram router -> handler
+handler -> repo/service -> DB и/или CheckerSVC
+handler -> ответ пользователю (message/edit)
 ```
 
-### 2. Subscription Server (`utils/sub_server.py`)
-Веб-сервер для раздачи подписок по URL.
+## Основные конфиги (`config.py`)
 
-**Параметры:**
-- Порт: `config.WEB_PORT` (по умолчанию 2082)
-- Эндпоинт: `/sub?id={user_id}`
+- `BOT_TOKEN`, `ADMIN_IDS` - доступ к Telegram и админке.
+- `DB_URL` - подключение к PostgreSQL.
+- `REDIS_URL` - брокер/результаты Celery.
+- `PUBLIC_IP`, `WEB_PORT` - генерация и выдача ссылок подписки.
+- `CHECKER_PORT`, `CHECKER_URL` - интеграция с checker-сервисом.
+- `EXTERNAL_SUB_URL`, `public_domain` - опциональные публичные настройки.
 
-**Поддерживаемые форматы:**
-- `vless://` - plain text (по умолчанию)
-- `?format=clash` - Clash YAML
-- `?format=base64` - Base64 encoded
+## Почему такая архитектура
 
-### 3. Checker Microservice (`utils/checker/service.py`)
-Отдельный легковесный сервис для проверки прокси.
-
-**Функции:**
-- HTTP ping
-- HTTPS handshake проверка
-- Определение страны (GeoIP)
-- AI/ChatGPT доступность
-
-**Порт:** 8081 (локально)
-
-### 4. Celery Worker (`celery_app.py`, `tasks.py`)
-Очередь задач для фоновой обработки.
-
-**Задачи:**
-- `run_collector_task` - сбор прокси из интернета (каждые 10 мин)
-- `check_stability_task` - проверка стабильности серверов (каждые 10 мин)
-
-### 5. Background Tasks (`utils/background.py`)
-Python asyncio scheduler для запуска Celery задач.
-
----
-
-## База данных (PostgreSQL)
-
-### Таблицы
-
-#### `users`
-| Поле | Тип | Описание |
-|------|-----|----------|
-| id | BigInteger | Telegram ID пользователя |
-| username | String | Username (nullable) |
-| country_filter | Text | Фильтр стран через запятую |
-| tags_filter | Text | Фильтр тегов (stable,ai,fast,wl) |
-| subscription_limit | Integer | Лимит серверов в подписке |
-| created_at | DateTime | Дата регистрации |
-
-#### `subscriptions`
-| Поле | Тип | Описание |
-|------|-----|----------|
-| id | Integer | ID записи |
-| vless_key | Text | Полная VLESS ссылка |
-| region | String | Страна/регион |
-| latency_ms | Integer | Пинг в миллисекундах |
-| ai_available | Boolean | Доступен ли для AI |
-| is_active | Boolean | Активен/отключен |
-| death_count | Integer | Количество "смертей" |
-| stability_streak | Integer | Непрерывная работа |
-
-#### `user_groups`
-| Поле | Тип | Описание |
-|------|-----|----------|
-| id | Integer | ID группы |
-| user_id | BigInteger | Владелец |
-| name | String | Название группы |
-| country_filter | Text | Фильтр стран |
-| tags_filter | Text | Фильтр тегов |
-
-#### `system_config`
-| Поле | Тип | Описание |
-|------|-----|----------|
-| key | String | Ключ настройки |
-| value | Text | Значение |
-
----
-
-## Обработка сообщений (Flow)
-
-```
-User sends callback
-        │
-        ▼
-┌───────────────────┐
-│  Router (aiogram) │
-│  определяет хендлер│
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  Handler Function │
-│  (handlers/user/) │
-└────────┬──────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌───────┐ ┌────────┐
-│  DB   │ │  API   │
-│ Repo  │ │External│
-└───┬───┘ └───┬────┘
-    │         │
-    └────┬────┘
-         │
-         ▼
-┌───────────────────┐
-│ edit_or_answer()  │
-│ (handlers/start)  │
-└────────┬──────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌─────────┐ ┌──────────┐
-│ Edit    │ │ Send New │
-│ Message │ │  Message │
-└─────────┘ └──────────┘
-```
-
----
-
-## Конфигурация (config.py)
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| BOT_TOKEN | SecretStr | Telegram Bot Token |
-| ADMIN_IDS | List[int] | Список ID админов |
-| DB_URL | str | PostgreSQL connection string |
-| CRYPTO_BOT_TOKEN | SecretStr | CryptoBot API Token |
-| REDIS_URL | str | Redis connection string |
-| PUBLIC_IP | str | Публичный IP сервера |
-| WEB_PORT | int | Порт подписочного сервера |
-| CHECKER_PORT | int | Порт чекера |
-| public_domain | str | Домен для HTTPS ссылок |
-| EXTERNAL_SUB_URL | str | Внешняя подписка для микса |
-
----
-
-## Теги серверов
-
-| Тег | Описание | Фильтр |
-|-----|----------|--------|
-| `stable` | Серверы с аптаймом 24ч+ | 🛡 Stable |
-| `ai` | Доступ к ChatGPT/Gemini | AI Ready |
-| `fast` | Пинг < 100ms | Low Latency |
-| `wl` | Reality/Vision | Reality / Vision |
-
----
-
-## Зависимости (основные)
-
-- `aiogram` - Telegram Bot API
-- `sqlalchemy` + `asyncpg` - База данных
-- `celery` - Очередь задач
-- `redis` - Брокер сообщений
-- `aiohttp` - Асинхронные HTTP запросы
-- `psycopg2-binary` - PostgreSQL драйвер
-- `pydantic` - Валидация конфигурации
-- `python-dotenv` - Переменные окружения
+- Разделение checker и бота снижает блокировки event loop.
+- Очереди Celery изолируют тяжелые операции от пользовательских запросов.
+- PM2-оркестрация упрощает перезапуск и мониторинг отдельных процессов.

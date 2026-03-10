@@ -3,7 +3,13 @@ import psutil
 from typing import Dict, Any
 
 from celery_app import app
-from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler, format_time, logger
+from tasks.base import (
+    OptimizedTask,
+    setup_log_rotation,
+    _setup_loop_exception_handler,
+    format_time,
+    logger,
+)
 from database.repo import SubRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
@@ -14,8 +20,17 @@ from config import config
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 
-@app.task(name="tasks.run_admin_recheck_task", base=OptimizedTask, bind=True, time_limit=7200, soft_time_limit=7140)
-async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: int, message_id: int) -> Dict[str, Any]:
+
+@app.task(
+    name="tasks.run_admin_recheck_task",
+    base=OptimizedTask,
+    bind=True,
+    time_limit=7200,
+    soft_time_limit=7140,
+)
+async def run_admin_recheck_task(
+    self, mode: str, total_passes: int, chat_id: int, message_id: int
+) -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
     from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
@@ -24,7 +39,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
     session = AiohttpSession()
     bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=session)
 
-    raw_subs =[]
+    raw_subs = []
     if mode == "all":
         raw_subs = await SubRepo.get_all_subscriptions_for_check()
     elif mode == "active":
@@ -40,18 +55,27 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                 message_id=message_id,
                 text="<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
                 reply_markup=recheck_menu_kb(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         except Exception:
             pass
         await bot.session.close()
         return {"status": "empty"}
 
-    current_subs =[{"id": s.id, "vless_key": s.vless_key, "is_active": s.is_active, "region": s.region} for s in raw_subs]
+    current_subs = [
+        {
+            "id": s.id,
+            "vless_key": s.vless_key,
+            "is_active": s.is_active,
+            "region": s.region,
+        }
+        for s in raw_subs
+    ]
     del raw_subs
 
     global_active = 0
     global_died = 0
+    last_stats = None
 
     try:
         for current_pass in range(1, total_passes + 1):
@@ -60,13 +84,23 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
             total = len(current_subs)
             update_lock = asyncio.Lock()
-            status_buffer =[]
+            status_buffer = []
             region_buffer = []
-            key_buffer =[]
+            key_buffer = []
 
             stats = {
-                "completed": 0, "active": 0, "died": 0, "revived": 0, "saved": 0, 
-                "f1_dead": 0, "f2_dead": 0, "f3_dead": 0, "f4_dead": 0, "f5_dead": 0, "f6_dead": 0, "sys_err": 0
+                "completed": 0,
+                "active": 0,
+                "died": 0,
+                "revived": 0,
+                "saved": 0,
+                "f1_dead": 0,
+                "f2_dead": 0,
+                "f3_dead": 0,
+                "f4_dead": 0,
+                "f5_dead": 0,
+                "f6_dead": 0,
+                "sys_err": 0,
             }
 
             survived_ids = set()
@@ -114,16 +148,16 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
             async def ui_loop():
                 while is_running:
                     try:
-                        await asyncio.sleep(4.0)
+                        await asyncio.sleep(10.0)
                         if not is_running:
                             break
 
                         completed = stats["completed"]
                         elapsed = asyncio.get_event_loop().time() - start_time
-                        
+
                         percent = int((completed / total) * 100) if total > 0 else 0
                         speed = int(completed / elapsed * 60) if elapsed > 0 else 0
-                        
+
                         if completed > 0 and elapsed > 0:
                             calc_speed = completed / elapsed
                             if calc_speed > 0:
@@ -132,28 +166,28 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                                 remaining = 9999
                         else:
                             remaining = 0
-                            
+
                         remaining_str = format_time(remaining)
-                        
+
                         cpu = psutil.cpu_percent()
                         ram = psutil.virtual_memory().percent
 
                         await bot.edit_message_text(
                             chat_id=chat_id,
                             message_id=message_id,
-                    text=f"<blockquote>⚡ <b>6-FACTOR CHECK</b> (Проход {current_pass}/{total_passes})\n\n"
-                        f"📊 Прогресс: <b>{percent}%</b> ({completed}/{total})\n"
-                        f"⚡ Скорость: <b>{speed}</b> серв/мин | ⏱️ Осталось: ~{remaining_str}\n\n"
-                        f"💻 Ресурсы: CPU <b>{cpu}%</b> | RAM <b>{ram}%</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"✅ <b>Рабочих:</b> {stats['active']} | 💀 <b>Потеряно:</b> {stats['died']}\n"
-                        f"🆙 <b>Восстановлено:</b> {stats['revived']} | 💾 <b>Сохранено:</b> {stats['saved']}\n\n"
-                        f"📉 <b>Причины отказа:</b>\n"
-                        f"├ 🚫 TCP: {stats['f1_dead']} | 🔐 SSL: {stats['f2_dead']}\n"
-                        f"├ 🤖 Xray: {stats['f3_dead']} | 🌐 Portal: {stats['f4_dead']}\n"
-                        f"├ 🛡 Route: {stats['f5_dead']} | 🐌 Speed: {stats['f6_dead']}\n"
-                        f"└ ⚙️ SysErr: {stats['sys_err']}</blockquote>",
-                            parse_mode="HTML"
+                            text=f"<blockquote>⚡ <b>6-FACTOR CHECK</b> (Проход {current_pass}/{total_passes})\n\n"
+                            f"📊 Прогресс: <b>{percent}%</b> ({completed}/{total})\n"
+                            f"⚡ Скорость: <b>{speed}</b> серв/мин | ⏱️ Осталось: ~{remaining_str}\n\n"
+                            f"💻 Ресурсы: CPU <b>{cpu}%</b> | RAM <b>{ram}%</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"✅ <b>Рабочих:</b> {stats['active']} | 💀 <b>Потеряно:</b> {stats['died']}\n"
+                            f"🆙 <b>Восстановлено:</b> {stats['revived']} | 💾 <b>Сохранено:</b> {stats['saved']}\n\n"
+                            f"📉 <b>Причины отказа:</b>\n"
+                            f"├ 🚫 TCP: {stats['f1_dead']} | 🔐 SSL: {stats['f2_dead']}\n"
+                            f"├ 🤖 Xray: {stats['f3_dead']} | 🌐 Portal: {stats['f4_dead']}\n"
+                            f"├ 🛡 Route: {stats['f5_dead']} | 🐌 Speed: {stats['f6_dead']}\n"
+                            f"└ ⚙️ SysErr: {stats['sys_err']}</blockquote>",
+                            parse_mode="HTML",
                         )
                     except asyncio.CancelledError:
                         break
@@ -170,7 +204,16 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
 
             async def process_sub(sub):
                 try:
-                    is_alive, region, latency, speed_mbps, ai_avail, no_ads, err, updated_link = await VlessChecker.process_subscription(sub["vless_key"])
+                    (
+                        is_alive,
+                        region,
+                        latency,
+                        speed_mbps,
+                        ai_avail,
+                        no_ads,
+                        err,
+                        updated_link,
+                    ) = await VlessChecker.process_subscription(sub["vless_key"])
 
                     status_upd = None
                     region_upd = None
@@ -180,7 +223,9 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         key_upd = {"id": sub["id"], "vless_key": updated_link}
                         sub["vless_key"] = updated_link
 
-                    is_standard_err = err and any(f"Factor {i}" in str(err) for i in range(1, 7))
+                    is_standard_err = err and any(
+                        f"Factor {i}" in str(err) for i in range(1, 7)
+                    )
 
                     if not is_alive and not is_standard_err:
                         async with update_lock:
@@ -197,22 +242,39 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         status_upd = {
                             "id": sub["id"],
                             "is_active": True,
+                            "was_active": sub["is_active"],
                             "latency_ms": latency,
                             "speed_mbps": speed_mbps,
                             "ai_available": ai_avail,
-                            "no_ads": no_ads
+                            "no_ads": no_ads,
                         }
                         if region and "Unk" not in region:
                             region_upd = {"id": sub["id"], "region": region}
                         result_status = "active"
                     else:
                         err_str = str(err)
-                        if "Factor 1" in err_str: stats["f1_dead"] += 1
-                        elif "Factor 2" in err_str: stats["f2_dead"] += 1
-                        elif "Factor 4" in err_str: stats["f4_dead"] += 1
-                        elif "Factor 5" in err_str: stats["f5_dead"] += 1
-                        elif "Factor 6" in err_str: stats["f6_dead"] += 1
-                        else: stats["f3_dead"] += 1
+                        if err_str.startswith("SYS_ERR"):
+                            stats["sys_err"] += 1
+                            result_status = "sys_err"
+                            status_upd = None
+                            region_upd = None
+                            key_upd = None
+                            async with update_lock:
+                                stats["completed"] += 1
+                            return (True, {"status": result_status})
+
+                        if "Factor 1" in err_str:
+                            stats["f1_dead"] += 1
+                        elif "Factor 2" in err_str:
+                            stats["f2_dead"] += 1
+                        elif "Factor 4" in err_str:
+                            stats["f4_dead"] += 1
+                        elif "Factor 5" in err_str:
+                            stats["f5_dead"] += 1
+                        elif "Factor 6" in err_str:
+                            stats["f6_dead"] += 1
+                        else:
+                            stats["f3_dead"] += 1
 
                         if sub["is_active"]:
                             stats["died"] += 1
@@ -220,17 +282,21 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         status_upd = {
                             "id": sub["id"],
                             "is_active": False,
+                            "was_active": sub["is_active"],
                             "latency_ms": 9999,
                             "speed_mbps": 0.0,
                             "ai_available": False,
-                            "no_ads": False
+                            "no_ads": False,
                         }
                         result_status = "dead"
 
                     async with update_lock:
-                        if status_upd: status_buffer.append(status_upd)
-                        if region_upd: region_buffer.append(region_upd)
-                        if key_upd: key_buffer.append(key_upd)
+                        if status_upd:
+                            status_buffer.append(status_upd)
+                        if region_upd:
+                            region_buffer.append(region_upd)
+                        if key_upd:
+                            key_buffer.append(key_upd)
                         stats["completed"] += 1
 
                     return (True, {"status": result_status})
@@ -244,67 +310,79 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                         stats["completed"] += 1
                     return (False, {"status": "error"})
 
-        processor = None
-        try:
-            processor = CpuAdaptiveProcessor(
-                initial_workers=config.MAX_WORKERS // 2,
-                min_workers=config.MIN_WORKERS,
-                max_workers=config.MAX_WORKERS,
-                target_cpu=85.0,
-                target_ram=85.0
-            )
+            processor = None
+            try:
+                processor = CpuAdaptiveProcessor(
+                    initial_workers=config.MAX_WORKERS,
+                    min_workers=config.MIN_WORKERS,
+                    max_workers=config.MAX_WORKERS,
+                    target_cpu=85.0,
+                    target_ram=85.0,
+                )
 
-            await asyncio.wait_for(
-                processor.process(
+                await processor.process(
                     items=current_subs,
                     process_func=process_sub,
                     on_progress=None,
-                    collect_results=False
-                ),
-                timeout=config.RECHECK_TIMEOUT_PER_PASS
-            )
+                    collect_results=False,
+                )
 
-            if current_pass == total_passes:
-                global_active = stats["active"]
-                global_died = stats["died"]
+                if current_pass == total_passes:
+                    global_active = stats["active"]
+                    global_died = stats["died"]
 
-        except asyncio.TimeoutError:
-            logger.warning(f"Pass {current_pass} timed out after 8 minutes")
-            remaining = total - stats["completed"]
-            if remaining > 0:
-                logger.warning(f"Force completing {remaining} unfinished items")
-                stats["completed"] += remaining
-                stats["sys_err"] += remaining
-            if current_pass == total_passes:
-                global_active = stats["active"]
-                global_died = stats["died"]
-        except Exception as e:
-            logger.error(f"Processing error in pass {current_pass}: {e}")
-            raise
-        finally:
-            is_running = False
-            if processor:
-                processor.cancel()
+            except Exception as e:
+                logger.error(f"Processing error in pass {current_pass}: {e}")
+                raise
+            finally:
+                is_running = False
+                if processor:
+                    processor.cancel()
 
-                try: await flusher_task
-                except Exception: pass
+                    try:
+                        await flusher_task
+                    except Exception:
+                        pass
 
-                await flush_buffers()
+                    await flush_buffers()
 
-                ui_task.cancel()
-                try: await ui_task
-                except Exception: pass
+                    ui_task.cancel()
+                    try:
+                        await ui_task
+                    except Exception:
+                        pass
 
-        if current_pass < total_passes:
-            current_subs =[s for s in current_subs if s["id"] in survived_ids]
-            await asyncio.sleep(2)
+            last_stats = stats
 
-        await SubRepo.cleanup_dead_subs(max_deaths=3)
+            if current_pass < total_passes:
+                current_subs = [s for s in current_subs if s["id"] in survived_ids]
+                await asyncio.sleep(2)
+
+        await SubRepo.cleanup_dead_subs(max_deaths=10)
         await BotState.set_maintenance(False)
-        del current_subs
+
+        if last_stats is None:
+            last_stats = {
+                "saved": 0,
+                "revived": 0,
+                "sys_err": 0,
+                "f1_dead": 0,
+                "f2_dead": 0,
+                "f3_dead": 0,
+                "f4_dead": 0,
+                "f5_dead": 0,
+                "f6_dead": 0,
+            }
 
         try:
-            total_dead = stats['f1_dead'] + stats['f2_dead'] + stats['f3_dead'] + stats['f4_dead'] + stats['f5_dead'] + stats['f6_dead']
+            total_dead = (
+                last_stats["f1_dead"]
+                + last_stats["f2_dead"]
+                + last_stats["f3_dead"]
+                + last_stats["f4_dead"]
+                + last_stats["f5_dead"]
+                + last_stats["f6_dead"]
+            )
 
             await bot.edit_message_text(
                 chat_id=chat_id,
@@ -316,19 +394,19 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🟢 <b>Рабочих серверов:</b> {global_active}\n"
                 f"💀 <b>Потеряно (стало мертвыми):</b> {global_died}\n"
-                f"🆙 <b>Восстановлено:</b> {stats['revived']}\n"
-                f"💾 <b>Сохранено в БД:</b> {stats['saved']}\n"
+                f"🆙 <b>Восстановлено:</b> {last_stats['revived']}\n"
+                f"💾 <b>Сохранено в БД:</b> {last_stats['saved']}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📉 <b>Анализ отказов ({total_dead} всего):</b>\n"
-                f"├ 🚫 TCP недоступен: {stats['f1_dead']}\n"
-                f"├ 🔐 SSL ошибка: {stats['f2_dead']}\n"
-                f"├ 🤖 Xray ошибка: {stats['f3_dead']}\n"
-                f"├ 🌐 Portal блок: {stats['f4_dead']}\n"
-                f"├ 🛡 Route проблема: {stats['f5_dead']}\n"
-                f"└ 🐌 Скорость <25: {stats['f6_dead']}\n\n"
-                f"⚙️ <b>Системных ошибок:</b> {stats['sys_err']}</blockquote>",
+                f"├ 🚫 TCP недоступен: {last_stats['f1_dead']}\n"
+                f"├ 🔐 SSL ошибка: {last_stats['f2_dead']}\n"
+                f"├ 🤖 Xray ошибка: {last_stats['f3_dead']}\n"
+                f"├ 🌐 Portal блок: {last_stats['f4_dead']}\n"
+                f"├ 🛡 Route проблема: {last_stats['f5_dead']}\n"
+                f"└ 🐌 Скорость <25: {last_stats['f6_dead']}\n\n"
+                f"⚙️ <b>Системных ошибок:</b> {last_stats['sys_err']}</blockquote>",
                 reply_markup=recheck_menu_kb(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         except Exception:
             pass
@@ -344,7 +422,7 @@ async def run_admin_recheck_task(self, mode: str, total_passes: int, chat_id: in
                     message_id=message_id,
                     text="<blockquote>⚠️ <b>Проверка прервана по тайм-ауту (2 часа)!</b>\nЧасть серверов была обработана.</blockquote>",
                     reply_markup=recheck_menu_kb(),
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
             except Exception:
                 pass

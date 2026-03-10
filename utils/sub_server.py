@@ -17,17 +17,25 @@ logger = logging.getLogger("SubServer")
 _sub_cache = {"ts": 0.0, "data": None, "params_hash": ""}
 _SUB_CACHE_TTL = 60
 
+
 class SubscriptionServer:
-    _external_cache = {"ts": 0.0, "links":[]}
-    
+    _external_cache = {"ts": 0.0, "links": []}
+
     @staticmethod
-    def _format_name(region_name: str, count: int, speed_mbps: float, ai_available: bool, whitelist: bool, no_ads: bool) -> str:
+    def _format_name(
+        region_name: str,
+        count: int,
+        speed_mbps: float,
+        ai_available: bool,
+        whitelist: bool,
+        no_ads: bool,
+    ) -> str:
         parts = [region_name, f"{count:02d}"]
 
         if speed_mbps > 0:
             parts.append(f"⚡ {speed_mbps:.1f}Mb/s")
 
-        tags =[]
+        tags = []
         if ai_available:
             tags.append("AI")
         if whitelist:
@@ -39,7 +47,7 @@ class SubscriptionServer:
             parts.append("|".join(tags))
 
         return " • ".join(parts)
-        
+
     @staticmethod
     def _rename_vless(link: str, new_name: str) -> str:
         if "#" in link:
@@ -53,7 +61,7 @@ class SubscriptionServer:
 
     @staticmethod
     def _extract_links(text: str, allowed_schemes: set[str]) -> list[str]:
-        links =[]
+        links = []
         if not text:
             return links
 
@@ -90,21 +98,25 @@ class SubscriptionServer:
     async def _get_external_links(cls, allowed_schemes: set[str]) -> list[str]:
         now = time.time()
         if now - cls._external_cache["ts"] < 300:
-            return[k for k in cls._external_cache["links"] if k.split("://", 1)[0].lower() in allowed_schemes]
+            return [
+                k
+                for k in cls._external_cache["links"]
+                if k.split("://", 1)[0].lower() in allowed_schemes
+            ]
 
         external_url = await SystemRepo.get_config("external_sub_url")
         if not external_url:
             external_url = getattr(config, "EXTERNAL_SUB_URL", None)
 
         if not external_url:
-            return[]
+            return []
 
         try:
             timeout = aiohttp.ClientTimeout(total=8)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(external_url) as resp:
                     if resp.status != 200:
-                        return[]
+                        return []
                     raw_text = await resp.text()
 
             text = cls._decode_subscription_text(raw_text)
@@ -114,30 +126,33 @@ class SubscriptionServer:
             return links
         except Exception as e:
             logger.warning(f"External subscription fetch failed: {e}")
-            return[]
+            return []
 
     @staticmethod
     async def handle_subscription(request):
         client_ip = request.remote
-        user_agent = request.headers.get('User-Agent', 'Unknown').lower()
+        user_agent = request.headers.get("User-Agent", "Unknown").lower()
 
         try:
-            user_id_raw = request.query.get('id')
-            format_param = request.query.get('format', '').lower()
-            types_param = request.query.get('types', '').lower()
-            auto_clean_param = request.query.get('auto_clean', '').lower() == 'true'
-            
-            is_clash = any(x in user_agent for x in ['clash', 'flclash', 'stash', 'meta', 'verge'])
-            is_v2raytun = 'v2raytun' in user_agent
-            is_happ = 'happ' in user_agent.lower()
+            user_id_raw = request.query.get("id")
+            format_param = request.query.get("format", "").lower()
+            types_param = request.query.get("types", "").lower()
+            auto_clean_param = request.query.get("auto_clean", "").lower() == "true"
 
-            subs =[]
+            is_clash = any(
+                x in user_agent for x in ["clash", "flclash", "stash", "meta", "verge"]
+            )
+            is_hiddify = "hiddify" in user_agent
+            is_v2raytun = "v2raytun" in user_agent
+            is_happ = "happ" in user_agent.lower()
+
+            subs = []
             use_fragment = False
-            
+
             if user_id_raw:
                 user_id = 0
                 group_name = None
-                
+
                 if "/" in user_id_raw:
                     try:
                         uid_str, g_name = user_id_raw.split("/", 1)
@@ -153,7 +168,7 @@ class SubscriptionServer:
                     use_fragment = user.use_fragment
                     countries_filter = None
                     tags_filter = None
-                    
+
                     if group_name:
                         group = await GroupRepo.get_group_by_name(user_id, group_name)
                         if group:
@@ -162,37 +177,43 @@ class SubscriptionServer:
                                     countries_filter = ["__NONE__"]
                                 else:
                                     countries_filter = group.country_filter.split(",")
-                            
+
                             if group.tags_filter:
                                 tags_filter = group.tags_filter.split(",")
                     else:
                         if user.country_filter:
                             countries_filter = user.country_filter.split(",")
-                        
+
                         if user.tags_filter:
                             tags_filter = user.tags_filter.split(",")
 
                     subs = await SubRepo.get_smart_keys(
-                        regions=countries_filter, 
+                        regions=countries_filter,
                         tags=tags_filter,
                         limit=user.subscription_limit,
-                        auto_clean=auto_clean_param
+                        auto_clean=auto_clean_param,
                     )
                 else:
-                    subs = await SubRepo.get_smart_keys(regions=None, limit=10, auto_clean=auto_clean_param)
+                    subs = await SubRepo.get_smart_keys(
+                        regions=None, limit=10, auto_clean=auto_clean_param
+                    )
             else:
-                subs = await SubRepo.get_smart_keys(regions=None, limit=10, auto_clean=auto_clean_param)
+                subs = await SubRepo.get_smart_keys(
+                    regions=None, limit=10, auto_clean=auto_clean_param
+                )
 
             if not subs:
                 return web.Response(text="", status=200)
 
-            renamed_links =[]
+            renamed_links = []
             region_counters = {}
 
             for sub in subs:
                 region_name = sub.region if sub.region else "🌍 UNK"
-                if region_name not in region_counters: region_counters[region_name] = 1
-                else: region_counters[region_name] += 1
+                if region_name not in region_counters:
+                    region_counters[region_name] = 1
+                else:
+                    region_counters[region_name] += 1
                 count = region_counters[region_name]
 
                 is_wl = SubscriptionServer._is_whitelist_config(sub.vless_key)
@@ -202,54 +223,85 @@ class SubscriptionServer:
                     speed_mbps=sub.speed_mbps,
                     ai_available=sub.ai_available,
                     whitelist=is_wl,
-                    no_ads=sub.no_ads
+                    no_ads=sub.no_ads,
                 )
 
                 base_link = (sub.vless_key or "").strip()
-                
+
                 if use_fragment:
                     if "security=tls" in base_link or "security=reality" in base_link:
-                         if "fragment=" not in base_link:
-                              base_link = LinkParser.update_param(base_link, "fragment", "10-30,10-30,tlshello")
-                              
+                        if "fragment=" not in base_link:
+                            base_link = LinkParser.update_param(
+                                base_link, "fragment", "10-30,10-30,tlshello"
+                            )
+
                 new_link = SubscriptionServer._rename_vless(base_link, final_name)
                 renamed_links.append(new_link)
 
             renamed_links = [k for k in renamed_links if k.startswith("vless://")]
 
-            supported_schemes = {"vless", "vmess", "trojan", "ss", "ssr", "hysteria2", "hy2", "tuic"}
+            supported_schemes = {
+                "vless",
+                "vmess",
+                "trojan",
+                "ss",
+                "ssr",
+                "hysteria2",
+                "hy2",
+                "tuic",
+            }
             if types_param:
                 if types_param == "all":
                     allowed_schemes = supported_schemes
                 else:
-                    allowed_schemes = {t.strip() for t in types_param.split(",") if t.strip() in supported_schemes}
+                    allowed_schemes = {
+                        t.strip()
+                        for t in types_param.split(",")
+                        if t.strip() in supported_schemes
+                    }
             else:
                 allowed_schemes = {"vless"}
 
             if not allowed_schemes:
                 allowed_schemes = {"vless"}
 
-            renamed_links =[k for k in renamed_links if k.split("://", 1)[0].lower() in allowed_schemes]
+            renamed_links = [
+                k
+                for k in renamed_links
+                if k.split("://", 1)[0].lower() in allowed_schemes
+            ]
 
-            external_links = await SubscriptionServer._get_external_links(allowed_schemes)
+            external_links = await SubscriptionServer._get_external_links(
+                allowed_schemes
+            )
             combined_links = renamed_links + external_links
 
-            if format_param in ["clash", "yaml", "yml"] or is_clash:
-                parsed_configs =[]
+            if format_param in ["hiddify", "hdy"] or is_hiddify:
+                text_data = "\n".join(combined_links)
+                response_text = base64.b64encode(text_data.encode("utf-8")).decode(
+                    "utf-8"
+                )
+                filename = "hiddify.txt"
+                content_type = "text/plain; charset=utf-8"
+            elif format_param in ["clash", "yaml", "yml"] or is_clash:
+                parsed_configs = []
                 for k in combined_links:
                     cfg = LinkParser.parse_vless(k)
-                    if cfg: parsed_configs.append(cfg)
+                    if cfg:
+                        parsed_configs.append(cfg)
 
                 response_text = ClashGenerator.generate_conf(parsed_configs)
                 filename = "config.yaml"
                 content_type = "application/x-yaml; charset=utf-8"
-            elif format_param in["raw", "plain", "txt"] or is_v2raytun or is_happ:
+            elif format_param in ["raw", "plain", "txt"] or is_v2raytun or is_happ:
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
-            elif format_param in["base64", "b64"]:
+            elif format_param in ["base64", "b64"]:
                 text_data = "\n".join(combined_links)
-                response_text = base64.b64encode(text_data.encode('utf-8')).decode('utf-8')
+                response_text = base64.b64encode(text_data.encode("utf-8")).decode(
+                    "utf-8"
+                )
                 filename = "config.txt"
                 content_type = "text/plain; charset=utf-8"
             else:
@@ -262,7 +314,7 @@ class SubscriptionServer:
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Profile-Update-Interval": "3600",
                 "Subscription-Userinfo": "upload=0; download=0; total=10737418240000000; expire=0",
-                "Cache-Control": "no-store"
+                "Cache-Control": "no-store",
             }
             return web.Response(text=response_text, headers=headers)
 
@@ -273,11 +325,18 @@ class SubscriptionServer:
     @staticmethod
     async def start():
         app = web.Application()
-        cors = aiohttp_cors.setup(app, defaults={"*": aiohttp_cors.ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*")})
+        cors = aiohttp_cors.setup(
+            app,
+            defaults={
+                "*": aiohttp_cors.ResourceOptions(
+                    allow_credentials=True, expose_headers="*", allow_headers="*"
+                )
+            },
+        )
         cors.add(app.router.add_get("/sub", SubscriptionServer.handle_subscription))
-        app.router.add_get('/', lambda r: web.Response(text="VLESS Bot Online"))
-        
+        app.router.add_get("/", lambda r: web.Response(text="VLESS Bot Online"))
+
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', config.WEB_PORT)
+        site = web.TCPSite(runner, "0.0.0.0", config.WEB_PORT)
         await site.start()

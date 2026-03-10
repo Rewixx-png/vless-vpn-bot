@@ -1,151 +1,125 @@
 # Устранение неполадок
 
-## Частые проблемы
+Короткие сценарии диагностики для продакшен-инстанса.
 
-### Бот не запускается
+## 0) Быстрый чек за 60 секунд
 
-**Ошибка: `ModuleNotFoundError`**
 ```bash
+pm2 list
+redis-cli ping
+curl -sS http://127.0.0.1:2082/sub?id=1
+curl -sS http://127.0.0.1:3000/api/health
+```
+
+Если `pm2 list` показывает `errored/stopped`, сначала перезапустите проблемный процесс и проверьте его логи.
+
+## 1) Бот не запускается
+
+### `ModuleNotFoundError`
+
+```bash
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Ошибка: `Database connection failed`**
+### Ошибка подключения к БД
+
 ```bash
-# Проверьте PostgreSQL
 sudo systemctl status postgresql
-
-# Проверьте DB_URL в .env
-cat .env | grep DB_URL
+python3 - <<'PY'
+from config import config
+print(config.DB_URL)
+PY
 ```
 
-**Ошибка: `Circular import`**
+Проверьте, что в `DB_URL` корректные логин/пароль/хост/база.
+
+### Бот падает сразу после старта
+
 ```bash
-# Проверьте импорты в handlers/user/router.py
-# Убедитесь что нет циклических зависимостей
+pm2 logs VPN_Bot --lines 200
 ```
 
----
+Чаще всего причина: неверный `BOT_TOKEN`, недоступный Redis/БД, или ошибка импорта.
 
-### Ошибки подписки
+## 2) Подписка пустая или не открывается
 
-**Пустая подписка**
-- Проверьте что в БД есть сервера: `SELECT COUNT(*) FROM subscriptions`
-- Проверьте что порт 2082 открыт: `sudo ufw status`
+Проверьте:
 
-**Ошибка: `Bad Request`**
-- Проверьте формат ссылок в БД
-- Проверьте что UUID валидный
+- открыт ли порт `2082` (`sudo ufw status`),
+- есть ли активные подписки в БД,
+- корректен ли `PUBLIC_IP`/`public_domain` в конфиге.
 
----
+Быстрый тест:
 
-### Проблемы сChecker
-
-**Checker Service Offline**
 ```bash
-# Проверьте запущен ли checker
-pm2 list | grep Checker
+curl -v "http://127.0.0.1:2082/sub?id=<TELEGRAM_ID>"
+```
 
-# Перезапустите
+## 3) Checker недоступен
+
+Симптомы: массовые ошибки проверки, в боте статус checker = `OFFLINE`.
+
+```bash
 pm2 restart CheckerSVC
-
-# Проверьте логи
-pm2 logs CheckerSVC
+pm2 logs CheckerSVC --lines 200
+curl -sS -X POST http://127.0.0.1:8081/check -H "Content-Type: application/json" -d '{"config":"vless://test@localhost:443?security=none"}'
 ```
 
----
+Если checker работает только локально - убедитесь, что `CHECKER_URL=http://127.0.0.1:8081`.
 
-### Проблемы с Celery
+## 4) Celery-задачи не выполняются
 
-**Задачи не выполняются**
 ```bash
-# Проверьте Redis
-sudo systemctl status redis
-
-# Проверьте воркера
-pm2 list | grep Worker
-
-# Перезапустите
+redis-cli ping
 pm2 restart VPN_Worker
+pm2 restart VPN_Beat
+pm2 logs VPN_Worker --lines 200
+pm2 logs VPN_Beat --lines 200
 ```
 
----
+Проверьте, что запущены оба процесса: `VPN_Worker` и `VPN_Beat`.
 
-## Логи
+## 5) Admin API не отвечает
 
-### Основные логи
 ```bash
-# Логи бота
-pm2 logs VPN_Bot
-
-# Логи checker
-pm2 logs CheckerSVC
-
-# Логи воркера
-pm2 logs VPN_Worker
+curl -v http://127.0.0.1:3000/api/health
+python3 api/main.py
 ```
 
-### Уровни логирования
-```python
-# Изменить уровень в bot.py
-logging.basicConfig(level=logging.DEBUG)
-```
+Если поднимаете API через PM2/systemd, проверьте корректность команды запуска и занятость порта `3000`.
 
----
+## 6) Полезные логи
 
-## Диагностика
-
-### Проверка БД
 ```bash
-# Подключиться к PostgreSQL
-psql -U user -d dbname
-
-# Проверить таблицы
-\d users
-\d subscriptions
-
-# Количество серверов
-SELECT COUNT(*) FROM subscriptions WHERE is_active = true;
+pm2 logs VPN_Bot --lines 300
+pm2 logs VPN_Worker --lines 300
+pm2 logs VPN_Beat --lines 300
+pm2 logs CheckerSVC --lines 300
 ```
 
-### Проверка сети
+## 7) Безопасный перезапуск всех сервисов
+
 ```bash
-# Проверить порт подписки
-curl http://localhost:2082/sub?id=1
-
-# Проверить checker
-curl -X POST http://127.0.0.1:8081/check \
-  -H "Content-Type: application/json" \
-  -d '{"config":"vless://test@localhost:443"}'
+./start_services.sh
+pm2 list
 ```
 
----
+Если нужно полностью переинициализировать PM2-процессы:
 
-## Скорая помощь
-
-### Полный перезапуск
 ```bash
 pm2 delete all
 ./start_services.sh
 ```
 
-### Очистка и перезапуск
+## 8) Резервная копия БД
+
 ```bash
-# Остановить все
-pm2 delete all
-
-# Очистить логи
-pm2 logs --empty
-
-# Запустить заново
-./start_services.sh
+pg_dump -U <db_user> <db_name> > backup_$(date +%Y%m%d).sql
 ```
 
-### Backup БД
-```bash
-pg_dump -U user dbname > backup_$(date +%Y%m%d).sql
-```
+Восстановление:
 
-### Восстановление БД
 ```bash
-psql -U user dbname < backup_20240101.sql
+psql -U <db_user> <db_name> < backup_YYYYMMDD.sql
 ```

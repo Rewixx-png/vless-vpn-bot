@@ -1,53 +1,32 @@
-# VLESS VPN Bot - Документация
+# Документация VLESS VPN Bot
 
-Добро пожаловать в документацию VLESS VPN Bot!
+Этот раздел содержит практичные документы для запуска, эксплуатации и поддержки проекта.
 
-## 📚 Содержание
+## Карта документации
 
-### Основное
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Архитектура системы
-- [API.md](API.md) - API endpoints и интеграции
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Устранение неполадок
+- [ARCHITECTURE.md](ARCHITECTURE.md) - компоненты, потоки данных, сервисы и зависимости.
+- [API.md](API.md) - HTTP endpoints подписочного сервера, checker и Admin API.
+- [USER_COMMANDS.md](USER_COMMANDS.md) - пользовательские сценарии в Telegram-боте.
+- [ADMIN_COMMANDS.md](ADMIN_COMMANDS.md) - функции админ-панели и операционные действия.
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - диагностика и быстрые восстановительные шаги.
 
-### Использование
-- [USER_COMMANDS.md](USER_COMMANDS.md) - Команды для пользователей
-- [ADMIN_COMMANDS.md](ADMIN_COMMANDS.md) - Команды для админов
+## С чего начать
 
----
+- Если разворачиваете проект с нуля - начните с корневого `README.md`.
+- Если нужно понять устройство системы - откройте `ARCHITECTURE.md`.
+- Если интегрируете внешние сервисы - откройте `API.md`.
+- Если проблема уже в проде - сразу в `TROUBLESHOOTING.md`.
 
-## Быстрый старт
+## Быстрые команды для эксплуатации
 
-### 1. Запуск сервисов
-```bash
-pm2 start bot.py --name VPN_Bot
-pm2 start utils/checker/service.py --name CheckerSVC
-pm2 start celery_app.py --name VPN_Worker
-```
-
-### 2. Проверка статуса
 ```bash
 pm2 list
+pm2 logs VPN_Bot --lines 100
+pm2 logs VPN_Worker --lines 100
+pm2 logs CheckerSVC --lines 100
 ```
 
-### 3. Получить подписку
-```
-http://IP:2082/sub?id=TELEGRAM_ID
-```
+## Полезные ссылки
 
----
-
-## Возможности
-
-- ✅ Автоматическая выдача VLESS подписок
-- ✅ Фильтрация по странам и тегам
-- ✅ Множественные профили
-- ✅ AI/ChatGPT фильтр
-- ✅ Проверка серверов (ping, latency)
-- ✅ Админ-панель
-- ✅ Донат через CryptoBot
-
----
-
-## Поддержка
-
-При проблемах смотрите [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- Подписка пользователя: `http://<SERVER_IP>:2082/sub?id=<TELEGRAM_ID>`
+- Health-check Admin API: `http://<SERVER_IP>:3000/api/health`

@@ -6,6 +6,7 @@ from config import config
 
 logger = logging.getLogger("Scheduler")
 
+
 class BackgroundTasks:
     _tasks = []
     _is_running = False
@@ -23,10 +24,9 @@ class BackgroundTasks:
         logger.warning("🚀 Starting background scheduler...")
 
         cls._tasks = [
-            asyncio.create_task(cls._collector_scheduler(), name="collector_scheduler"),
-            asyncio.create_task(cls._stability_scheduler(), name="stability_scheduler"),
-            asyncio.create_task(cls._geoip_scheduler(), name="geoip_scheduler"),
-            asyncio.create_task(cls._daily_digest_scheduler(), name="daily_digest_scheduler"),
+            asyncio.create_task(
+                cls._daily_digest_scheduler(), name="daily_digest_scheduler"
+            ),
         ]
 
     @classmethod
@@ -49,6 +49,7 @@ class BackgroundTasks:
         while cls._is_running:
             try:
                 from tasks import run_collector_task
+
                 is_maint = await BotState.is_maintenance()
                 if is_maint:
                     logger.warning("⏸️ Collector skipped due to Maintenance Mode")
@@ -69,6 +70,7 @@ class BackgroundTasks:
         while cls._is_running:
             try:
                 from tasks import check_stability_task
+
                 is_maint = await BotState.is_maintenance()
                 if is_maint:
                     logger.warning("⏸️ Stability Check skipped due to Maintenance Mode")
@@ -87,6 +89,7 @@ class BackgroundTasks:
         while cls._is_running:
             try:
                 from tasks import update_geoip_task
+
                 update_geoip_task.delay()
             except asyncio.CancelledError:
                 break
@@ -107,12 +110,16 @@ class BackgroundTasks:
                 target_time = time(9, 0)
 
                 if now.time() >= target_time:
-                    next_run = datetime.combine(now.date(), target_time) + timedelta(days=1)
+                    next_run = datetime.combine(now.date(), target_time) + timedelta(
+                        days=1
+                    )
                 else:
                     next_run = datetime.combine(now.date(), target_time)
 
                 wait_seconds = (next_run - now).total_seconds()
-                logger.info(f"⏰ Daily digest scheduled for {next_run.strftime('%Y-%m-%d %H:%M:%S')} UTC (12:00 MSK), waiting {wait_seconds/3600:.1f} hours")
+                logger.info(
+                    f"⏰ Daily digest scheduled for {next_run.strftime('%Y-%m-%d %H:%M:%S')} UTC (12:00 MSK), waiting {wait_seconds / 3600:.1f} hours"
+                )
 
                 await asyncio.sleep(wait_seconds)
 
