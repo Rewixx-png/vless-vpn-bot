@@ -11,7 +11,6 @@ def user_main_kb(is_admin: bool = False):
     kb.button(text="📡 Статус сети", callback_data="public_stats")
     kb.button(text="⚙️ Фильтры и лимит", callback_data="settings_main")
 
-    kb.button(text="📱 Приложения", callback_data="apps_menu")
     kb.button(text="🆘 Как подключить", callback_data="user_instruction")
 
     kb.button(text="💎 Поддержать проект", callback_data="donate_info")
@@ -19,7 +18,7 @@ def user_main_kb(is_admin: bool = False):
     if is_admin:
         kb.button(text="🔒 Панель Админа", callback_data="admin_home")
 
-    kb.adjust(2, 2, 2, 1, 1)
+    kb.adjust(2, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -172,37 +171,6 @@ def group_view_kb(group_id: int, url: str):
     kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}")
     kb.button(text="🔙 Назад", callback_data="groups_list")
     kb.adjust(2, 2, 1)
-    return kb.as_markup()
-
-
-def apps_os_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🤖 Android", callback_data="apps_os_android")
-    kb.button(text="🍏 iOS", callback_data="apps_os_ios")
-    kb.button(text="💻 Windows", callback_data="apps_os_windows")
-    kb.button(text="🍎 macOS", callback_data="apps_os_macos")
-    kb.button(text="🐧 Linux", callback_data="apps_os_linux")
-    kb.button(text="🔙 Меню", callback_data="home")
-    kb.adjust(2, 2, 2)
-    return kb.as_markup()
-
-
-def apps_cores_kb(os_key: str):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📦 Sing-Box", callback_data=f"apps_c_{os_key}_singbox")
-    kb.button(text="☢️ Xray", callback_data=f"apps_c_{os_key}_xray")
-    kb.button(text="🐝 Clash", callback_data=f"apps_c_{os_key}_clash")
-    kb.button(text="🔙 Назад", callback_data="apps_menu")
-    kb.adjust(1)
-    return kb.as_markup()
-
-
-def apps_links_kb(apps_list: list, os_key: str):
-    kb = InlineKeyboardBuilder()
-    for app in apps_list:
-        kb.button(text=f"⬇️ {app['name']}", url=app["url"])
-    kb.adjust(1)
-    kb.button(text="🔙 Назад", callback_data=f"apps_os_{os_key}")
     return kb.as_markup()
 
 

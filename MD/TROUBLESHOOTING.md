@@ -8,7 +8,6 @@
 pm2 list
 redis-cli ping
 curl -sS http://127.0.0.1:2082/sub?id=1
-curl -sS http://127.0.0.1:3000/api/health
 ```
 
 Если `pm2 list` показывает `errored/stopped`, сначала перезапустите проблемный процесс и проверьте его логи.
@@ -80,16 +79,7 @@ pm2 logs VPN_Beat --lines 200
 
 Проверьте, что запущены оба процесса: `VPN_Worker` и `VPN_Beat`.
 
-## 5) Admin API не отвечает
-
-```bash
-curl -v http://127.0.0.1:3000/api/health
-python3 api/main.py
-```
-
-Если поднимаете API через PM2/systemd, проверьте корректность команды запуска и занятость порта `3000`.
-
-## 6) Полезные логи
+## 5) Полезные логи
 
 ```bash
 pm2 logs VPN_Bot --lines 300
@@ -98,7 +88,7 @@ pm2 logs VPN_Beat --lines 300
 pm2 logs CheckerSVC --lines 300
 ```
 
-## 7) Безопасный перезапуск всех сервисов
+## 6) Безопасный перезапуск всех сервисов
 
 ```bash
 ./start_services.sh
@@ -112,7 +102,7 @@ pm2 delete all
 ./start_services.sh
 ```
 
-## 8) Резервная копия БД
+## 7) Резервная копия БД
 
 ```bash
 pg_dump -U <db_user> <db_name> > backup_$(date +%Y%m%d).sql

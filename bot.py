@@ -17,7 +17,7 @@ from aiogram import Bot, Dispatcher
 from config import config
 
 
-async def memory_monitor():
+async def memory_monitor(bot: Bot):
     process = psutil.Process(os.getpid())
     while True:
         try:
@@ -28,6 +28,10 @@ async def memory_monitor():
                 logger.warning(
                     f"⚠️ High memory usage: {memory_mb:.0f}MB. Triggering GC..."
                 )
+                await Reporter.send_system_log(
+                    bot,
+                    f"High memory usage detected: {memory_mb:.0f}MB (limit={config.MEMORY_LIMIT_MB}MB). Running GC.",
+                )
                 gc.collect()
 
                 memory_mb = process.memory_info().rss / 1024 / 1024
@@ -36,6 +40,10 @@ async def memory_monitor():
                 if memory_mb > config.MEMORY_LIMIT_MB + 50:
                     logger.error(
                         f"🚨 Memory still high after GC ({memory_mb:.0f}MB). Consider restarting."
+                    )
+                    await Reporter.send_system_log(
+                        bot,
+                        f"Memory remains high after GC: {memory_mb:.0f}MB. Consider worker/bot restart.",
                     )
         except Exception as e:
             logger.error(f"Memory monitor error: {e}")
@@ -56,6 +64,7 @@ from utils.background import BackgroundTasks
 from utils.sub_server import SubscriptionServer
 from utils.video import VideoManager
 from utils.checker.api import CheckerAPI
+from utils.action_logging_middleware import ActionLoggingMiddleware
 from utils.reporter import Reporter
 
 loggers_to_silence = [
@@ -259,6 +268,7 @@ async def main():
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
+    dp.update.middleware(ActionLoggingMiddleware(bot))
 
     crashed = await report_crash(bot)
 
@@ -273,7 +283,7 @@ async def main():
     await BackgroundTasks.start_scheduler()
 
     logger.info("🧠 Starting memory monitor...")
-    memory_task = asyncio.create_task(memory_monitor())
+    memory_task = asyncio.create_task(memory_monitor(bot))
 
     logger.info("🌐 Starting subscription server...")
     server_task = asyncio.create_task(SubscriptionServer.start())
@@ -312,6 +322,12 @@ async def main():
         )
 
     await notify_info_topic(bot, startup_msg)
+    await Reporter.send_system_log(
+        bot,
+        "Bot startup completed. "
+        f"database={service_status['database']}, checker={service_status['checker']}, "
+        f"video={service_status['video']}, startup={startup_duration:.1f}s",
+    )
     logger.info(f"✅ Bot started in {startup_duration:.1f}s")
 
     await bot.delete_webhook(drop_pending_updates=True)
@@ -325,6 +341,7 @@ async def main():
         )
     finally:
         logger.info("🛑 Shutting down...")
+        await Reporter.send_system_log(bot, "Bot shutdown sequence started")
 
         memory_task.cancel()
         try:

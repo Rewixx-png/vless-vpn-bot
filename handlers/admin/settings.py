@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from config import config
 from database.repo import SystemRepo
 from utils.checker import VlessChecker
+from utils.reporter import Reporter
 from keyboards.admin import back_to_admin, domain_error_kb
 from handlers.admin.utils import admin_edit_or_answer, safe_edit_message
 
@@ -67,6 +68,10 @@ async def process_domain_input(message: Message, state: FSMContext):
     
     if is_valid:
         await SystemRepo.set_config("public_domain", domain)
+        await Reporter.send_admin_action(
+            message.bot,
+            f"Public domain set by admin {message.from_user.id}: {domain}",
+        )
         await msg.edit_text(
             f"<blockquote>✅ <b>Домен сохранен!</b>\n\n"
             f"Теперь ссылки подписки будут вида:\n"
@@ -87,8 +92,12 @@ async def process_domain_input(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("force_save_domain:"))
 async def force_save_domain(callback: CallbackQuery, state: FSMContext):
     domain = callback.data.split("force_save_domain:")[1]
-    
+
     await SystemRepo.set_config("public_domain", domain)
+    await Reporter.send_admin_action(
+        callback.bot,
+        f"Public domain force-saved by admin {callback.from_user.id}: {domain}",
+    )
     
     await admin_edit_or_answer(
         callback,
@@ -104,5 +113,9 @@ async def force_save_domain(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "delete_domain")
 async def delete_domain(callback: CallbackQuery, state: FSMContext):
     await SystemRepo.delete_config("public_domain")
+    await Reporter.send_admin_action(
+        callback.bot,
+        f"Public domain removed by admin {callback.from_user.id}",
+    )
     await callback.answer("🗑 Домен удален", show_alert=True)
     await show_domain_settings(callback, state)

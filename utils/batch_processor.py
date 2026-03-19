@@ -235,7 +235,7 @@ class CpuAdaptiveProcessor(BatchProcessor):
                 try:
                     success, result = await asyncio.wait_for(
                         process_func(item), 
-                        timeout=40.0
+                        timeout=90.0
                     )
                     stats["completed"] += 1
                     if success: stats["success"] += 1

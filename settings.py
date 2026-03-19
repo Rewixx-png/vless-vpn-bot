@@ -24,4 +24,5 @@ WORKER_SETTINGS = {
 
 BEAT_SCHEDULE = {
     "collector_interval": 3600,
+    "backup_interval": 3600,
 }

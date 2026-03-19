@@ -5,7 +5,7 @@
 ## Карта документации
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - компоненты, потоки данных, сервисы и зависимости.
-- [API.md](API.md) - HTTP endpoints подписочного сервера, checker и Admin API.
+- [API.md](API.md) - HTTP endpoints подписочного сервера и checker.
 - [USER_COMMANDS.md](USER_COMMANDS.md) - пользовательские сценарии в Telegram-боте.
 - [ADMIN_COMMANDS.md](ADMIN_COMMANDS.md) - функции админ-панели и операционные действия.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - диагностика и быстрые восстановительные шаги.
@@ -29,4 +29,3 @@ pm2 logs CheckerSVC --lines 100
 ## Полезные ссылки
 
 - Подписка пользователя: `http://<SERVER_IP>:2082/sub?id=<TELEGRAM_ID>`
-- Health-check Admin API: `http://<SERVER_IP>:3000/api/health`

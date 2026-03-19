@@ -47,6 +47,7 @@ def sources_list_kb(sources: list):
             text="⚡ Запустить Collector", callback_data="src_force_run"
         )
     )
+    kb.row(InlineKeyboardButton(text="🔄 Обновить статус", callback_data="admin_sources"))
     kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_home"))
 
     return kb.as_markup()

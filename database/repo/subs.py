@@ -129,7 +129,10 @@ class SubRepo:
         async with async_session_factory() as session:
             stmt = (
                 select(Subscription.vless_key)
-                .where(Subscription.is_active == True)
+                .where(
+                    Subscription.is_active == True,
+                    Subscription.speed_mbps > 0,
+                )
                 .order_by(Subscription.speed_mbps.desc())
             )
             result = await session.execute(stmt)
@@ -156,7 +159,10 @@ class SubRepo:
         auto_clean: bool = False,
     ) -> list:
         async with async_session_factory() as session:
-            stmt = select(Subscription).where(Subscription.is_active == True)
+            stmt = select(Subscription).where(
+                Subscription.is_active == True,
+                Subscription.speed_mbps > 0,
+            )
 
             if auto_clean:
                 time_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -203,7 +209,10 @@ class SubRepo:
             return cached
 
         async with async_session_factory() as session:
-            stmt = select(Subscription.region).where(Subscription.is_active == True)
+            stmt = select(Subscription.region).where(
+                Subscription.is_active == True,
+                Subscription.speed_mbps > 0,
+            )
             stmt = stmt.distinct().order_by(Subscription.region)
             result = await session.execute(stmt)
             regions = result.scalars().all()

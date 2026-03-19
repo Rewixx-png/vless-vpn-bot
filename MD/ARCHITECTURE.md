@@ -18,7 +18,6 @@ VPN_Bot (Aiogram, polling)
             +--> VPN_Beat (periodic tasks)
 
 CheckerSVC (HTTP :8081) <--- bot/worker отправляют проверки прокси
-Admin API (FastAPI :3000) ---> чтение статистики/управление сервисами
 ```
 
 ## Ключевые процессы
@@ -54,12 +53,6 @@ Admin API (FastAPI :3000) ---> чтение статистики/управле�
 - `run_collector_task` - каждые 30 минут.
 - `check_stability_task` - каждые 30 минут.
 - `update_geoip_task` - раз в 30 дней.
-
-### `Admin API` (`api/main.py`)
-
-- Дополнительный FastAPI-сервис для администрирования.
-- Предоставляет endpoints статистики, инвентаря, system status и действий с PM2.
-- По умолчанию порт `3000`.
 
 ## Данные и репозитории
 

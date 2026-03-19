@@ -1,6 +1,9 @@
 import asyncio
 from typing import Dict, Any
 
+from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
+
 from celery_app import app
 from tasks.base import (
     OptimizedTask,
@@ -13,6 +16,7 @@ from utils.checker import VlessChecker
 from utils.batch_processor import SmartBatchProcessor
 from utils.state import BotState
 from utils.smart_alerts import SmartAlerts
+from utils.reporter import Reporter
 from config import config
 
 
@@ -26,18 +30,32 @@ async def check_stability_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
 
+    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
+
     is_maint = await BotState.is_maintenance()
     if is_maint:
+        await Reporter.send_stability_log(
+            bot,
+            "Stability check skipped: maintenance mode is enabled",
+        )
+        await bot.session.close()
         return {"status": "skipped", "reason": "maintenance"}
 
     subs = await SubRepo.get_candidates_for_stability()
     if not subs:
+        await Reporter.send_stability_log(bot, "Stability check skipped: no candidates")
+        await bot.session.close()
         return {"checked": 0}
 
     worker_count = min(config.MAX_WORKERS, max(config.MIN_WORKERS, len(subs) // 10))
     processor = SmartBatchProcessor(worker_count=worker_count)
 
     old_counts = await StatsRepo.get_regions_counts()
+
+    await Reporter.send_stability_log(
+        bot,
+        f"Stability check started: candidates={len(subs)}, workers={worker_count}",
+    )
 
     def check_one(sub):
         async def _check():
@@ -108,9 +126,25 @@ async def check_stability_task() -> Dict[str, Any]:
         new_counts = await StatsRepo.get_regions_counts()
         await SmartAlerts.process_changes(old_counts, new_counts)
 
+        await Reporter.send_stability_log(
+            bot,
+            f"Stability check finished: candidates={len(subs)}, checked={len(updates)}",
+        )
+
         return {"checked": len(updates)}
     except Exception as e:
         if "SoftTimeLimitExceeded" in type(e).__name__:
             logger.warning("Stability check hit SoftTimeLimitExceeded.")
+            await Reporter.send_stability_log(
+                bot,
+                "Stability check hit soft time limit and exited gracefully",
+            )
             return {"status": "timeout_graceful"}
+        await Reporter.send_error(bot, f"Stability task failed: {e}")
+        await Reporter.send_stability_log(bot, f"Stability task failed: {e}")
         raise
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass

@@ -30,21 +30,36 @@ async def run_collector_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
 
+    bot_instance = Bot(
+        token=config.BOT_TOKEN.get_secret_value(),
+        session=AiohttpSession(),
+    )
+
     is_maint = await BotState.is_maintenance()
     if is_maint:
+        await Reporter.send_collector_log(
+            bot_instance,
+            "Collector skipped: maintenance mode is enabled",
+        )
+        await bot_instance.session.close()
         return {"status": "skipped", "reason": "maintenance"}
 
     enabled_str = await SystemRepo.get_config("collector_enabled")
     if enabled_str == "false":
+        await Reporter.send_collector_log(
+            bot_instance,
+            "Collector skipped: disabled by admin flag (collector_enabled=false)",
+        )
+        await bot_instance.session.close()
         return {"status": "skipped", "reason": "admin_disabled"}
 
     start_time = asyncio.get_event_loop().time()
     result = {}
-    bot_instance = None
 
     try:
-        bot_instance = Bot(
-            token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession()
+        await Reporter.send_collector_log(
+            bot_instance,
+            "Collector run started",
         )
         await Reporter.send_info(
             bot_instance,
@@ -76,12 +91,30 @@ async def run_collector_task() -> Dict[str, Any]:
 
         try:
             await Reporter.send_new_configs(
-                bot_instance, result.get("added", 0), result.get("region_stats", {})
+                bot_instance,
+                result.get("added", 0),
+                result.get("region_stats", {}),
+                meta={
+                    "processed": result.get("processed", 0),
+                    "rejected": result.get("rejected", 0),
+                    "sources_used": result.get("sources_used", 0),
+                    "custom_sources_used": result.get("custom_sources_used", 0),
+                    "duration": duration,
+                },
             )
             await Reporter.send_not_configs(
                 bot_instance,
                 result.get("rejected", 0),
                 result.get("rejected_reasons", {}),
+                meta={"processed": result.get("processed", 0)},
+            )
+            await Reporter.send_collector_log(
+                bot_instance,
+                "Collector run finished: "
+                f"processed={result.get('processed', 0)}, "
+                f"added={result.get('added', 0)}, "
+                f"rejected={result.get('rejected', 0)}, "
+                f"cleaned={cleaned}, duration={duration:.1f}s",
             )
         except asyncio.CancelledError:
             raise
@@ -124,6 +157,10 @@ async def run_collector_task() -> Dict[str, Any]:
                     bot_instance,
                     "⚠️ Сборщик прерван по таймауту (достигнут лимит времени).",
                 )
+                await Reporter.send_collector_log(
+                    bot_instance,
+                    "Collector hit soft time limit and exited gracefully",
+                )
             except Exception:
                 pass
             return {"status": "timeout_graceful"}
@@ -134,6 +171,10 @@ async def run_collector_task() -> Dict[str, Any]:
                     token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession()
                 )
             await Reporter.send_error(bot_instance, f"Collector failed: {str(e)}")
+            await Reporter.send_collector_log(
+                bot_instance,
+                f"Collector failed with exception: {e}",
+            )
         except Exception:
             pass
         raise

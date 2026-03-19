@@ -21,6 +21,89 @@ _SUB_CACHE_TTL = 60
 class SubscriptionServer:
     _external_cache = {"ts": 0.0, "links": []}
 
+    _REGION_RU_MAP = {
+        "de": "Германия",
+        "germany": "Германия",
+        "deutschland": "Германия",
+        "nl": "Нидерланды",
+        "netherlands": "Нидерланды",
+        "the netherlands": "Нидерланды",
+        "us": "США",
+        "usa": "США",
+        "united states": "США",
+        "america": "США",
+        "gb": "Великобритания",
+        "uk": "Великобритания",
+        "united kingdom": "Великобритания",
+        "great britain": "Великобритания",
+        "ru": "Россия",
+        "russia": "Россия",
+        "fr": "Франция",
+        "france": "Франция",
+        "tr": "Турция",
+        "turkey": "Турция",
+        "türkiye": "Турция",
+        "cy": "Кипр",
+        "cyprus": "Кипр",
+        "md": "Молдова",
+        "moldova": "Молдова",
+        "republic of moldova": "Молдова",
+        "pl": "Польша",
+        "poland": "Польша",
+        "it": "Италия",
+        "italy": "Италия",
+        "es": "Испания",
+        "spain": "Испания",
+        "fi": "Финляндия",
+        "finland": "Финляндия",
+        "ee": "Эстония",
+        "estonia": "Эстония",
+        "lv": "Латвия",
+        "latvia": "Латвия",
+        "lt": "Литва",
+        "lithuania": "Литва",
+        "ae": "ОАЭ",
+        "uae": "ОАЭ",
+        "united arab emirates": "ОАЭ",
+        "sg": "Сингапур",
+        "singapore": "Сингапур",
+        "jp": "Япония",
+        "japan": "Япония",
+        "ca": "Канада",
+        "canada": "Канада",
+        "at": "Австрия",
+        "austria": "Австрия",
+        "ch": "Швейцария",
+        "switzerland": "Швейцария",
+        "kz": "Казахстан",
+        "kazakhstan": "Казахстан",
+        "ua": "Украина",
+        "ukraine": "Украина",
+        "unk": "Неизвестно",
+        "unknown": "Неизвестно",
+    }
+
+    @classmethod
+    def _format_region_ru(cls, region_name: str) -> str:
+        raw = (region_name or "").strip()
+        if not raw:
+            return "🌍 Неизвестно"
+
+        flag = "🌍"
+        country_part = raw
+
+        parts = raw.split(" ", 1)
+        if len(parts) == 2 and any(ord(ch) > 127 for ch in parts[0]):
+            flag = parts[0]
+            country_part = parts[1].strip()
+
+        country_key = country_part.lower().strip()
+        display_country = cls._REGION_RU_MAP.get(country_key, country_part)
+        if not display_country:
+            display_country = "Неизвестно"
+
+        return f"{flag} {display_country}".strip()
+
     @staticmethod
     def _format_name(
         region_name: str,
@@ -30,10 +113,7 @@ class SubscriptionServer:
         whitelist: bool,
         no_ads: bool,
     ) -> str:
-        parts = [region_name, f"{count:02d}"]
-
-        if speed_mbps > 0:
-            parts.append(f"⚡ {speed_mbps:.1f}Mb/s")
+        region_display = SubscriptionServer._format_region_ru(region_name)
 
         tags = []
         if ai_available:
@@ -41,12 +121,13 @@ class SubscriptionServer:
         if whitelist:
             tags.append("WL")
         if no_ads:
-            tags.append("🚫 NoAds")
+            tags.append("NoAds")
 
-        if tags:
-            parts.append("|".join(tags))
+        tags_text = ", ".join(tags) if tags else "BASE"
+        speed_text = f"{max(speed_mbps, 0.0):.0f} Mbps"
+        safe_count = max(count, 1)
 
-        return " • ".join(parts)
+        return f"{region_display} {safe_count} | {tags_text} | {speed_text}"
 
     @staticmethod
     def _rename_vless(link: str, new_name: str) -> str:

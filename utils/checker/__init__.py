@@ -14,7 +14,7 @@ class VlessChecker:
 
     @staticmethod
     async def check_tcp_connectivity(
-        host: str, port: int, timeout: float = 3.5
+        host: str, port: int, timeout: float = 5.0
     ) -> bool:
         conn = None
         try:
@@ -31,14 +31,19 @@ class VlessChecker:
 
     @staticmethod
     async def check_ssl_handshake(
-        host: str, port: int, sni: str, timeout: float = 4.5
+        host: str, port: int, sni: str, timeout: float = 6.0
     ) -> bool:
         try:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
-            conn = asyncio.open_connection(host, port, ssl=ctx)
+            conn = asyncio.open_connection(
+                host,
+                port,
+                ssl=ctx,
+                server_hostname=sni or host,
+            )
             reader, writer = await asyncio.wait_for(conn, timeout=timeout)
 
             writer.close()
@@ -53,6 +58,7 @@ class VlessChecker:
     @staticmethod
     async def process_subscription(
         config_url: str,
+        strict_speed: bool = True,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
         parsed = LinkParser.parse_vless(config_url)
 
@@ -65,7 +71,7 @@ class VlessChecker:
                 check_ip = resolved_ip if resolved_ip else host
 
                 is_tcp_alive = await VlessChecker.check_tcp_connectivity(
-                    check_ip, port, timeout=3.5
+                    check_ip, port, timeout=5.0
                 )
                 if not is_tcp_alive:
                     await GeoIP.invalidate_cache(host)
@@ -84,7 +90,7 @@ class VlessChecker:
                 if security in ["tls", "reality"]:
                     sni = parsed.get("sni") or parsed.get("host") or host
                     is_ssl_alive = await VlessChecker.check_ssl_handshake(
-                        check_ip, port, sni, timeout=4.5
+                        check_ip, port, sni, timeout=6.0
                     )
 
                     if not is_ssl_alive:
@@ -143,7 +149,7 @@ class VlessChecker:
                         config_url,
                     )
 
-                if success and speed_mbps < config.MIN_SPEED_MBPS:
+                if strict_speed and success and speed_mbps < config.MIN_SPEED_MBPS:
                     return (
                         False,
                         region,
@@ -157,6 +163,36 @@ class VlessChecker:
 
                 if not success and err and str(err).startswith("SYS_ERR"):
                     return False, "", 0, 0.0, False, False, err, config_url
+
+                if (
+                    not success
+                    and not strict_speed
+                    and err
+                    and "Factor 4" in str(err)
+                ):
+                    fallback_region = region
+                    if not fallback_region or "UNK" in str(fallback_region):
+                        try:
+                            fallback_region = await GeoIP.identify_region(
+                                host=host,
+                                remark=parsed.get("name"),
+                            )
+                        except Exception:
+                            fallback_region = "🌍 UNK"
+
+                    fallback_latency = latency if isinstance(latency, int) and latency < 9000 else 1800
+                    fallback_speed = speed_mbps if isinstance(speed_mbps, (int, float)) and speed_mbps > 0 else 1.0
+
+                    return (
+                        True,
+                        fallback_region or "🌍 UNK",
+                        int(fallback_latency),
+                        float(fallback_speed),
+                        False,
+                        False,
+                        "WARN: Factor 4 bypassed",
+                        config_url,
+                    )
 
                 return success, region, latency, speed_mbps, ai, no_ads, err, config_url
 

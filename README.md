@@ -101,6 +101,7 @@ chmod +x start_services.sh
 
 - `CheckerSVC`
 - `VPN_Worker`
+- `VPN_Worker_Low`
 - `VPN_Beat`
 - `VPN_Bot`
 
@@ -126,13 +127,11 @@ python3 bot.py
 ## Полезные URL
 
 - Подписка пользователя: `http://<SERVER_IP>:2082/sub?id=<TELEGRAM_ID>`
-- Admin API (если запущен `api/main.py`): `http://<SERVER_IP>:3000/api/health`
 
 ## Структура проекта
 
 - `bot.py` - точка входа бота
 - `celery_app.py` - конфигурация Celery и расписания
-- `api/main.py` - FastAPI для админ-панели/автоматизации
 - `handlers/` - роутеры и сценарии Telegram
 - `database/` - модели, репозитории, инициализация БД
 - `tasks/` - фоновые задачи Celery
@@ -159,5 +158,5 @@ python3 bot.py
 ## Безопасность
 
 - Не коммитьте `.env` и токены.
-- Ограничьте доступ к портам `3000` (Admin API) и `2082` (подписки) через firewall/reverse proxy.
+- Ограничьте доступ к порту `2082` (подписки) через firewall/reverse proxy.
 - Для продакшена рекомендуется поставить Nginx/Caddy перед публичными endpoint.

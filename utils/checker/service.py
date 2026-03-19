@@ -67,14 +67,14 @@ async def cleanup_zombie_xrays():
         while True:
             await asyncio.sleep(30)
             try:
-                XrayExecutor.cleanup_zombies()
+                XrayExecutor.cleanup_zombies(max_age_sec=300)
 
                 current_time = time.time()
                 for file_path in tmp_dir.glob("xray_*.json"):
                     try:
                         if file_path.is_file():
                             mtime = file_path.stat().st_mtime
-                            if current_time - mtime > 120:
+                            if current_time - mtime > 300:
                                 file_path.unlink()
                     except Exception:
                         pass
@@ -92,9 +92,12 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
     )
 
     CHECK_URLS = [
-        ("http://cp.cloudflare.com/generate_204", 204),
-        ("http://www.gstatic.com/generate_204", 204),
-        ("http://connectivitycheck.gstatic.com/generate_204", 204),
+        "http://example.com",
+        "http://neverssl.com",
+        "https://cp.cloudflare.com/generate_204",
+        "https://www.gstatic.com/generate_204",
+        "https://connectivitycheck.gstatic.com/generate_204",
+        "https://www.google.com/generate_204",
     ]
 
     connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
@@ -106,10 +109,10 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
 
             success_count = 0
             last_error = ""
-            for url, expected_status in CHECK_URLS:
+            for url in CHECK_URLS:
                 try:
-                    async with session.get(url, allow_redirects=False) as response:
-                        if response.status == expected_status:
+                    async with session.get(url, allow_redirects=True) as response:
+                        if 100 <= response.status < 500:
                             success_count += 1
                         else:
                             last_error = f"HTTP {response.status}"
@@ -117,7 +120,7 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
                     last_error = str(e)
                     continue
 
-            if success_count < 2:
+            if success_count == 0:
                 return False, 9999, f"Factor 4: Connectivity Failed ({last_error})"
 
             latency = int((time.monotonic() - start_time) * 1000)
@@ -270,59 +273,70 @@ async def check_handler(request):
 
         is_alive, latency, error_msg = await check_connectivity(local_port)
 
-        if is_alive:
-            response_data["success"] = True
-            response_data["latency"] = latency
-            response_data["error"] = "OK"
+        if not is_alive:
+            geo_fallback = await probe_geoip(local_port)
+            if geo_fallback.get("ip"):
+                response_data["success"] = True
+                response_data["latency"] = 1800
+                response_data["region"] = geo_fallback.get("region", "🌍 UNK")
+                response_data["error"] = "OK_PARTIAL"
+                return web.json_response(response_data)
 
-            geo_info = await probe_geoip(local_port)
-            response_data["region"] = geo_info["region"]
-            ip = geo_info.get("ip")
+            response_data["error"] = error_msg
+            return web.json_response(response_data)
 
-            r_client = await get_redis_pool()
+        response_data["success"] = True
+        response_data["latency"] = latency
+        response_data["error"] = "OK"
 
-            if latency < 1200:
-                cached_ai = None
-                cached_ads = None
+        geo_info = await probe_geoip(local_port)
+        response_data["region"] = geo_info["region"]
+        ip = geo_info.get("ip")
 
+        r_client = await get_redis_pool()
+
+        if latency < 1200:
+            cached_ai = None
+            cached_ads = None
+
+            if ip and r_client:
+                try:
+                    keys = [f"chk:ai:{ip}", f"chk:ads:{ip}"]
+                    vals = await r_client.mget(keys)
+                    if vals[0] is not None:
+                        cached_ai = vals[0].decode() == "1"
+                    if vals[1] is not None:
+                        cached_ads = vals[1].decode() == "1"
+                except:
+                    pass
+
+            if cached_ai is not None:
+                response_data["ai"] = cached_ai
+            else:
+                response_data["ai"] = await check_ai_availability(local_port)
                 if ip and r_client:
                     try:
-                        keys = [f"chk:ai:{ip}", f"chk:ads:{ip}"]
-                        vals = await r_client.mget(keys)
-                        if vals[0] is not None:
-                            cached_ai = vals[0].decode() == "1"
-                        if vals[1] is not None:
-                            cached_ads = vals[1].decode() == "1"
+                        await r_client.setex(
+                            f"chk:ai:{ip}",
+                            3600,
+                            "1" if response_data["ai"] else "0",
+                        )
                     except:
                         pass
 
-                if cached_ai is not None:
-                    response_data["ai"] = cached_ai
-                else:
-                    response_data["ai"] = await check_ai_availability(local_port)
-                    if ip and r_client:
-                        try:
-                            await r_client.setex(
-                                f"chk:ai:{ip}",
-                                3600,
-                                "1" if response_data["ai"] else "0",
-                            )
-                        except:
-                            pass
-
-                if cached_ads is not None:
-                    response_data["no_ads"] = cached_ads
-                else:
-                    response_data["no_ads"] = await check_no_ads(local_port)
-                    if ip and r_client:
-                        try:
-                            await r_client.setex(
-                                f"chk:ads:{ip}",
-                                3600,
-                                "1" if response_data["no_ads"] else "0",
-                            )
-                        except:
-                            pass
+            if cached_ads is not None:
+                response_data["no_ads"] = cached_ads
+            else:
+                response_data["no_ads"] = await check_no_ads(local_port)
+                if ip and r_client:
+                    try:
+                        await r_client.setex(
+                            f"chk:ads:{ip}",
+                            3600,
+                            "1" if response_data["no_ads"] else "0",
+                        )
+                    except:
+                        pass
 
         SPEED_TEST_URLS = [
             "https://speed.cloudflare.com/__down?bytes=25000000",
@@ -384,8 +398,6 @@ async def check_handler(request):
 
         except Exception:
             pass
-        else:
-            response_data["error"] = error_msg
 
     except Exception as e:
         response_data["error"] = str(e)

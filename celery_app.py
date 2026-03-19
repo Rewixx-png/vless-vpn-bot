@@ -59,6 +59,7 @@ app.conf.task_routes = {
     "tasks.run_collector_task": {"queue": "low_priority"},
     "tasks.check_stability_task": {"queue": "low_priority"},
     "tasks.update_geoip_task": {"queue": "low_priority"},
+    "tasks.run_backup_snapshot_task": {"queue": "low_priority"},
 }
 
 app.conf.beat_schedule = {
@@ -73,6 +74,10 @@ app.conf.beat_schedule = {
     "update-geoip-monthly": {
         "task": "tasks.update_geoip_task",
         "schedule": 2592000.0,
+    },
+    "backup-db-hourly": {
+        "task": "tasks.run_backup_snapshot_task",
+        "schedule": float(BEAT_SCHEDULE.get("backup_interval", 3600.0)),
     },
 }
 

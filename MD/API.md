@@ -1,10 +1,9 @@
 # API и endpoints
 
-Документ описывает три HTTP-контрагента проекта:
+Документ описывает два HTTP-контрагента проекта:
 
 - подписочный сервер (`utils/sub_server.py`),
-- checker-сервис (`utils/checker/service.py`),
-- Admin API (`api/main.py`).
+- checker-сервис (`utils/checker/service.py`).
 
 ## 1) Subscription Server
 
@@ -72,43 +71,7 @@ http://127.0.0.1:8081/check
 }
 ```
 
-## 3) Admin API
-
-Base URL (по умолчанию):
-
-```text
-http://<SERVER_IP>:3000/api
-```
-
-Основные endpoints:
-
-| Метод | Путь | Назначение |
-|---|---|---|
-| `GET` | `/health` | Быстрый health-check (CPU/Memory/Uptime) |
-| `GET` | `/stats` | Системная статистика подписок |
-| `GET` | `/subs` | Список подписок с фильтрами/пагинацией |
-| `DELETE` | `/subs/{sub_id}` | Удаление подписки |
-| `POST` | `/subs/cleanup` | Очистка «мертвых» подписок |
-| `GET` | `/sources` | Список источников |
-| `POST` | `/sources` | Добавление источника |
-| `PUT` | `/sources/{source_id}` | Вкл/выкл источника |
-| `DELETE` | `/sources/{source_id}` | Удаление источника |
-| `GET` | `/users` | Список пользователей |
-| `GET` | `/groups` | Список групп |
-| `GET` | `/system` | Статусы PM2/Redis/DB |
-| `POST` | `/system/restart/{service}` | Перезапуск сервиса через PM2 |
-| `POST` | `/tasks/run-collector` | Принудительный запуск collector-задачи |
-| `POST` | `/tasks/run-stability` | Принудительный запуск stability-задачи |
-
-Примеры:
-
-```bash
-curl "http://127.0.0.1:3000/api/health"
-curl "http://127.0.0.1:3000/api/subs?page=1&per_page=20&is_active=true"
-curl -X POST "http://127.0.0.1:3000/api/tasks/run-collector"
-```
-
-## Модель VLESS-ссылки (кратко)
+## 3) Модель VLESS-ссылки (кратко)
 
 ```text
 vless://UUID@HOST:PORT?encryption=none&security=reality&sni=example.com&type=tcp#NAME
@@ -124,5 +87,5 @@ vless://UUID@HOST:PORT?encryption=none&security=reality&sni=example.com&type=tcp
 ## Безопасность API
 
 - Не публикуйте checker-порт (`8081`) наружу.
-- Ограничьте доступ к Admin API (`3000`) по IP или через auth на reverse proxy.
+- Ограничьте доступ к порту `2082` по IP или через reverse proxy.
 - Не передавайте токены и внутренние URL в публичные клиентские конфиги.

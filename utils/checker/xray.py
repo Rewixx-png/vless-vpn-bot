@@ -146,12 +146,54 @@ class XrayExecutor:
                 pass
     
     @staticmethod
-    def cleanup_zombies():
+    def cleanup_zombies(max_age_sec: int = 300):
         try:
-            import subprocess
-            subprocess.run(["pkill", "-9", "-f", "xray_.*.json"],
-                capture_output=True
-            )
+            import re
+            import time
+            import psutil
+
+            now = time.time()
+            pattern = re.compile(r"/tmp/xray_[0-9a-f]+\.json", re.IGNORECASE)
+
+            for proc in psutil.process_iter(["name", "cmdline", "create_time"]):
+                try:
+                    cmdline = proc.info.get("cmdline") or []
+                    if not cmdline:
+                        continue
+
+                    cmdline_str = " ".join(cmdline)
+                    proc_name = (proc.info.get("name") or "").lower()
+
+                    if "xray" not in proc_name and "/xray" not in cmdline_str:
+                        continue
+
+                    match = pattern.search(cmdline_str)
+                    if not match:
+                        continue
+
+                    config_path = match.group(0)
+                    proc_age = now - float(proc.info.get("create_time") or now)
+                    config_age = proc_age
+
+                    if os.path.exists(config_path):
+                        try:
+                            config_age = now - os.path.getmtime(config_path)
+                        except Exception:
+                            config_age = proc_age
+
+                    if proc_age < max_age_sec and config_age < max_age_sec:
+                        continue
+
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=0.8)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
         except Exception:
             pass
     
