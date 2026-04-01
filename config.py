@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 from typing import List
 from pydantic import SecretStr
 
-
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     ADMIN_IDS: List[int]
@@ -18,7 +17,7 @@ class Settings(BaseSettings):
 
     REPORT_CHAT_ID: int = -1003724265330
 
-    VIDEO_SOURCE_URL: str = "https://github.com/Rewixx-png/rew-host-assets/raw/main/%D0%9D%D0%BE%D0%B2%D1%8B%D0%B9%20%D0%BF%D1%80%D0%BE%D0%BA%D1%82%20114%20%5B33803A3%5D.mp4"
+    VIDEO_SOURCE_URL: str = "https://raw.githubusercontent.com/Rewixx-png/rew-host-assets/main/banner.mp4"
 
     CHECKER_TIMEOUT: float = 25.0
     CONNECTIVITY_TIMEOUT: float = 8.0
@@ -46,9 +45,16 @@ class Settings(BaseSettings):
     public_domain: str | None = None
     EXTERNAL_SUB_URL: str | None = None
 
+    STRICT_RKN_FILTER: bool = True
+    BLOCKED_SNIS: List[str] =[
+        "discord.com", "discord.gg", "rutracker.org", 
+        "googlevideo.com", "youtube.com", "ytimg.com",
+        "instagram.com", "facebook.com", "twitter.com", "x.com",
+        "t.co", "linkedin.com", "netflix.com"
+    ]
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
 
 config = Settings()

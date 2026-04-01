@@ -89,9 +89,10 @@ async def run_admin_recheck_task(
     global_died = 0
     total_died = 0
     last_stats = None
+    effective_total_passes = 1
 
     try:
-        for current_pass in range(1, total_passes + 1):
+        for current_pass in range(1, effective_total_passes + 1):
             if not current_subs:
                 break
 
@@ -121,30 +122,18 @@ async def run_admin_recheck_task(
             start_time = asyncio.get_event_loop().time()
             is_running = True
 
-            async def run_check_with_retries(vless_key: str, attempts: int = 3):
-                for attempt in range(1, attempts + 1):
-                    try:
-                        result = await asyncio.wait_for(
-                            VlessChecker.process_subscription(
-                                vless_key,
-                                strict_speed=False,
-                            ),
-                            timeout=55.0,
-                        )
-                    except asyncio.TimeoutError:
-                        if attempt < attempts:
-                            await asyncio.sleep(0.35 * attempt)
-                            continue
-                        return None, "timeout"
-
-                    err_value = str(result[6]) if len(result) > 6 else ""
-                    if err_value.startswith("SYS_ERR") and attempt < attempts:
-                        await asyncio.sleep(0.35 * attempt)
-                        continue
-
+            async def run_single_check(vless_key: str):
+                try:
+                    result = await asyncio.wait_for(
+                        VlessChecker.process_subscription(
+                            vless_key,
+                            strict_speed=False,
+                        ),
+                        timeout=55.0,
+                    )
                     return result, None
-
-                return None, "timeout"
+                except asyncio.TimeoutError:
+                    return None, "timeout"
 
             async def flush_buffers():
                 to_save_status = None
@@ -214,7 +203,7 @@ async def run_admin_recheck_task(
                         await bot.edit_message_text(
                             chat_id=chat_id,
                             message_id=message_id,
-                            text=f"<blockquote>⚡ <b>6-FACTOR CHECK</b> (Проход {current_pass}/{total_passes})\n\n"
+                            text=f"<blockquote>⚡ <b>CHECK</b> (Проход {current_pass}/{effective_total_passes})\n\n"
                             f"📊 Прогресс: <b>{percent}%</b> ({completed}/{total})\n"
                             f"⚡ Скорость: <b>{speed}</b> серв/мин | ⏱️ Осталось: ~{remaining_str}\n\n"
                             f"💻 Ресурсы: CPU <b>{cpu}%</b> | RAM <b>{ram}%</b>\n"
@@ -222,9 +211,8 @@ async def run_admin_recheck_task(
                             f"✅ <b>Рабочих:</b> {stats['active']} | 💀 <b>Потеряно:</b> {stats['died']}\n"
                             f"🆙 <b>Восстановлено:</b> {stats['revived']} | 💾 <b>Сохранено:</b> {stats['saved']}\n\n"
                             f"📉 <b>Причины отказа:</b>\n"
-                            f"├ 🚫 TCP: {stats['f1_dead']} | 🔐 SSL: {stats['f2_dead']}\n"
-                            f"├ 🤖 Xray: {stats['f3_dead']} | 🌐 Portal: {stats['f4_dead']}\n"
-                            f"├ 🛡 Route: {stats['f5_dead']} | 🐌 Speed: {stats['f6_dead']}\n"
+                            f"├ 🌐 Connectivity: {stats['f4_dead']}\n"
+                            f"├ 🤖 Checker: {stats['f3_dead']}\n"
                             f"└ ⚙️ SysErr: {stats['sys_err']}</blockquote>",
                             parse_mode="HTML",
                         )
@@ -242,22 +230,11 @@ async def run_admin_recheck_task(
             ui_task = asyncio.create_task(ui_loop())
 
             async def process_sub(sub):
-                should_retry_in_next_pass = False
                 try:
-                    should_retry_in_next_pass = (
-                        mode in {"active", "all"}
-                        and sub["is_active"]
-                        and current_pass < total_passes
-                    )
-
-                    first_check, first_error = await run_check_with_retries(
-                        sub["vless_key"], attempts=3
-                    )
+                    first_check, first_error = await run_single_check(sub["vless_key"])
                     if first_error == "timeout" or first_check is None:
                         async with update_lock:
                             stats["sys_err"] += 1
-                            if should_retry_in_next_pass:
-                                next_pass_retry_ids.add(sub["id"])
                             stats["completed"] += 1
                         return (False, {"status": "timeout"})
 
@@ -286,95 +263,10 @@ async def run_admin_recheck_task(
                         sub["vless_key"] = updated_link
 
                     is_standard_err = _is_standard_error(err)
-                    is_sys_err = str(err).startswith("SYS_ERR")
-
-                    needs_confirmation = (
-                        mode in {"active", "all"}
-                        and sub["is_active"]
-                        and not is_alive
-                        and not is_sys_err
-                    ) or (mode == "dead" and (not sub["is_active"]) and is_alive)
-
-                    if needs_confirmation:
-                        confirm_check, confirm_error = await run_check_with_retries(
-                            sub["vless_key"], attempts=3
-                        )
-                        if confirm_error == "timeout" or confirm_check is None:
-                            async with update_lock:
-                                stats["sys_err"] += 1
-                                if should_retry_in_next_pass:
-                                    next_pass_retry_ids.add(sub["id"])
-                                stats["completed"] += 1
-                            return (False, {"status": "timeout"})
-
-                        (
-                            confirm_alive,
-                            confirm_region,
-                            confirm_latency,
-                            confirm_speed,
-                            confirm_ai,
-                            confirm_no_ads,
-                            confirm_err,
-                            confirm_link,
-                        ) = confirm_check
-
-                        if confirm_link != sub["vless_key"]:
-                            key_upd = {"id": sub["id"], "vless_key": confirm_link}
-                            sub["vless_key"] = confirm_link
-
-                        confirm_is_standard_err = _is_standard_error(confirm_err)
-
-                        if mode in {"active", "all"} and sub["is_active"] and not is_alive:
-                            if confirm_alive:
-                                is_alive = True
-                                region = confirm_region
-                                latency = confirm_latency
-                                speed_mbps = confirm_speed
-                                ai_avail = confirm_ai
-                                no_ads = confirm_no_ads
-                                err = confirm_err
-                                is_standard_err = True
-                            elif not confirm_is_standard_err:
-                                async with update_lock:
-                                    stats["sys_err"] += 1
-                                    if should_retry_in_next_pass:
-                                        next_pass_retry_ids.add(sub["id"])
-                                    stats["completed"] += 1
-                                return (False, {"status": "error"})
-                            else:
-                                err = confirm_err
-                                is_standard_err = True
-
-                        elif mode == "dead" and (not sub["is_active"]) and is_alive:
-                            if not confirm_alive:
-                                is_alive = False
-                                region = confirm_region
-                                latency = confirm_latency
-                                speed_mbps = confirm_speed
-                                ai_avail = confirm_ai
-                                no_ads = confirm_no_ads
-                                err = confirm_err
-                                is_standard_err = confirm_is_standard_err
-                                if not is_standard_err:
-                                    async with update_lock:
-                                        stats["sys_err"] += 1
-                                        if should_retry_in_next_pass:
-                                            next_pass_retry_ids.add(sub["id"])
-                                        stats["completed"] += 1
-                                    return (False, {"status": "error"})
-                            else:
-                                region = confirm_region
-                                latency = confirm_latency
-                                speed_mbps = confirm_speed
-                                ai_avail = confirm_ai
-                                no_ads = confirm_no_ads
-                                err = confirm_err
 
                     if not is_alive and not is_standard_err:
                         async with update_lock:
                             stats["sys_err"] += 1
-                            if should_retry_in_next_pass:
-                                next_pass_retry_ids.add(sub["id"])
                             stats["completed"] += 1
                         return (False, {"status": "error"})
 
@@ -405,54 +297,30 @@ async def run_admin_recheck_task(
                             region_upd = None
                             key_upd = None
                             async with update_lock:
-                                if should_retry_in_next_pass:
-                                    next_pass_retry_ids.add(sub["id"])
                                 stats["completed"] += 1
                             return (True, {"status": result_status})
 
-                        factor_code = 3
+                        if sub["is_active"] and (
+                            "Factor 4" in err_str or "Factor 5" in err_str
+                        ):
+                            stats["sys_err"] += 1
+                            result_status = "soft_fail_keep_active"
+                            async with update_lock:
+                                stats["completed"] += 1
+                            return (True, {"status": result_status})
+
                         if "Factor 1" in err_str:
                             stats["f1_dead"] += 1
-                            factor_code = 1
                         elif "Factor 2" in err_str:
                             stats["f2_dead"] += 1
-                            factor_code = 2
                         elif "Factor 4" in err_str:
                             stats["f4_dead"] += 1
-                            factor_code = 4
                         elif "Factor 5" in err_str:
                             stats["f5_dead"] += 1
-                            factor_code = 5
                         elif "Factor 6" in err_str:
                             stats["f6_dead"] += 1
-                            factor_code = 6
                         else:
                             stats["f3_dead"] += 1
-                            factor_code = 3
-
-                        should_retry_dead = (
-                            mode in {"active", "all"}
-                            and sub["is_active"]
-                            and current_pass < total_passes
-                        )
-
-                        if should_retry_dead:
-                            async with update_lock:
-                                next_pass_retry_ids.add(sub["id"])
-                                stats["completed"] += 1
-                            return (True, {"status": "retry"})
-
-                        keep_active_on_transient = (
-                            mode in {"active", "all"}
-                            and sub["is_active"]
-                            and factor_code in {3, 4, 5}
-                        )
-
-                        if keep_active_on_transient:
-                            async with update_lock:
-                                stats["sys_err"] += 1
-                                stats["completed"] += 1
-                            return (True, {"status": "uncertain_keep_active"})
 
                         if sub["is_active"]:
                             stats["died"] += 1
@@ -482,8 +350,6 @@ async def run_admin_recheck_task(
                 except asyncio.CancelledError:
                     async with update_lock:
                         stats["sys_err"] += 1
-                        if should_retry_in_next_pass:
-                            next_pass_retry_ids.add(sub["id"])
                         stats["completed"] += 1
                     return (False, {"status": "cancelled"})
                 except Exception as e:
@@ -491,8 +357,6 @@ async def run_admin_recheck_task(
                         logger.error(f"Process Sub Error: {e}")
                     async with update_lock:
                         stats["sys_err"] += 1
-                        if should_retry_in_next_pass:
-                            next_pass_retry_ids.add(sub["id"])
                         stats["completed"] += 1
                     return (False, {"status": "error"})
 
@@ -540,7 +404,7 @@ async def run_admin_recheck_task(
 
             last_stats = stats
 
-            if current_pass < total_passes:
+            if current_pass < effective_total_passes:
                 if mode in {"active", "all"}:
                     current_subs = [
                         s for s in current_subs if s["id"] in next_pass_retry_ids
@@ -551,7 +415,7 @@ async def run_admin_recheck_task(
                     current_subs = [s for s in current_subs if s["id"] in survived_ids]
                 await asyncio.sleep(2)
 
-        await SubRepo.cleanup_dead_subs(max_deaths=10)
+        await SubRepo.cleanup_dead_subs(max_deaths=20)
         checked_after = await SubRepo.get_subs_by_ids(checked_ids)
         global_active = sum(1 for s in checked_after if s.is_active)
         global_died = total_died
@@ -586,7 +450,7 @@ async def run_admin_recheck_task(
                 text=f"<blockquote>✅ <b>Проверка успешно завершена!</b>\n\n"
                 f"🟢 <b>MAINTENANCE MODE ОТКЛЮЧЕН</b>\n"
                 f"Бот снова доступен для пользователей ✅\n\n"
-                f"📊 <b>Итоговый отчёт:</b> (Проходов: {total_passes})\n"
+                f"📊 <b>Итоговый отчёт:</b> (Проходов: {effective_total_passes})\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🟢 <b>Рабочих серверов:</b> {global_active}\n"
                 f"💀 <b>Потеряно (стало мертвыми):</b> {global_died}\n"
@@ -594,12 +458,8 @@ async def run_admin_recheck_task(
                 f"💾 <b>Сохранено в БД:</b> {last_stats['saved']}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📉 <b>Анализ отказов ({total_dead} всего):</b>\n"
-                f"├ 🚫 TCP недоступен: {last_stats['f1_dead']}\n"
-                f"├ 🔐 SSL ошибка: {last_stats['f2_dead']}\n"
-                f"├ 🤖 Xray ошибка: {last_stats['f3_dead']}\n"
-                f"├ 🌐 Portal блок: {last_stats['f4_dead']}\n"
-                f"├ 🛡 Route проблема: {last_stats['f5_dead']}\n"
-                f"└ 🐌 Скорость &lt;25: {last_stats['f6_dead']}\n\n"
+                f"├ 🌐 Connectivity ошибка: {last_stats['f4_dead']}\n"
+                f"└ 🤖 Checker ошибка: {last_stats['f3_dead']}\n\n"
                 f"⚙️ <b>Системных ошибок:</b> {last_stats['sys_err']}</blockquote>",
                 reply_markup=recheck_menu_kb(),
                 parse_mode="HTML",

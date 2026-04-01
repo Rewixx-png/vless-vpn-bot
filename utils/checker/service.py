@@ -91,14 +91,7 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
         total=config.CONNECTIVITY_TIMEOUT, connect=4.0, sock_read=4.0
     )
 
-    CHECK_URLS = [
-        "http://example.com",
-        "http://neverssl.com",
-        "https://cp.cloudflare.com/generate_204",
-        "https://www.gstatic.com/generate_204",
-        "https://connectivitycheck.gstatic.com/generate_204",
-        "https://www.google.com/generate_204",
-    ]
+    primary_url = "http://cp.cloudflare.com/"
 
     connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
     try:
@@ -107,29 +100,16 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
         ) as session:
             start_time = time.monotonic()
 
-            success_count = 0
-            last_error = ""
-            for url in CHECK_URLS:
-                try:
-                    async with session.get(url, allow_redirects=True) as response:
-                        if 100 <= response.status < 500:
-                            success_count += 1
-                        else:
-                            last_error = f"HTTP {response.status}"
-                except Exception as e:
-                    last_error = str(e)
-                    continue
-
-            if success_count == 0:
-                return False, 9999, f"Factor 4: Connectivity Failed ({last_error})"
-
-            latency = int((time.monotonic() - start_time) * 1000)
-            return True, latency, "OK"
+            async with session.get(primary_url, allow_redirects=True) as response:
+                if 100 <= response.status < 500:
+                    latency = int((time.monotonic() - start_time) * 1000)
+                    return True, latency, "OK"
+                return False, 9999, f"Factor 4: HTTP {response.status}"
 
     except asyncio.TimeoutError:
         return False, 9999, "Factor 4: HTTP Timeout"
     except Exception as e:
-        return False, 9999, f"Factor 4/5: {str(e)}"
+        return False, 9999, f"Factor 4: Connectivity Failed ({str(e)})"
 
 
 async def probe_geoip(local_port: int) -> dict:
@@ -274,14 +254,6 @@ async def check_handler(request):
         is_alive, latency, error_msg = await check_connectivity(local_port)
 
         if not is_alive:
-            geo_fallback = await probe_geoip(local_port)
-            if geo_fallback.get("ip"):
-                response_data["success"] = True
-                response_data["latency"] = 1800
-                response_data["region"] = geo_fallback.get("region", "🌍 UNK")
-                response_data["error"] = "OK_PARTIAL"
-                return web.json_response(response_data)
-
             response_data["error"] = error_msg
             return web.json_response(response_data)
 
