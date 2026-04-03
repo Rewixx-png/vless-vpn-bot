@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
@@ -9,6 +9,7 @@ def user_main_kb(is_admin: bool = False):
         text="Подключиться",
         icon_custom_emoji_id="5364130646207772829",
         callback_data="my_subscription",
+        style="primary",
     )
     kb.button(
         text="Профили",
@@ -20,6 +21,7 @@ def user_main_kb(is_admin: bool = False):
         text="Статус сети",
         icon_custom_emoji_id="6037397706505195857",
         callback_data="public_stats",
+        style="success",
     )
     kb.button(
         text="Фильтры и лимит",
@@ -36,12 +38,14 @@ def user_main_kb(is_admin: bool = False):
         text="TG Прокси",
         icon_custom_emoji_id="5890925363067886150",
         callback_data="tg_proxy_list",
+        style="primary",
     )
 
     kb.button(
         text="Поддержать проект",
         icon_custom_emoji_id="6037083366438737901",
         callback_data="donate_info",
+        style="success",
     )
 
     if is_admin:
@@ -57,6 +61,16 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
+    kb.button(
+        text="Открыть подписку",
+        url=url,
+        style="primary",
+    )
+    kb.button(
+        text="Скопировать ссылку",
+        copy_text=CopyTextButton(text=url),
+        style="success",
+    )
     kb.button(
         text="QR-Код",
         icon_custom_emoji_id="5766975922620076409",
@@ -77,7 +91,7 @@ def sub_action_kb(url: str):
         icon_custom_emoji_id="5938537205847822613",
         callback_data="home",
     )
-    kb.adjust(1, 1, 1, 1)
+    kb.adjust(1, 1, 1, 1, 1, 1)
     return kb.as_markup()
 
 
@@ -129,8 +143,20 @@ def settings_tags_kb(selected_tags: list, group_id: int | None = None):
         text=get_btn("fast", "⚡ High Speed (>100Mbps)"), callback_data=f"{prefix}_fast"
     )
     kb.button(
+        text=get_btn("mobile", "📱 Mobile/LTE"), callback_data=f"{prefix}_mobile"
+    )
+    kb.button(text=get_btn("wifi", "📶 Wi-Fi/Home"), callback_data=f"{prefix}_wifi")
+    kb.button(text=get_btn("mts", "🔴 MTS"), callback_data=f"{prefix}_mts")
+    kb.button(text=get_btn("beeline", "🟡 Beeline"), callback_data=f"{prefix}_beeline")
+    kb.button(text=get_btn("megafon", "🟢 MegaFon"), callback_data=f"{prefix}_megafon")
+    kb.button(text=get_btn("tele2", "⚫ Tele2"), callback_data=f"{prefix}_tele2")
+    kb.button(
         text=get_btn("wl", "🔐 Reality / Vision (Stealth)"),
         callback_data=f"{prefix}_wl",
+    )
+    kb.button(
+        text=get_btn("grpc", "🛰 gRPC Transport"),
+        callback_data=f"{prefix}_grpc",
     )
     kb.button(
         text=get_btn("no_ads", "🚫 No-Ads (AdBlock)"), callback_data=f"{prefix}_no_ads"
@@ -237,12 +263,18 @@ def groups_list_kb(groups: list):
 
 def group_view_kb(group_id: int, url: str):
     kb = InlineKeyboardBuilder()
+    kb.button(text="Открыть подписку", url=url, style="primary")
+    kb.button(
+        text="Скопировать ссылку",
+        copy_text=CopyTextButton(text=url),
+        style="success",
+    )
     kb.button(text="📱 QR-Код", callback_data=f"group_qr_{group_id}")
     kb.button(text="🌍 Выбор стран", callback_data=f"group_edit_countries_{group_id}")
     kb.button(text="⚡ Настройка тегов", callback_data=f"group_edit_tags_{group_id}")
-    kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}")
+    kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}", style="danger")
     kb.button(text="🔙 Назад", callback_data="groups_list")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 2, 2, 1)
     return kb.as_markup()
 
 
@@ -267,7 +299,7 @@ def crypto_amount_kb():
 
 def pay_link_kb(url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="💳 К оплате", url=url)
+    kb.button(text="💳 К оплате", url=url, style="primary")
     kb.button(text="🔙 Назад", callback_data="donate_info")
     kb.adjust(1)
     return kb.as_markup()
@@ -339,7 +371,7 @@ def tg_proxy_kb(proxy_items: list | None = None, offset: int = 0, page_size: int
 
     kb.row(
         InlineKeyboardButton(
-            text="🔄 Обновить список", callback_data="tg_proxy_refresh"
+            text="🔄 Обновить список", callback_data="tg_proxy_refresh", style="primary"
         ),
         InlineKeyboardButton(
             text="Главное меню",

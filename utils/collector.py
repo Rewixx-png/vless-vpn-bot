@@ -10,12 +10,39 @@ from urllib.parse import quote, urlparse
 from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
+from utils.parser import LinkParser
 
 logger = logging.getLogger("Collector")
 
 FIXED_SOURCE_URLS = [
     "https://github.com/igareck/vpn-configs-for-russia/blob/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://github.com/igareck/vpn-configs-for-russia/blob/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+    "https://gist.githubusercontent.com/pythoneer-dev-q/dd66ec52d2a44084a957ba7f4dc33cd0/raw/wifi.txt",
+    "https://gist.githubusercontent.com/pythoneer-dev-q/49c33dd8d4e279611e30a8c6fd938230/raw/mobile.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_part1.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_part1.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_part1.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_part2.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_part3.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part1.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part2.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part3.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_001.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_002.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_003.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_004.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_005.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_006.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_007.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_008.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_009.txt",
+    "https://raw.githubusercontent.com/kort0881/sbornik-vless/refs/heads/main/subs/vless_010.txt",
+    "https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/configtg.txt",
+    "https://raw.githubusercontent.com/MustafaBaqer/VestraNet-Nodes/main/protocols/vless.txt",
+    "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/main/Original-Configs.txt",
+    "https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/main/sub.txt",
 ]
 
 DEFAULT_SOURCES = [
@@ -25,19 +52,36 @@ DEFAULT_SOURCES = [
 
 class SubscriptionCollector:
     MAX_LINKS_PER_BATCH = 40000
+    MIN_ACCEPT_SPEED_MBPS = 1.0
+    BLOCKED_HOSTS = {
+        "in-pl-hn.ray-proxy.ru",
+    }
     _GITHUB_TREE_CACHE_TTL = 600
     _github_tree_cache = {}
 
     @classmethod
     async def run_collection(cls) -> dict:
         db_sources = await SourceRepo.get_enabled_urls()
+        fixed_sources_total = len(FIXED_SOURCE_URLS)
         allowed_sources_set = set(FIXED_SOURCE_URLS)
         allowed_db_sources = [
             url
             for url in db_sources
             if url in allowed_sources_set
         ]
+        ignored_db_sources = [
+            url
+            for url in db_sources
+            if url not in allowed_sources_set
+        ]
         base_sources = list(dict.fromkeys(DEFAULT_SOURCES + allowed_db_sources))
+
+        source_meta = {
+            "fixed_sources_total": fixed_sources_total,
+            "custom_sources_enabled": len(db_sources),
+            "custom_sources_accepted": len(allowed_db_sources),
+            "custom_sources_ignored": len(ignored_db_sources),
+        }
 
         connector = aiohttp.TCPConnector(limit=15)
 
@@ -66,6 +110,9 @@ class SubscriptionCollector:
             tasks = [cls._fetch_url(session, url) for url in all_sources]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        source_meta["sources_used"] = len(all_sources)
+        source_meta["custom_sources_used"] = len(allowed_db_sources)
+
         valid_results = [r for r in results if isinstance(r, str) and len(r) > 10]
 
         combined_text = "\n".join(valid_results)
@@ -79,6 +126,8 @@ class SubscriptionCollector:
         found_links = list(set(found_links))
         del full_text
 
+        reset_deleted = await SubRepo.delete_all_subs()
+
         if not found_links:
             return {
                 "processed": 0,
@@ -86,18 +135,13 @@ class SubscriptionCollector:
                 "rejected": 0,
                 "region_stats": {},
                 "rejected_reasons": {},
-                "sources_used": len(all_sources),
-                "custom_sources_used": len(db_sources),
+                "reset_deleted": reset_deleted,
+                **source_meta,
             }
 
-        existing_keys = await SubRepo.get_all_keys_set()
-        unique_links = []
-        for l in found_links:
-            l = l.strip()
-            if l and l not in existing_keys:
-                unique_links.append(l)
-
-        del found_links, existing_keys
+        unique_links = [l.strip() for l in found_links if l and l.strip()]
+        unique_links = list(dict.fromkeys(unique_links))
+        del found_links
 
         if not unique_links:
             return {
@@ -106,16 +150,16 @@ class SubscriptionCollector:
                 "rejected": 0,
                 "region_stats": {},
                 "rejected_reasons": {},
-                "sources_used": len(all_sources),
-                "custom_sources_used": len(db_sources),
+                "reset_deleted": reset_deleted,
+                **source_meta,
             }
 
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[: cls.MAX_LINKS_PER_BATCH]
 
         result = await cls._check_and_add_batch(unique_links)
-        result["sources_used"] = len(all_sources)
-        result["custom_sources_used"] = len(db_sources)
+        result["reset_deleted"] = reset_deleted
+        result.update(source_meta)
         return result
 
     @staticmethod
@@ -254,7 +298,13 @@ class SubscriptionCollector:
         added_count = 0
         failed_count = 0
         region_stats = {}
-        rejected_reasons = {"dead": 0, "dup_or_bl": 0, "fmt_err": 0, "sys_err": 0}
+        rejected_reasons = {
+            "dead": 0,
+            "blocked_host": 0,
+            "dup_or_bl": 0,
+            "fmt_err": 0,
+            "sys_err": 0,
+        }
 
         processor = CpuAdaptiveProcessor(
             initial_workers=15,
@@ -269,6 +319,38 @@ class SubscriptionCollector:
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "fmt_err"
 
+                parsed = LinkParser.parse_vless(link)
+                if not parsed:
+                    return False, "fmt_err"
+
+                host = str(parsed.get("server", "") or "").strip().lower()
+                if host in cls.BLOCKED_HOSTS:
+                    return False, "blocked_host"
+
+                (
+                    tcp_alive,
+                    tcp_region,
+                    tcp_latency,
+                    tcp_speed,
+                    _,
+                    _,
+                    tcp_err,
+                    updated_link,
+                ) = await VlessChecker.process_subscription(
+                    link,
+                    strict_speed=False,
+                )
+
+                tcp_standard_err = tcp_err and any(
+                    f"Factor {i}" in str(tcp_err) for i in range(1, 7)
+                )
+
+                if not tcp_alive and not tcp_standard_err:
+                    return False, "sys_err"
+
+                if not tcp_alive:
+                    return False, "dead"
+
                 (
                     is_alive,
                     region,
@@ -277,35 +359,58 @@ class SubscriptionCollector:
                     ai_avail,
                     no_ads,
                     err,
+                    strict_updated_link,
+                ) = await VlessChecker.process_subscription(
                     updated_link,
-                ) = await VlessChecker.process_subscription(link)
+                    strict_speed=True,
+                )
 
                 is_standard_err = err and any(
                     f"Factor {i}" in str(err) for i in range(1, 7)
                 )
 
-                if not is_alive and not is_standard_err:
-                    return False, "sys_err"
+                final_region = tcp_region if tcp_region else "🌍 UNK"
+                final_latency = int(tcp_latency) if isinstance(tcp_latency, int) else 9999
+                final_speed = float(tcp_speed or 0.0)
+                final_ai = False
+                final_no_ads = False
+                final_link = strict_updated_link if strict_updated_link else updated_link
 
                 if is_alive:
-                    if not region:
-                        region = "🌍 UNK"
+                    speed = float(speed_mbps or 0.0)
+                    if speed <= cls.MIN_ACCEPT_SPEED_MBPS:
+                        return False, "dead"
 
-                    added = await SubRepo.smart_add_subscription(
-                        vless_key=updated_link,
-                        region=region,
-                        latency=latency,
-                        speed_mbps=speed_mbps,
-                        ai_available=ai_avail,
-                        no_ads=no_ads,
-                    )
-
-                    if added:
-                        return True, {"region": region}
-                    else:
-                        return False, "dup_or_bl"
+                    strict_region = str(region or "").strip()
+                    if strict_region and strict_region != "🌍 UNK":
+                        final_region = strict_region
+                    final_latency = int(latency or final_latency)
+                    final_speed = speed
+                    final_ai = bool(ai_avail)
+                    final_no_ads = bool(no_ads)
                 else:
+                    if not is_standard_err:
+                        return False, "sys_err"
+
+                    err_text = str(err or "")
+                    if "Factor 6" in err_text:
+                        return False, "dead"
+
+                if final_speed <= cls.MIN_ACCEPT_SPEED_MBPS:
                     return False, "dead"
+
+                added = await SubRepo.smart_add_subscription(
+                    vless_key=final_link,
+                    region=final_region,
+                    latency=final_latency,
+                    speed_mbps=final_speed,
+                    ai_available=final_ai,
+                    no_ads=final_no_ads,
+                )
+
+                if added:
+                    return True, {"region": final_region}
+                return False, "dup_or_bl"
 
             except asyncio.CancelledError:
                 raise

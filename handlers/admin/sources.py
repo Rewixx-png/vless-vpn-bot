@@ -14,6 +14,7 @@ from handlers.admin.utils import admin_edit_or_answer
 from tasks import run_collector_task
 from celery_app import app as celery_app
 from utils.reporter import Reporter
+from utils.collector import FIXED_SOURCE_URLS
 
 router = Router()
 
@@ -62,6 +63,11 @@ def _get_collector_runtime_status() -> dict:
 async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
     sources = await SourceRepo.get_all_sources()
     enabled_count = len([s for s in sources if s.is_enabled])
+    fixed_total = len(FIXED_SOURCE_URLS)
+    fixed_set = set(FIXED_SOURCE_URLS)
+    enabled_urls = [s.url for s in sources if s.is_enabled]
+    accepted_custom = len([url for url in enabled_urls if url in fixed_set])
+    ignored_custom = max(enabled_count - accepted_custom, 0)
     runtime = _get_collector_runtime_status()
 
     last_run_raw = await SystemRepo.get_config("collector_last_run")
@@ -69,9 +75,30 @@ async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
     if last_run_raw:
         try:
             last = json.loads(last_run_raw)
+
+            last_sources_used = int(last.get("sources_used", 0) or 0)
+            last_fixed_total = int(last.get("fixed_sources_total", fixed_total) or 0)
+            last_custom_enabled = int(
+                last.get("custom_sources_enabled", last.get("custom_sources_used", 0))
+                or 0
+            )
+            last_custom_accepted = int(
+                last.get("custom_sources_accepted", last.get("custom_sources_used", 0))
+                or 0
+            )
+            last_custom_ignored = int(
+                last.get(
+                    "custom_sources_ignored",
+                    max(last_custom_enabled - last_custom_accepted, 0),
+                )
+                or 0
+            )
+
             last_run_block = (
                 "\n\n<b>Последний запуск collector:</b>\n"
-                f"• Sources: {last.get('sources_used', 0)} (custom: {last.get('custom_sources_used', 0)})\n"
+                f"• Fetch URL-ов: {last_sources_used}\n"
+                f"• Fixed: {last_fixed_total} | custom enabled: {last_custom_enabled}\n"
+                f"• Custom accepted: {last_custom_accepted} | ignored: {last_custom_ignored}\n"
                 f"• Processed: {last.get('processed', 0)}\n"
                 f"• Added: {last.get('added', 0)} | Rejected: {last.get('rejected', 0)}\n"
                 f"• Cleaned(dead): {last.get('cleaned', 0)}"
@@ -81,11 +108,12 @@ async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
 
     text = (
         "<b>🔗 Управление источниками</b>\n\n"
-        "Здесь вы можете добавить ссылки на подписки (доноры).\n"
-        "Бот будет автоматически скачивать оттуда ключи и проверять их.\n\n"
-        f"Всего источников: {len(sources)}\n"
-        f"Включено: {enabled_count}\n"
-        "Базовые источники: 2 (встроенные)\n"
+        "Здесь вы можете хранить кастомные ссылки (доноры).\n"
+        "Collector берет встроенный fixed-список и дополнительно учитывает только совместимые кастомные URL.\n\n"
+        f"Кастом в БД: {len(sources)}\n"
+        f"Кастом включено: {enabled_count} (accepted: {accepted_custom}, ignored: {ignored_custom})\n"
+        f"Fixed встроенные: {fixed_total} (используются всегда)\n"
+        f"Итог базовых URL для сборки: {fixed_total}\n"
         f"Collector active: {len(runtime['active_ids'])} | reserved: {len(runtime['reserved_ids'])}\n"
         f"Очередь low_priority: {runtime['queue_len']}"
         f"{last_run_block}"
@@ -122,11 +150,19 @@ async def add_source(message: Message, state: FSMContext):
 
     success = await SourceRepo.add_source(url, title=None)
     if success:
+        is_accepted = url in set(FIXED_SOURCE_URLS)
         await Reporter.send_admin_action(
             message.bot,
             f"Source added by admin {message.from_user.id}: {url}",
         )
-        await message.answer("✅ Источник добавлен!", reply_markup=back_to_admin())
+        if is_accepted:
+            add_text = "✅ Источник добавлен и будет учитываться collector."
+        else:
+            add_text = (
+                "⚠️ Источник добавлен в БД, но сейчас игнорируется collector "
+                "(не в fixed-allowlist)."
+            )
+        await message.answer(add_text, reply_markup=back_to_admin())
         await state.clear()
         sources = await SourceRepo.get_all_sources()
         await message.answer("🔗 Источники", reply_markup=sources_list_kb(sources))
@@ -177,6 +213,11 @@ async def force_run_collector(callback: CallbackQuery):
 
     sources = await SourceRepo.get_all_sources()
     enabled_count = len([s for s in sources if s.is_enabled])
+    fixed_total = len(FIXED_SOURCE_URLS)
+    fixed_set = set(FIXED_SOURCE_URLS)
+    enabled_urls = [s.url for s in sources if s.is_enabled]
+    accepted_custom = len([url for url in enabled_urls if url in fixed_set])
+    ignored_custom = max(enabled_count - accepted_custom, 0)
 
     active_note = ""
     if runtime["active_ids"]:
@@ -189,8 +230,9 @@ async def force_run_collector(callback: CallbackQuery):
     text = (
         "<b>🚀 Collector запущен вручную</b>\n\n"
         f"Task ID: <code>{task.id}</code>\n"
-        f"Включенных кастом-источников: {enabled_count}\n"
-        "Базовых источников: 2\n\n"
+        f"Fixed встроенные: {fixed_total}\n"
+        f"Кастом включено: {enabled_count} (accepted: {accepted_custom}, ignored: {ignored_custom})\n"
+        f"Итог базовых URL для сборки: {fixed_total}\n\n"
         "Этот экран не обновляется автоматически.\n"
         "Нажмите '🔄 Обновить статус' внизу для актуальных данных."
         f"{active_note}\n\n"

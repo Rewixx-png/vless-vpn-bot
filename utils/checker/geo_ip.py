@@ -1,6 +1,7 @@
 import os
 import re
 import socket
+import urllib.parse
 import aiohttp
 import asyncio
 import geoip2.database
@@ -51,6 +52,35 @@ class GeoIP:
         'UM': '🇺🇲', 'US': '🇺🇸', 'UY': '🇺🇾', 'UZ': '🇺🇿', 'VA': '🇻🇦', 'VC': '🇻🇨', 'VE': '🇻🇪', 'VG': '🇻🇬',
         'VI': '🇻🇮', 'VN': '🇻🇳', 'VU': '🇻🇺', 'WF': '🇼🇫', 'WS': '🇼🇸', 'XK': '🇽🇰', 'YE': '🇾🇪', 'YT': '🇾🇹',
         'ZA': '🇿🇦', 'ZM': '🇿🇲', 'ZW': '🇿🇼'
+    }
+
+    COMMON_REGION_CODES = {
+        "DE",
+        "US",
+        "NL",
+        "RU",
+        "FI",
+        "FR",
+        "GB",
+        "UA",
+        "TR",
+        "KZ",
+        "PL",
+        "SE",
+        "CH",
+        "IT",
+        "ES",
+        "CA",
+        "JP",
+        "KR",
+        "SG",
+        "AE",
+        "IR",
+        "LT",
+        "LV",
+        "EE",
+        "RO",
+        "BG",
     }
 
     @classmethod
@@ -203,6 +233,13 @@ class GeoIP:
     @classmethod
     async def identify_region(cls, session=None, host: str = None, remark: str = None) -> str:
         if remark:
+            remark = str(remark)
+            for _ in range(3):
+                decoded = urllib.parse.unquote(remark)
+                if decoded == remark:
+                    break
+                remark = decoded
+
             for code, flag in cls.FLAGS.items():
                 if flag in remark:
                     return cls.code_to_region(code)
@@ -210,22 +247,42 @@ class GeoIP:
             remark_lower = remark.lower()
             keyword_map = {
                 "germany": "DE", "deutschland": "DE",
-                "russia": "RU", "россия": "RU", "msk": "RU",
+                "russia": "RU", "россия": "RU", "москва": "RU", "msk": "RU", "ru": "RU",
                 "netherlands": "NL", "holland": "NL",
-                "usa": "US", "united states": "US", "america": "US",
+                "usa": "US", "united states": "US", "america": "US", "unitedstates": "US",
                 "uk": "GB", "united kingdom": "GB", "england": "GB",
-                "france": "FR", "finland": "FI", "turkey": "TR",
+                "france": "FR", "fr": "FR", "finland": "FI", "turkey": "TR",
                 "poland": "PL", "sweden": "SE", "ukraine": "UA",
                 "kazakhstan": "KZ", "switzerland": "CH", "italy": "IT",
-                "spain": "ES", "canada": "CA", "japan": "JP",
-                "singapore": "SG", "uae": "AE", "dubai": "AE"
+                "spain": "ES", "canada": "CA", "japan": "JP", "korea": "KR",
+                "singapore": "SG", "uae": "AE", "dubai": "AE",
+                "lithuania": "LT", "латвия": "LV", "литва": "LT", "эстония": "EE",
+                "романия": "RO", "болгария": "BG",
+                "美国": "US", "德国": "DE", "俄罗斯": "RU", "荷兰": "NL", "英国": "GB",
+                "法国": "FR", "芬兰": "FI", "土耳其": "TR", "波兰": "PL", "瑞典": "SE",
+                "瑞士": "CH", "意大利": "IT", "西班牙": "ES", "加拿大": "CA", "日本": "JP",
+                "韩国": "KR", "新加坡": "SG", "阿联酋": "AE", "伊朗": "IR", "立陶宛": "LT",
+                "拉脱维亚": "LV", "爱沙尼亚": "EE",
             }
             for kw, code in keyword_map.items():
                 if re.search(r'\b' + re.escape(kw) + r'\b', remark_lower):
                     return cls.code_to_region(code)
 
+            remark_upper = remark.upper()
+            for code in cls.COMMON_REGION_CODES:
+                if re.search(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", remark_upper):
+                    return cls.code_to_region(code)
+
         if host:
             host_lower = host.lower()
+
+            host_code_match = re.search(
+                r"(?:^|[._-])(de|us|nl|ru|fi|fr|gb|ua|tr|kz|pl|se|ch|it|es|ca|jp|kr|sg|ae|ir|lt|lv|ee|ro|bg)(?:$|[._-])",
+                host_lower,
+            )
+            if host_code_match:
+                return cls.code_to_region(host_code_match.group(1).upper())
+
             tld_match = re.search(r'\.([a-z]{2})$', host_lower)
             if tld_match:
                 tld = tld_match.group(1).upper()
@@ -233,6 +290,102 @@ class GeoIP:
                     return cls.code_to_region(tld)
 
         return "🌍 UNK"
+
+    @classmethod
+    async def identify_region_full(
+        cls,
+        host: str = None,
+        remark: str = None,
+        session: aiohttp.ClientSession | None = None,
+    ) -> str:
+        direct = await cls.identify_region(session=session, host=host, remark=remark)
+        if direct != "🌍 UNK":
+            return direct
+
+        host_value = str(host or "").strip().lower()
+        if not host_value:
+            return "🌍 UNK"
+
+        redis_client = await cls.get_redis()
+        cache_key = f"region:{host_value}"
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    if isinstance(cached, bytes):
+                        return cached.decode("utf-8")
+                    return str(cached)
+            except Exception:
+                pass
+
+        ip = await cls.resolve_host(host_value)
+        if not ip:
+            if redis_client:
+                try:
+                    await redis_client.setex(cache_key, 1800, "🌍 UNK")
+                except Exception:
+                    pass
+            return "🌍 UNK"
+
+        if cls._reader is None and os.path.exists(cls.DB_PATH):
+            try:
+                cls._reader = geoip2.database.Reader(cls.DB_PATH)
+            except Exception:
+                cls._reader = None
+
+        if cls._reader:
+            try:
+                response = cls._reader.country(ip)
+                code = response.country.iso_code
+                if code:
+                    region = cls.code_to_region(code)
+                    if redis_client:
+                        try:
+                            await redis_client.setex(cache_key, 86400, region)
+                        except Exception:
+                            pass
+                    return region
+            except Exception:
+                pass
+
+        region = "🌍 UNK"
+        try:
+            if session is None:
+                timeout = aiohttp.ClientTimeout(total=3)
+                async with aiohttp.ClientSession(timeout=timeout) as local_session:
+                    async with local_session.get(
+                        f"http://ip-api.com/json/{ip}?fields=countryCode",
+                        timeout=2,
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            code = data.get("countryCode")
+                            if code:
+                                region = cls.code_to_region(code)
+            else:
+                async with session.get(
+                    f"http://ip-api.com/json/{ip}?fields=countryCode",
+                    timeout=2,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        code = data.get("countryCode")
+                        if code:
+                            region = cls.code_to_region(code)
+        except Exception:
+            pass
+
+        if redis_client:
+            try:
+                await redis_client.setex(
+                    cache_key,
+                    86400 if region != "🌍 UNK" else 1800,
+                    region,
+                )
+            except Exception:
+                pass
+
+        return region
 
     @classmethod
     async def get_regions_batch(cls, hosts_data: list, session: aiohttp.ClientSession) -> dict:

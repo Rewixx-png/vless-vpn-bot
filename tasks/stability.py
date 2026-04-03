@@ -24,16 +24,9 @@ from config import config
 
 STABILITY_LOCK_KEY = "lock:tasks:check_stability"
 STABILITY_LOCK_TTL_SEC = 3900
-STABILITY_CANDIDATES_LIMIT = 80
-STABILITY_MIN_WORKERS = 3
-STABILITY_MAX_WORKERS = 8
-STABILITY_SOFT_FAIL_FACTORS = ("Factor 3", "Factor 4", "Factor 5")
-STABILITY_RETRY_DELAY_SEC = 0.35
-
-
-def _is_soft_failure(err: str) -> bool:
-    err_text = str(err or "")
-    return any(marker in err_text for marker in STABILITY_SOFT_FAIL_FACTORS)
+STABILITY_CANDIDATES_LIMIT = 5000
+STABILITY_MIN_WORKERS = 10
+STABILITY_MAX_WORKERS = 50
 
 
 async def _acquire_stability_lock() -> tuple[redis.Redis | None, str | None]:
@@ -154,7 +147,10 @@ async def check_stability_task() -> Dict[str, Any]:
                     no_ads,
                     err,
                     _,
-                ) = await VlessChecker.process_subscription(sub.vless_key)
+                ) = await VlessChecker.process_subscription(
+                    sub.vless_key,
+                    strict_speed=False,
+                )
 
                 is_standard_err = err and any(
                     f"Factor {i}" in str(err) for i in range(1, 7)
@@ -162,44 +158,21 @@ async def check_stability_task() -> Dict[str, Any]:
                 if not is_alive and not is_standard_err:
                     return (True, None)
 
-                if not is_alive and _is_soft_failure(err):
-                    await asyncio.sleep(STABILITY_RETRY_DELAY_SEC)
-                    (
-                        retry_alive,
-                        _,
-                        retry_latency,
-                        retry_speed,
-                        retry_ai,
-                        retry_no_ads,
-                        retry_err,
-                        _,
-                    ) = await VlessChecker.process_subscription(sub.vless_key)
-
-                    retry_standard_err = retry_err and any(
-                        f"Factor {i}" in str(retry_err) for i in range(1, 7)
-                    )
-
-                    if not retry_alive and _is_soft_failure(retry_err):
-                        return (True, None)
-
-                    if not retry_alive and not retry_standard_err:
-                        return (True, None)
-
-                    is_alive = retry_alive
-                    latency = retry_latency
-                    speed_mbps = retry_speed
-                    ai_avail = retry_ai
-                    no_ads = retry_no_ads
-
                 return (
                     True,
                     {
                         "id": sub.id,
-                        "is_alive": is_alive,
-                        "latency": latency,
-                        "speed_mbps": speed_mbps,
-                        "ai": ai_avail,
-                        "no_ads": no_ads,
+                        "is_alive": bool(is_alive),
+                        "is_active": bool(is_alive),
+                        "was_active": bool(sub.is_active),
+                        "latency": int(latency) if isinstance(latency, int) else 9999,
+                        "speed_mbps": (
+                            float(sub.speed_mbps or 0.0)
+                            if bool(is_alive)
+                            else 0.0
+                        ),
+                        "ai": bool(sub.ai_available) if bool(is_alive) else False,
+                        "no_ads": bool(sub.no_ads) if bool(is_alive) else False,
                     },
                 )
             except asyncio.CancelledError:
@@ -225,8 +198,8 @@ async def check_stability_task() -> Dict[str, Any]:
             status_updates = [
                 {
                     "id": u["id"],
-                    "is_active": u["is_alive"],
-                    "was_active": True,
+                    "is_active": bool(u.get("is_active", u.get("is_alive", True))),
+                    "was_active": bool(u.get("was_active", True)),
                     "latency_ms": u["latency"],
                     "speed_mbps": u["speed_mbps"],
                     "ai_available": u["ai"],

@@ -9,7 +9,7 @@ from tasks.base import (
     _setup_loop_exception_handler,
     logger,
 )
-from utils.collector import SubscriptionCollector
+from utils.collector import SubscriptionCollector, FIXED_SOURCE_URLS
 from database.repo import SubRepo, SystemRepo, StatsRepo
 from utils.state import BotState
 from utils.smart_alerts import SmartAlerts
@@ -63,7 +63,10 @@ async def run_collector_task() -> Dict[str, Any]:
         )
         await Reporter.send_info(
             bot_instance,
-            "🟢 Стартовал плановый сборщик конфигов (2 фиксированных источника).",
+            (
+                "🟢 Стартовал плановый сборщик: полный ресет БД и загрузка заново "
+                f"({len(FIXED_SOURCE_URLS)} фиксированных источников)."
+            ),
         )
 
         old_counts = await StatsRepo.get_regions_counts()
@@ -78,9 +81,14 @@ async def run_collector_task() -> Dict[str, Any]:
                     "added": result.get("added", 0),
                     "rejected": result.get("rejected", 0),
                     "processed": result.get("processed", 0),
+                    "reset_deleted": result.get("reset_deleted", 0),
                     "cleaned": cleaned,
                     "sources_used": result.get("sources_used", 0),
                     "custom_sources_used": result.get("custom_sources_used", 0),
+                    "fixed_sources_total": result.get("fixed_sources_total", 0),
+                    "custom_sources_enabled": result.get("custom_sources_enabled", 0),
+                    "custom_sources_accepted": result.get("custom_sources_accepted", 0),
+                    "custom_sources_ignored": result.get("custom_sources_ignored", 0),
                 },
                 ensure_ascii=False,
             ),
@@ -99,6 +107,10 @@ async def run_collector_task() -> Dict[str, Any]:
                     "rejected": result.get("rejected", 0),
                     "sources_used": result.get("sources_used", 0),
                     "custom_sources_used": result.get("custom_sources_used", 0),
+                    "fixed_sources_total": result.get("fixed_sources_total", 0),
+                    "custom_sources_enabled": result.get("custom_sources_enabled", 0),
+                    "custom_sources_accepted": result.get("custom_sources_accepted", 0),
+                    "custom_sources_ignored": result.get("custom_sources_ignored", 0),
                     "duration": duration,
                 },
             )
@@ -112,6 +124,11 @@ async def run_collector_task() -> Dict[str, Any]:
                 bot_instance,
                 "Collector run finished: "
                 f"processed={result.get('processed', 0)}, "
+                f"reset_deleted={result.get('reset_deleted', 0)}, "
+                f"fixed={result.get('fixed_sources_total', 0)}, "
+                f"custom_enabled={result.get('custom_sources_enabled', 0)}, "
+                f"custom_accepted={result.get('custom_sources_accepted', 0)}, "
+                f"custom_ignored={result.get('custom_sources_ignored', 0)}, "
                 f"added={result.get('added', 0)}, "
                 f"rejected={result.get('rejected', 0)}, "
                 f"cleaned={cleaned}, duration={duration:.1f}s",

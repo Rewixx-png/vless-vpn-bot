@@ -2,7 +2,7 @@ import time
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select, delete, update, func, text, desc, or_
+from sqlalchemy import select, delete, update, func, text, or_
 from sqlalchemy.orm import load_only
 from database.core import async_session_factory
 from database.models import Subscription
@@ -15,6 +15,62 @@ _session_factory = async_session_factory
 
 _cache = {}
 _cache_ttl = {}
+_MIN_ACTIVE_SPEED_MBPS = 1.0
+
+_TAG_PATTERNS = {
+    "mts": [
+        "mts",
+        "\u043c\u0442\u0441",
+        "%d0%bc%d1%82%d1%81",
+    ],
+    "beeline": [
+        "beeline",
+        "\u0431\u0438\u043b\u0430\u0439\u043d",
+        "%d0%b1%d0%b8%d0%bb%d0%b0%d0%b9%d0%bd",
+    ],
+    "megafon": [
+        "megafon",
+        "\u043c\u0435\u0433\u0430\u0444\u043e\u043d",
+        "%d0%bc%d0%b5%d0%b3%d0%b0%d1%84%d0%be%d0%bd",
+    ],
+    "tele2": [
+        "tele2",
+        "\u0442\u0435\u043b\u04352",
+        "%d1%82%d0%b5%d0%bb%d0%b52",
+    ],
+    "wifi": [
+        "wifi",
+        "wi-fi",
+        "wlan",
+        "home",
+        "fiber",
+        "broadband",
+        "ftth",
+        "\u0432\u0430\u0439\u0444\u0430\u0439",
+        "%d0%b2%d0%b0%d0%b9%d1%84%d0%b0%d0%b9",
+    ],
+}
+
+_MOBILE_EXTRA_PATTERNS = [
+    "mobile",
+    "cell",
+    "lte",
+    "4g",
+    "5g",
+    "sim",
+    "gsm",
+    "yota",
+    "\u043c\u043e\u0431\u0438\u043b",
+    "%d0%bc%d0%be%d0%b1%d0%b8%d0%bb",
+]
+
+
+def _build_link_tag_condition(tokens: list[str]):
+    lowered_link = func.lower(Subscription.vless_key)
+    normalized_tokens = [str(token).strip().lower() for token in tokens if str(token).strip()]
+    if not normalized_tokens:
+        return None
+    return or_(*[lowered_link.like(f"%{token}%") for token in normalized_tokens])
 
 
 def _get_cached(key: str, ttl: int = 300):
@@ -103,7 +159,9 @@ class SubRepo:
                 select(Subscription)
                 .where(Subscription.is_active == True)
                 .order_by(
-                    desc(Subscription.stability_streak), desc(Subscription.speed_mbps)
+                    Subscription.last_checked_at.asc(),
+                    Subscription.stability_streak.asc(),
+                    Subscription.speed_mbps.asc(),
                 )
                 .limit(limit)
             )
@@ -131,7 +189,7 @@ class SubRepo:
                 select(Subscription.vless_key)
                 .where(
                     Subscription.is_active == True,
-                    Subscription.speed_mbps > 0,
+                    Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
                 )
                 .order_by(Subscription.speed_mbps.desc())
             )
@@ -161,7 +219,7 @@ class SubRepo:
         async with async_session_factory() as session:
             stmt = select(Subscription).where(
                 Subscription.is_active == True,
-                Subscription.speed_mbps > 0,
+                Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
             )
 
             if auto_clean:
@@ -175,23 +233,66 @@ class SubRepo:
                     stmt = stmt.where(Subscription.region.in_(regions))
 
             if tags:
-                if "ai" in tags:
+                normalized_tags = {str(tag).strip().lower() for tag in tags if str(tag).strip()}
+
+                if "ai" in normalized_tags:
                     stmt = stmt.where(Subscription.ai_available == True)
 
-                if "fast" in tags:
+                if "fast" in normalized_tags:
                     stmt = stmt.where(Subscription.speed_mbps >= 100.0)
 
-                if "wl" in tags:
+                if "wl" in normalized_tags:
                     stmt = stmt.where(
                         (Subscription.vless_key.like("%security=reality%"))
                         | (Subscription.vless_key.like("%flow=xtls-rprx-vision%"))
                     )
 
-                if "stable" in tags:
+                if "grpc" in normalized_tags:
+                    stmt = stmt.where(
+                        (Subscription.vless_key.ilike("%type=grpc%"))
+                        | (Subscription.vless_key.ilike("%servicename=%"))
+                    )
+
+                if "stable" in normalized_tags:
                     stmt = stmt.where(Subscription.stability_streak >= 144)
 
-                if "no_ads" in tags:
+                if "no_ads" in normalized_tags:
                     stmt = stmt.where(Subscription.no_ads == True)
+
+                if "mts" in normalized_tags:
+                    condition = _build_link_tag_condition(_TAG_PATTERNS.get("mts", []))
+                    if condition is not None:
+                        stmt = stmt.where(condition)
+
+                if "beeline" in normalized_tags:
+                    condition = _build_link_tag_condition(_TAG_PATTERNS.get("beeline", []))
+                    if condition is not None:
+                        stmt = stmt.where(condition)
+
+                if "megafon" in normalized_tags:
+                    condition = _build_link_tag_condition(_TAG_PATTERNS.get("megafon", []))
+                    if condition is not None:
+                        stmt = stmt.where(condition)
+
+                if "tele2" in normalized_tags:
+                    condition = _build_link_tag_condition(_TAG_PATTERNS.get("tele2", []))
+                    if condition is not None:
+                        stmt = stmt.where(condition)
+
+                if "wifi" in normalized_tags:
+                    condition = _build_link_tag_condition(_TAG_PATTERNS.get("wifi", []))
+                    if condition is not None:
+                        stmt = stmt.where(condition)
+
+                if "mobile" in normalized_tags:
+                    mobile_patterns = []
+                    for operator_tag in ("mts", "beeline", "megafon", "tele2"):
+                        mobile_patterns.extend(_TAG_PATTERNS.get(operator_tag, []))
+                    mobile_patterns.extend(_MOBILE_EXTRA_PATTERNS)
+
+                    condition = _build_link_tag_condition(mobile_patterns)
+                    if condition is not None:
+                        stmt = stmt.where(condition)
 
             stmt = stmt.order_by(Subscription.speed_mbps.desc())
 
@@ -211,7 +312,7 @@ class SubRepo:
         async with async_session_factory() as session:
             stmt = select(Subscription.region).where(
                 Subscription.is_active == True,
-                Subscription.speed_mbps > 0,
+                Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
             )
             stmt = stmt.distinct().order_by(Subscription.region)
             result = await session.execute(stmt)
@@ -258,6 +359,13 @@ class SubRepo:
             ids = []
 
             for upd in updates:
+                speed_value = float(upd.get("speed_mbps", 0.0) or 0.0)
+                if speed_value <= _MIN_ACTIVE_SPEED_MBPS:
+                    upd["is_active"] = False
+                    upd["speed_mbps"] = 0.0
+                    upd["ai_available"] = False
+                    upd["no_ads"] = False
+
                 ids.append(upd["id"])
                 case_active.append(
                     f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}"
@@ -399,10 +507,78 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
-    async def delete_all_subs():
+    async def move_subs_to_blacklist(
+        sub_ids: List[int],
+        reason: str = "Admin Bulk Blacklist",
+    ) -> int:
+        if not sub_ids:
+            return 0
+
+        unique_ids_set = set()
+        for sub_id in sub_ids:
+            try:
+                value = int(sub_id)
+            except Exception:
+                continue
+            if value > 0:
+                unique_ids_set.add(value)
+
+        unique_ids = sorted(unique_ids_set)
+        if not unique_ids:
+            return 0
+
+        from database.models import BlacklistedItem
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         async with async_session_factory() as session:
-            await session.execute(delete(Subscription))
+            result = await session.execute(
+                select(Subscription.id, Subscription.vless_key).where(
+                    Subscription.id.in_(unique_ids)
+                )
+            )
+            rows = result.all()
+            if not rows:
+                return 0
+
+            existing_ids = []
+            for row in rows:
+                existing_ids.append(int(row.id))
+                stmt = (
+                    pg_insert(BlacklistedItem)
+                    .values(vless_key=row.vless_key, reason=reason)
+                    .on_conflict_do_nothing(index_elements=["vless_key"])
+                )
+                await session.execute(stmt)
+
+            del_result = await session.execute(
+                delete(Subscription).where(Subscription.id.in_(existing_ids))
+            )
             await session.commit()
+
+        _invalidate_cache("subscription")
+        _invalidate_cache("all_keys_set")
+        _invalidate_cache("regions_")
+
+        try:
+            deleted = int(del_result.rowcount or 0)
+            if deleted >= 0:
+                return deleted
+        except Exception:
+            pass
+        return len(existing_ids)
+
+    @staticmethod
+    async def delete_all_subs() -> int:
+        async with async_session_factory() as session:
+            result = await session.execute(delete(Subscription))
+            await session.commit()
+            _invalidate_cache("subscription")
+            _invalidate_cache("all_keys_set")
+            _invalidate_cache("regions_")
+            try:
+                return int(result.rowcount or 0)
+            except Exception:
+                return 0
 
     @staticmethod
     async def cleanup_dead_subs(max_deaths: int = 5) -> int:
@@ -519,6 +695,9 @@ class SubRepo:
         ai_available: bool = False,
         no_ads: bool = False,
     ):
+        if float(speed_mbps or 0.0) <= _MIN_ACTIVE_SPEED_MBPS:
+            return
+
         async with async_session_factory() as session:
             existing = await session.scalar(
                 select(Subscription).where(Subscription.vless_key == vless_key)
@@ -564,6 +743,9 @@ class SubRepo:
         ai_available: bool = False,
         no_ads: bool = False,
     ) -> bool:
+        if float(speed_mbps or 0.0) <= _MIN_ACTIVE_SPEED_MBPS:
+            return False
+
         is_banned = await BlacklistRepo.is_blacklisted(vless_key)
         if is_banned:
             return False

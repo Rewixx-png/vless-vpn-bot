@@ -1,6 +1,94 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+def _short_text(value: str, max_len: int) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if len(text) <= max_len:
+        return text
+    if max_len <= 1:
+        return text[:max_len]
+    return text[: max_len - 1] + "…"
+
+
+_ADMIN_REGION_MAP = {
+    "unk": "Неизвестно",
+    "unknown": "Неизвестно",
+    "russia": "Россия",
+    "germany": "Германия",
+    "netherlands": "Нидерланды",
+    "italy": "Италия",
+    "sweden": "Швеция",
+    "poland": "Польша",
+    "france": "Франция",
+    "usa": "США",
+    "united states": "США",
+    "uk": "Великобритания",
+    "united kingdom": "Великобритания",
+    "lt": "Литва",
+    "lithuania": "Литва",
+}
+
+
+def _format_admin_region_name(region_raw: str) -> str:
+    raw = str(region_raw or "").strip()
+    if not raw:
+        return "Неизвестно"
+
+    country_part = raw
+    parts = raw.split(" ", 1)
+    if len(parts) == 2 and any(ord(ch) > 127 for ch in parts[0]):
+        country_part = parts[1].strip()
+
+    key = country_part.lower().strip()
+    mapped = _ADMIN_REGION_MAP.get(key)
+    if mapped:
+        return mapped
+
+    if key in {"", "none", "null"}:
+        return "Неизвестно"
+
+    if "unk" in key or "unknown" in key:
+        return "Неизвестно"
+
+    return _short_text(country_part, 18)
+
+
+def _sub_display_name(sub, display_index: int) -> str:
+    region_name = _format_admin_region_name(getattr(sub, "region", ""))
+    safe_index = max(int(display_index or 1), 1)
+    return f"{region_name} {safe_index}"
+
+
+def _sub_button_text(prefix: str, sub, speed: float, display_index: int) -> str:
+    speed_suffix = f" | ⚡️{float(speed):.1f}Mb/s"
+    max_total_len = 64
+    min_name_len = 6
+
+    name = _sub_display_name(sub, display_index)
+    free_space = max_total_len - len(prefix) - len(speed_suffix)
+    name_len = max(min_name_len, free_space)
+    name = _short_text(name, name_len)
+
+    text = f"{prefix}{name}{speed_suffix}"
+    if len(text) > max_total_len:
+        overflow = len(text) - max_total_len
+        name = _short_text(name, max(min_name_len, len(name) - overflow))
+        text = f"{prefix}{name}{speed_suffix}"
+    return text
+
+
+def _bulk_submit_text(
+    mode: str,
+    selected_count: int,
+    total_in_region: int | None = None,
+) -> str:
+    if mode == "exclude":
+        if total_in_region is None:
+            return "🚫 В ЧС всё, кроме выбранного"
+        to_blacklist = max(int(total_in_region) - int(selected_count), 0)
+        return f"🚫 В ЧС всё, кроме выбранного ({to_blacklist})"
+    return f"🚫 Отправить в ЧС ({selected_count})"
+
 
 def main_admin_kb(collector_active: bool = True):
     kb = InlineKeyboardBuilder()
@@ -131,6 +219,11 @@ def regions_kb(regions: list, prefix: str):
     if "manage" in prefix:
         kb.row(
             InlineKeyboardButton(
+                text="☑️ Массовый ЧС", callback_data="admin_bulk_blacklist_menu"
+            )
+        )
+        kb.row(
+            InlineKeyboardButton(
                 text="🚫 Blacklist Unknown", callback_data="admin_delete_unknown"
             )
         )
@@ -142,6 +235,122 @@ def regions_kb(regions: list, prefix: str):
 
     back_callback = "admin_home" if "manage" in prefix else "home"
     kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback))
+    return kb.as_markup()
+
+
+def bulk_blacklist_regions_kb(regions: list, selected_count: int, mode: str = "include"):
+    kb = InlineKeyboardBuilder()
+
+    include_active = mode == "include"
+    include_text = f"{'✅' if include_active else '☑️'} В ЧС выбранное"
+    exclude_text = f"{'✅' if not include_active else '☑️'} Не в ЧС выбранное"
+
+    for region in regions:
+        kb.button(text=str(region), callback_data=f"bulk_bl_region_{region}")
+
+    kb.adjust(3)
+    kb.row(
+        InlineKeyboardButton(text=include_text, callback_data="bulk_bl_mode_include"),
+        InlineKeyboardButton(text=exclude_text, callback_data="bulk_bl_mode_exclude"),
+    )
+    kb.row(
+        InlineKeyboardButton(
+            text=_bulk_submit_text(mode, selected_count),
+            callback_data="bulk_bl_submit",
+        )
+    )
+    kb.row(
+        InlineKeyboardButton(
+            text="🧹 Очистить выбор",
+            callback_data="bulk_bl_clear",
+        )
+    )
+    kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage"))
+    return kb.as_markup()
+
+
+def bulk_blacklist_subs_kb(
+    subs: list,
+    page: int,
+    total_pages: int,
+    selected_ids: set[int],
+    index_offset: int = 0,
+    mode: str = "include",
+    total_in_region: int | None = None,
+    selected_count_override: int | None = None,
+):
+    kb = InlineKeyboardBuilder()
+
+    selected_count = (
+        int(selected_count_override)
+        if selected_count_override is not None
+        else len(selected_ids)
+    )
+
+    include_active = mode == "include"
+    include_text = f"{'✅' if include_active else '☑️'} В ЧС выбранное"
+    exclude_text = f"{'✅' if not include_active else '☑️'} Не в ЧС выбранное"
+
+    for idx, sub in enumerate(subs, start=1):
+        is_selected = sub.id in selected_ids
+        if mode == "exclude":
+            marker = "🛡" if is_selected else "⬜️"
+        else:
+            marker = "✅" if is_selected else "⬜️"
+        speed = float(sub.speed_mbps or 0.0)
+        text = _sub_button_text(
+            f"{marker} #{sub.id} ",
+            sub,
+            speed,
+            display_index=index_offset + idx,
+        )
+        kb.button(text=text, callback_data=f"bulk_bl_toggle_{sub.id}")
+
+    kb.adjust(1)
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️",
+                callback_data=f"bulk_bl_page_{page - 1}",
+            )
+        )
+    nav_buttons.append(
+        InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop")
+    )
+    if page < total_pages - 1:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=f"bulk_bl_page_{page + 1}",
+            )
+        )
+
+    kb.row(*nav_buttons)
+    kb.row(
+        InlineKeyboardButton(text=include_text, callback_data="bulk_bl_mode_include"),
+        InlineKeyboardButton(text=exclude_text, callback_data="bulk_bl_mode_exclude"),
+    )
+    kb.row(
+        InlineKeyboardButton(
+            text=_bulk_submit_text(mode, selected_count, total_in_region),
+            callback_data="bulk_bl_submit",
+        )
+    )
+    kb.row(
+        InlineKeyboardButton(
+            text="🧹 Очистить выбор",
+            callback_data="bulk_bl_clear",
+        )
+    )
+    kb.row(
+        InlineKeyboardButton(
+            text="🌍 Сменить регион",
+            callback_data="admin_bulk_blacklist_menu",
+        )
+    )
+    kb.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage"))
     return kb.as_markup()
 
 
@@ -169,7 +378,13 @@ def confirm_delete_country_kb(region: str):
     return kb.as_markup()
 
 
-def subs_list_kb(subs: list, region: str, page: int, total_pages: int):
+def subs_list_kb(
+    subs: list,
+    region: str,
+    page: int,
+    total_pages: int,
+    index_offset: int = 0,
+):
     kb = InlineKeyboardBuilder()
 
     kb.row(
@@ -179,10 +394,15 @@ def subs_list_kb(subs: list, region: str, page: int, total_pages: int):
         )
     )
 
-    for sub in subs:
+    for idx, sub in enumerate(subs, start=1):
         status_icon = "🟢" if sub.is_active else "🔴"
         lat = sub.speed_mbps if hasattr(sub, "speed_mbps") and sub.speed_mbps > 0 else 0
-        text = f"{status_icon} #{sub.id} | ⚡️{lat:.1f}Mb/s"
+        text = _sub_button_text(
+            f"{status_icon} #{sub.id} ",
+            sub,
+            float(lat),
+            display_index=index_offset + idx,
+        )
         kb.button(text=text, callback_data=f"sub_detail_{sub.id}")
 
     kb.adjust(1, 2)

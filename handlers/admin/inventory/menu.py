@@ -25,6 +25,7 @@ async def manage_regions(callback: CallbackQuery, state: FSMContext):
         callback,
         state,
         "<blockquote>📂 <b>Управление регионами</b>\n\n"
-        "Выберите страну для просмотра ключей или удаления.</blockquote>",
+        "Выберите страну для просмотра ключей или удаления.\n"
+        "Для массовой отправки в ЧС используйте кнопку «☑️ Массовый ЧС».</blockquote>",
         reply_markup=regions_kb(regions, "manage_region")
     )

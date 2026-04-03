@@ -211,6 +211,7 @@ async def run_admin_recheck_task(
                             f"✅ <b>Рабочих:</b> {stats['active']} | 💀 <b>Потеряно:</b> {stats['died']}\n"
                             f"🆙 <b>Восстановлено:</b> {stats['revived']} | 💾 <b>Сохранено:</b> {stats['saved']}\n\n"
                             f"📉 <b>Причины отказа:</b>\n"
+                            f"├ 🚫 TCP: {stats['f1_dead']}\n"
                             f"├ 🌐 Connectivity: {stats['f4_dead']}\n"
                             f"├ 🤖 Checker: {stats['f3_dead']}\n"
                             f"└ ⚙️ SysErr: {stats['sys_err']}</blockquote>",
@@ -296,15 +297,6 @@ async def run_admin_recheck_task(
                             status_upd = None
                             region_upd = None
                             key_upd = None
-                            async with update_lock:
-                                stats["completed"] += 1
-                            return (True, {"status": result_status})
-
-                        if sub["is_active"] and (
-                            "Factor 4" in err_str or "Factor 5" in err_str
-                        ):
-                            stats["sys_err"] += 1
-                            result_status = "soft_fail_keep_active"
                             async with update_lock:
                                 stats["completed"] += 1
                             return (True, {"status": result_status})
@@ -458,6 +450,7 @@ async def run_admin_recheck_task(
                 f"💾 <b>Сохранено в БД:</b> {last_stats['saved']}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📉 <b>Анализ отказов ({total_dead} всего):</b>\n"
+                f"├ 🚫 TCP ошибка: {last_stats['f1_dead']}\n"
                 f"├ 🌐 Connectivity ошибка: {last_stats['f4_dead']}\n"
                 f"└ 🤖 Checker ошибка: {last_stats['f3_dead']}\n\n"
                 f"⚙️ <b>Системных ошибок:</b> {last_stats['sys_err']}</blockquote>",

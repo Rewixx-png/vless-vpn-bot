@@ -53,7 +53,13 @@ async def list_subs_in_region(callback: CallbackQuery, state: FSMContext):
         callback,
         state,
         text,
-        reply_markup=subs_list_kb(current_subs, region, page, total_pages)
+        reply_markup=subs_list_kb(
+            current_subs,
+            region,
+            page,
+            total_pages,
+            index_offset=start_idx,
+        )
     )
 
 @router.callback_query(F.data.startswith("sub_detail_"))

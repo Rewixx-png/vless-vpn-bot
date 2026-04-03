@@ -61,6 +61,7 @@ app.conf.task_routes = {
     "tasks.update_geoip_task": {"queue": "low_priority"},
     "tasks.run_backup_snapshot_task": {"queue": "low_priority"},
     "tasks.update_tg_proxy_task": {"queue": "low_priority"},
+    "tasks.probe_blocked_users_task": {"queue": "low_priority"},
 }
 
 app.conf.beat_schedule = {
@@ -83,6 +84,10 @@ app.conf.beat_schedule = {
     "update-tg-proxy-hourly": {
         "task": "tasks.update_tg_proxy_task",
         "schedule": float(BEAT_SCHEDULE.get("tg_proxy_interval", 3600.0)),
+    },
+    "probe-blocked-users-hourly": {
+        "task": "tasks.probe_blocked_users_task",
+        "schedule": float(BEAT_SCHEDULE.get("user_probe_interval", 3600.0)),
     },
 }
 

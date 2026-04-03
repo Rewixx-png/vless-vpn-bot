@@ -220,6 +220,57 @@ async def check_no_ads(local_port: int) -> bool:
     return fails == len(ad_domains)
 
 
+def _pick_representative_speed(samples: list[float]) -> float:
+    clean_samples = [float(v) for v in samples if float(v) > 0.0]
+    if not clean_samples:
+        return 0.0
+
+    clean_samples.sort()
+    count = len(clean_samples)
+
+    if count >= 3:
+        return clean_samples[count // 2]
+    if count == 2:
+        return (clean_samples[0] + clean_samples[1]) / 2.0
+    return clean_samples[0]
+
+
+async def _measure_speed_sample(
+    session: aiohttp.ClientSession,
+    url: str,
+    per_url_timeout: float,
+    max_bytes: int,
+) -> float:
+    started = time.monotonic()
+    downloaded = 0
+
+    try:
+        async with session.get(url, allow_redirects=True) as response:
+            if response.status != 200:
+                return 0.0
+
+            while downloaded < max_bytes:
+                if (time.monotonic() - started) >= per_url_timeout:
+                    break
+
+                try:
+                    chunk = await asyncio.wait_for(response.content.read(262144), timeout=1.0)
+                except asyncio.TimeoutError:
+                    break
+
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+    except Exception:
+        return 0.0
+
+    elapsed = time.monotonic() - started
+    if downloaded < 262144 or elapsed <= 0.1:
+        return 0.0
+
+    return (downloaded * 8) / (elapsed * 1_000_000)
+
+
 async def check_handler(request):
     try:
         data = await request.json()
@@ -311,9 +362,10 @@ async def check_handler(request):
                         pass
 
         SPEED_TEST_URLS = [
-            "https://speed.cloudflare.com/__down?bytes=25000000",
+            "https://speed.cloudflare.com/__down?bytes=20000000",
             "https://speed.hetzner.de/10MB.bin",
             "https://ash-speed.hetzner.com/10MB.bin",
+            "https://fsn1-speed.hetzner.com/10MB.bin",
         ]
 
         try:
@@ -323,50 +375,27 @@ async def check_handler(request):
             async with aiohttp.ClientSession(
                 connector=connector_speed,
                 timeout=aiohttp.ClientTimeout(
-                    total=config.SPEED_TEST_TIMEOUT + 3.0, connect=3.0
+                    total=max(6.0, float(config.SPEED_TEST_TIMEOUT) + 3.0),
+                    connect=3.0,
                 ),
             ) as st_session:
-                st_start = time.monotonic()
-                total_bytes = 0
-                bytes_per_url = []
+                speed_samples = []
+                per_url_timeout = max(2.0, float(config.SPEED_TEST_TIMEOUT))
+                max_bytes_per_url = 20 * 1024 * 1024
 
                 for test_url in SPEED_TEST_URLS:
-                    if time.monotonic() - st_start > config.SPEED_TEST_TIMEOUT + 2.0:
-                        break
+                    sample = await _measure_speed_sample(
+                        st_session,
+                        test_url,
+                        per_url_timeout=per_url_timeout,
+                        max_bytes=max_bytes_per_url,
+                    )
+                    if sample > 0.0:
+                        speed_samples.append(sample)
 
-                    try:
-                        url_bytes = 0
-                        url_start = time.monotonic()
-
-                        async with st_session.get(
-                            test_url, allow_redirects=True
-                        ) as resp:
-                            if resp.status == 200:
-                                while (
-                                    time.monotonic() - url_start
-                                    < config.SPEED_TEST_TIMEOUT
-                                ):
-                                    try:
-                                        chunk = await asyncio.wait_for(
-                                            resp.content.read(131072), timeout=1.0
-                                        )
-                                        if not chunk:
-                                            break
-                                        url_bytes += len(chunk)
-                                    except asyncio.TimeoutError:
-                                        break
-
-                        if url_bytes > 0:
-                            bytes_per_url.append(url_bytes)
-                            total_bytes += url_bytes
-                    except Exception:
-                        continue
-
-                if bytes_per_url:
-                    duration = time.monotonic() - st_start
-                    if duration > 0.1:
-                        speed = (total_bytes * 8) / (duration * 1_000_000) * 1.2
-                        response_data["speed_mbps"] = round(speed, 2)
+                representative = _pick_representative_speed(speed_samples)
+                if representative > 0.0:
+                    response_data["speed_mbps"] = round(representative, 2)
 
         except Exception:
             pass

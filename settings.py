@@ -27,4 +27,5 @@ BEAT_SCHEDULE = {
     "stability_interval": 3600,
     "backup_interval": 3600,
     "tg_proxy_interval": 3600,
+    "user_probe_interval": 3600,
 }

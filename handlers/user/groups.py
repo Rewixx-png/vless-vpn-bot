@@ -146,7 +146,7 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
         f"🏷 Теги: <b>{tags_txt}</b>\n\n"
         f"🔗 <b>Ссылка подписки:</b>\n"
         f"<code>{link_url}</code>\n\n"
-        f"👆 <i>Нажмите для копирования</i>"
+        f"👇 <i>Используйте кнопки ниже: открыть или скопировать ссылку.</i>"
     )
 
     await edit_or_answer(

@@ -1,6 +1,6 @@
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, delete
 from database.core import async_session_factory
-from database.models import User
+from database.models import User, UserGroup
 
 class UserRepo:
     @staticmethod
@@ -89,3 +89,32 @@ class UserRepo:
             stmt = select(User.id).where(User.country_filter.like(f"%{region}%"))
             result = await session.execute(stmt)
             return result.scalars().all()
+
+    @staticmethod
+    async def delete_user(user_id: int) -> bool:
+        deleted = await UserRepo.delete_users([user_id])
+        return deleted > 0
+
+    @staticmethod
+    async def delete_users(user_ids: list[int]) -> int:
+        if not user_ids:
+            return 0
+
+        unique_ids = sorted({int(user_id) for user_id in user_ids if user_id})
+        if not unique_ids:
+            return 0
+
+        async with async_session_factory() as session:
+            await session.execute(
+                delete(UserGroup).where(UserGroup.user_id.in_(unique_ids))
+            )
+            result = await session.execute(delete(User).where(User.id.in_(unique_ids)))
+            await session.commit()
+
+        try:
+            rowcount = int(result.rowcount or 0)
+            if rowcount < 0:
+                return len(unique_ids)
+            return rowcount
+        except Exception:
+            return len(unique_ids)
