@@ -109,6 +109,7 @@ class SubscriptionServer:
         region_name: str,
         count: int,
         speed_mbps: float,
+        latency_ms: int,
         ai_available: bool,
         whitelist: bool,
         no_ads: bool,
@@ -124,7 +125,19 @@ class SubscriptionServer:
             tags.append("NoAds")
 
         tags_text = ", ".join(tags) if tags else "BASE"
-        speed_text = f"{max(speed_mbps, 0.0):.0f} Mbps"
+        safe_speed = float(speed_mbps or 0.0)
+
+        if safe_speed <= 1.05:
+            try:
+                lat = int(latency_ms or 0)
+            except Exception:
+                lat = 0
+
+            if lat > 0:
+                estimated = 3200.0 / max(35, lat)
+                safe_speed = max(1.0, min(250.0, estimated))
+
+        speed_text = f"{max(safe_speed, 0.0):.0f} Mbps"
         safe_count = max(count, 1)
 
         return f"{region_display} {safe_count} | {tags_text} | {speed_text}"
@@ -175,6 +188,19 @@ class SubscriptionServer:
 
         return ""
 
+    @staticmethod
+    def _resolve_effective_limit(user_limit: int | None, user_agent: str) -> int:
+        _ = user_agent
+        try:
+            parsed_limit = int(user_limit or 0)
+        except Exception:
+            parsed_limit = 0
+
+        if parsed_limit > 0:
+            return max(1, min(parsed_limit, 5000))
+
+        return 0
+
     @classmethod
     async def _get_external_links(cls, allowed_schemes: set[str]) -> list[str]:
         now = time.time()
@@ -217,6 +243,8 @@ class SubscriptionServer:
         try:
             user_id_raw = request.query.get("id")
             format_param = request.query.get("format", "").lower()
+            if request.path.lower().endswith("/sub64"):
+                format_param = "base64"
             types_param = request.query.get("types", "").lower()
             auto_clean_param = request.query.get("auto_clean", "").lower() == "true"
 
@@ -229,6 +257,9 @@ class SubscriptionServer:
 
             subs = []
             use_fragment = False
+            user = None
+            fallback_used = False
+            effective_limit = 0
 
             if user_id_raw:
                 user_id = 0
@@ -247,6 +278,10 @@ class SubscriptionServer:
                 user = await UserRepo.get_user(user_id)
                 if user:
                     use_fragment = user.use_fragment
+                    effective_limit = SubscriptionServer._resolve_effective_limit(
+                        user.subscription_limit,
+                        user_agent,
+                    )
                     countries_filter = None
                     tags_filter = None
 
@@ -271,20 +306,37 @@ class SubscriptionServer:
                     subs = await SubRepo.get_smart_keys(
                         regions=countries_filter,
                         tags=tags_filter,
-                        limit=user.subscription_limit,
+                        limit=effective_limit,
                         auto_clean=auto_clean_param,
                     )
                 else:
+                    effective_limit = 0
                     subs = await SubRepo.get_smart_keys(
-                        regions=None, limit=10, auto_clean=auto_clean_param
+                        regions=None, limit=effective_limit, auto_clean=auto_clean_param
                     )
             else:
+                effective_limit = 0
                 subs = await SubRepo.get_smart_keys(
-                    regions=None, limit=10, auto_clean=auto_clean_param
+                    regions=None, limit=effective_limit, auto_clean=auto_clean_param
                 )
 
-            if not subs:
-                return web.Response(text="", status=200)
+            if not subs and user_id_raw:
+                fallback_limit = effective_limit if effective_limit > 0 else 0
+
+                subs = await SubRepo.get_smart_keys(
+                    regions=None,
+                    tags=None,
+                    limit=fallback_limit,
+                    auto_clean=False,
+                )
+                if subs:
+                    fallback_used = True
+                    logger.info(
+                        "Subscription fallback used for user_id=%s ip=%s ua=%s",
+                        user_id_raw,
+                        client_ip,
+                        user_agent[:120],
+                    )
 
             renamed_links = []
             region_counters = {}
@@ -302,6 +354,7 @@ class SubscriptionServer:
                     region_name=region_name,
                     count=count,
                     speed_mbps=sub.speed_mbps,
+                    latency_ms=sub.latency_ms,
                     ai_available=sub.ai_available,
                     whitelist=is_wl,
                     no_ads=sub.no_ads,
@@ -357,7 +410,12 @@ class SubscriptionServer:
             )
             combined_links = renamed_links + external_links
 
-            if format_param in ["hiddify", "hdy"] or is_hiddify:
+            if not combined_links and not (
+                format_param in ["clash", "yaml", "yml"] or is_clash
+            ):
+                combined_links = ["# no-active-configs"]
+
+            if format_param in ["hiddify", "hdy"] or is_hiddify or is_happ:
                 text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode("utf-8")).decode(
                     "utf-8"
@@ -374,7 +432,7 @@ class SubscriptionServer:
                 response_text = ClashGenerator.generate_conf(parsed_configs)
                 filename = "config.yaml"
                 content_type = "application/x-yaml; charset=utf-8"
-            elif format_param in ["raw", "plain", "txt"] or is_v2raytun or is_happ:
+            elif format_param in ["raw", "plain", "txt"] or is_v2raytun:
                 response_text = "\n".join(combined_links)
                 filename = "sub.txt"
                 content_type = "text/plain; charset=utf-8"
@@ -396,6 +454,9 @@ class SubscriptionServer:
                 "Profile-Update-Interval": "3600",
                 "Subscription-Userinfo": "upload=0; download=0; total=10737418240000000; expire=0",
                 "Cache-Control": "no-store",
+                "X-Subscription-Items": str(len(combined_links)),
+                "X-Subscription-Fallback": "1" if fallback_used else "0",
+                "X-Subscription-Limit": str(effective_limit),
             }
             return web.Response(text=response_text, headers=headers)
 
@@ -415,6 +476,7 @@ class SubscriptionServer:
             },
         )
         cors.add(app.router.add_get("/sub", SubscriptionServer.handle_subscription))
+        cors.add(app.router.add_get("/sub64", SubscriptionServer.handle_subscription))
         app.router.add_get("/", lambda r: web.Response(text="VLESS Bot Online"))
 
         runner = web.AppRunner(app)

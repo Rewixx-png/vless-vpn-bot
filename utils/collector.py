@@ -52,12 +52,83 @@ DEFAULT_SOURCES = [
 
 class SubscriptionCollector:
     MAX_LINKS_PER_BATCH = 40000
-    MIN_ACCEPT_SPEED_MBPS = 1.0
+    MIN_ACCEPT_SPEED_MBPS = 10.0
+    MAX_ACCEPT_JITTER_MS = 20
+    JITTER_TIMEOUT_SEC = 2.4
+    JITTER_SAMPLES = 4
+
+    FETCH_CONNECTOR_LIMIT = 40
+
+    CHECK_INITIAL_WORKERS = 40
+    CHECK_MIN_WORKERS = 20
+    CHECK_MAX_WORKERS = 120
+    CHECK_TARGET_CPU = 92.0
+    CHECK_TARGET_RAM = 88.0
+
     BLOCKED_HOSTS = {
         "in-pl-hn.ray-proxy.ru",
     }
+    JAPAN_KEYWORDS = (
+        "japan",
+        "tokyo",
+        "osaka",
+        "nagoya",
+        "sapporo",
+        "fukuoka",
+        "yokohama",
+        "nippon",
+        "nihon",
+        "япони",
+        "япон",
+    )
     _GITHUB_TREE_CACHE_TTL = 600
     _github_tree_cache = {}
+
+    @classmethod
+    def _has_japan_hint(cls, value: str) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+
+        if any(keyword in text for keyword in cls.JAPAN_KEYWORDS):
+            return True
+
+        return bool(re.search(r"(^|[\s._\-/])jp([\s._\-/]|$)", text))
+
+    @classmethod
+    def _japan_priority_score(cls, link: str) -> int:
+        parsed = LinkParser.parse_vless(link)
+        if not parsed:
+            raw = str(link or "").lower()
+            score = 0
+            if "%f0%9f%87%af%f0%9f%87%b5" in raw:
+                score += 25
+            if cls._has_japan_hint(raw):
+                score += 20
+            return score
+
+        score = 0
+        name = str(parsed.get("name", "") or "")
+        server = str(parsed.get("server", "") or "")
+        sni = str(parsed.get("sni", "") or "")
+        host = str(parsed.get("host", "") or "")
+        service_name = str(parsed.get("serviceName", "") or "")
+
+        if cls._has_japan_hint(name):
+            score += 55
+        if cls._has_japan_hint(server):
+            score += 35
+        if cls._has_japan_hint(sni):
+            score += 25
+        if cls._has_japan_hint(host):
+            score += 20
+        if cls._has_japan_hint(service_name):
+            score += 15
+
+        if str(server).strip().lower().endswith(".jp"):
+            score += 15
+
+        return score
 
     @classmethod
     async def run_collection(cls) -> dict:
@@ -83,7 +154,7 @@ class SubscriptionCollector:
             "custom_sources_ignored": len(ignored_db_sources),
         }
 
-        connector = aiohttp.TCPConnector(limit=15)
+        connector = aiohttp.TCPConnector(limit=cls.FETCH_CONNECTOR_LIMIT)
 
         async with aiohttp.ClientSession(connector=connector) as session:
             expanded_tasks = [
@@ -126,8 +197,6 @@ class SubscriptionCollector:
         found_links = list(set(found_links))
         del full_text
 
-        reset_deleted = await SubRepo.delete_all_subs()
-
         if not found_links:
             return {
                 "processed": 0,
@@ -135,7 +204,8 @@ class SubscriptionCollector:
                 "rejected": 0,
                 "region_stats": {},
                 "rejected_reasons": {},
-                "reset_deleted": reset_deleted,
+                "discovered": 0,
+                "already_known": 0,
                 **source_meta,
             }
 
@@ -150,15 +220,46 @@ class SubscriptionCollector:
                 "rejected": 0,
                 "region_stats": {},
                 "rejected_reasons": {},
-                "reset_deleted": reset_deleted,
+                "discovered": 0,
+                "already_known": 0,
                 **source_meta,
             }
+
+        discovered_total = len(unique_links)
+
+        existing_keys = await SubRepo.get_all_keys_set()
+        unique_links = [link for link in unique_links if link not in existing_keys]
+
+        already_known = max(0, discovered_total - len(unique_links))
+
+        if not unique_links:
+            return {
+                "processed": 0,
+                "added": 0,
+                "rejected": 0,
+                "region_stats": {},
+                "rejected_reasons": {},
+                "discovered": discovered_total,
+                "already_known": already_known,
+                **source_meta,
+            }
+
+        scored_links = [
+            (cls._japan_priority_score(link), link)
+            for link in unique_links
+        ]
+        scored_links.sort(key=lambda item: item[0], reverse=True)
+        unique_links = [link for _, link in scored_links]
+        source_meta["japan_priority_candidates"] = sum(
+            1 for score, _ in scored_links if score > 0
+        )
 
         if len(unique_links) > cls.MAX_LINKS_PER_BATCH:
             unique_links = unique_links[: cls.MAX_LINKS_PER_BATCH]
 
         result = await cls._check_and_add_batch(unique_links)
-        result["reset_deleted"] = reset_deleted
+        result["discovered"] = discovered_total
+        result["already_known"] = already_known
         result.update(source_meta)
         return result
 
@@ -300,6 +401,7 @@ class SubscriptionCollector:
         region_stats = {}
         rejected_reasons = {
             "dead": 0,
+            "high_jitter": 0,
             "blocked_host": 0,
             "dup_or_bl": 0,
             "fmt_err": 0,
@@ -307,11 +409,11 @@ class SubscriptionCollector:
         }
 
         processor = CpuAdaptiveProcessor(
-            initial_workers=15,
-            min_workers=10,
-            max_workers=40,
-            target_cpu=80.0,
-            target_ram=80.0,
+            initial_workers=cls.CHECK_INITIAL_WORKERS,
+            min_workers=cls.CHECK_MIN_WORKERS,
+            max_workers=cls.CHECK_MAX_WORKERS,
+            target_cpu=cls.CHECK_TARGET_CPU,
+            target_ram=cls.CHECK_TARGET_RAM,
         )
 
         async def process_link(link: str):
@@ -328,30 +430,6 @@ class SubscriptionCollector:
                     return False, "blocked_host"
 
                 (
-                    tcp_alive,
-                    tcp_region,
-                    tcp_latency,
-                    tcp_speed,
-                    _,
-                    _,
-                    tcp_err,
-                    updated_link,
-                ) = await VlessChecker.process_subscription(
-                    link,
-                    strict_speed=False,
-                )
-
-                tcp_standard_err = tcp_err and any(
-                    f"Factor {i}" in str(tcp_err) for i in range(1, 7)
-                )
-
-                if not tcp_alive and not tcp_standard_err:
-                    return False, "sys_err"
-
-                if not tcp_alive:
-                    return False, "dead"
-
-                (
                     is_alive,
                     region,
                     latency,
@@ -359,44 +437,62 @@ class SubscriptionCollector:
                     ai_avail,
                     no_ads,
                     err,
-                    strict_updated_link,
-                ) = await VlessChecker.process_subscription(
                     updated_link,
-                    strict_speed=True,
+                ) = await VlessChecker.process_subscription(
+                    link,
+                    strict_speed=False,
                 )
 
                 is_standard_err = err and any(
-                    f"Factor {i}" in str(err) for i in range(1, 7)
+                    f"Factor {i}" in str(err) for i in range(0, 7)
                 )
 
-                final_region = tcp_region if tcp_region else "🌍 UNK"
-                final_latency = int(tcp_latency) if isinstance(tcp_latency, int) else 9999
-                final_speed = float(tcp_speed or 0.0)
-                final_ai = False
-                final_no_ads = False
-                final_link = strict_updated_link if strict_updated_link else updated_link
-
-                if is_alive:
-                    speed = float(speed_mbps or 0.0)
-                    if speed <= cls.MIN_ACCEPT_SPEED_MBPS:
-                        return False, "dead"
-
-                    strict_region = str(region or "").strip()
-                    if strict_region and strict_region != "🌍 UNK":
-                        final_region = strict_region
-                    final_latency = int(latency or final_latency)
-                    final_speed = speed
-                    final_ai = bool(ai_avail)
-                    final_no_ads = bool(no_ads)
-                else:
-                    if not is_standard_err:
-                        return False, "sys_err"
-
+                if not is_alive:
                     err_text = str(err or "")
-                    if "Factor 6" in err_text:
-                        return False, "dead"
+                    if err_text.startswith("SYS_ERR") or not is_standard_err:
+                        return False, "sys_err"
+                    return False, "dead"
 
-                if final_speed <= cls.MIN_ACCEPT_SPEED_MBPS:
+                final_region = str(region or "").strip() or "🌍 UNK"
+
+                try:
+                    final_latency = int(latency or 9999)
+                except Exception:
+                    final_latency = 9999
+
+                final_speed = float(speed_mbps or 0.0)
+                final_ai = bool(ai_avail)
+                final_no_ads = bool(no_ads)
+                final_link = updated_link if updated_link else link
+
+                if final_speed <= 1.05:
+                    estimated = 2600.0 / max(float(final_latency), 1.0)
+                    final_speed = round(max(1.0, min(250.0, estimated)), 2)
+
+                jitter_parsed = LinkParser.parse_vless(final_link)
+                if not jitter_parsed:
+                    return False, "fmt_err"
+
+                jitter_host = str(jitter_parsed.get("server", "") or "").strip()
+                jitter_port = int(jitter_parsed.get("port", 0) or 0)
+                if not jitter_host or jitter_port < 1 or jitter_port > 65535:
+                    return False, "fmt_err"
+
+                jitter_ok, jitter_ms, jitter_err = await VlessChecker.measure_tcp_jitter(
+                    host=jitter_host,
+                    port=jitter_port,
+                    samples=cls.JITTER_SAMPLES,
+                    timeout=cls.JITTER_TIMEOUT_SEC,
+                )
+                if not jitter_ok:
+                    if str(jitter_err or "").startswith("Factor 1"):
+                        return False, "dead"
+                    return False, "sys_err"
+
+                if int(jitter_ms) > cls.MAX_ACCEPT_JITTER_MS:
+                    return False, "high_jitter"
+
+                if final_speed < cls.MIN_ACCEPT_SPEED_MBPS:
                     return False, "dead"
 
                 added = await SubRepo.smart_add_subscription(

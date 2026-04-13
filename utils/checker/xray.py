@@ -10,9 +10,49 @@ logger = logging.getLogger("XrayCore")
 
 class XrayExecutor:
     XRAY_BIN = "/usr/local/bin/xray"
-    
+
     @staticmethod
-    def _generate_config(parsed: dict, local_port: int) -> dict:
+    def _build_upstream_outbound(upstream_proxy: dict) -> dict | None:
+        if not isinstance(upstream_proxy, dict):
+            return None
+
+        scheme = str(upstream_proxy.get("scheme", "") or "").strip().lower()
+        host = str(upstream_proxy.get("host", "") or "").strip()
+        username = str(upstream_proxy.get("username", "") or "").strip()
+        password = str(upstream_proxy.get("password", "") or "").strip()
+
+        try:
+            port = int(upstream_proxy.get("port", 0) or 0)
+        except Exception:
+            port = 0
+
+        if not host or port < 1 or port > 65535:
+            return None
+
+        if scheme.startswith("http"):
+            protocol = "http"
+        elif scheme.startswith("socks"):
+            protocol = "socks"
+        else:
+            return None
+
+        server = {
+            "address": host,
+            "port": port,
+        }
+        if username:
+            server["users"] = [{"user": username, "pass": password}]
+
+        return {
+            "protocol": protocol,
+            "settings": {
+                "servers": [server],
+            },
+            "tag": "ru-upstream",
+        }
+
+    @staticmethod
+    def _generate_config(parsed: dict, local_port: int, upstream_proxy: dict | None = None) -> dict:
         encryption = parsed.get('encryption', 'none')
         if encryption == 'auto':
             encryption = 'none'
@@ -34,10 +74,19 @@ class XrayExecutor:
                 "network": parsed['type'],
                 "security": parsed['security']
             },
-            "tag": "proxy"
+            "tag": "vless-main"
         }
         stream = outbound["streamSettings"]
-        
+
+        outbounds = [outbound]
+        upstream_outbound = XrayExecutor._build_upstream_outbound(upstream_proxy or {})
+        if upstream_outbound:
+            outbound["proxySettings"] = {
+                "tag": upstream_outbound["tag"],
+                "transportLayer": False,
+            }
+            outbounds.append(upstream_outbound)
+
         if parsed['security'] in['tls', 'reality']:
             fp = parsed.get('fp', '')
             if not fp or fp == 'random':
@@ -71,16 +120,20 @@ class XrayExecutor:
         return {
             "log": {"loglevel": "none"},
             "inbounds":[{
-                "port": local_port, 
-                "protocol": "socks", 
-                "settings": {"auth": "noauth", "udp": True}, 
+                "port": local_port,
+                "protocol": "socks",
+                "settings": {"auth": "noauth", "udp": True},
                 "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
             }],
-            "outbounds": [outbound] 
+            "outbounds": outbounds
         }
 
     @classmethod
-    async def start_xray(cls, config_url: str) -> tuple[asyncio.subprocess.Process | None, int, str]:
+    async def start_xray(
+        cls,
+        config_url: str,
+        upstream_proxy: dict | None = None,
+    ) -> tuple[asyncio.subprocess.Process | None, int, str]:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return None, 0, "CONFIG_ERR: Invalid Link Format"
@@ -95,7 +148,7 @@ class XrayExecutor:
         config_path = f"/tmp/xray_{unique_id}.json"
 
         try:
-            xray_conf = cls._generate_config(parsed, local_port)
+            xray_conf = cls._generate_config(parsed, local_port, upstream_proxy=upstream_proxy)
             with open(config_path, 'w') as f:
                 json.dump(xray_conf, f)
 

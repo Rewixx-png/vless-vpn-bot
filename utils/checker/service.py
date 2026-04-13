@@ -4,6 +4,7 @@ import gc
 import asyncio
 import resource
 import time
+import logging
 from pathlib import Path
 
 if "uvloop" in sys.modules:
@@ -22,6 +23,7 @@ if str(BASE_DIR) not in sys.path:
 
 from utils.checker.xray import XrayExecutor
 from utils.checker.geo_ip import GeoIP
+from utils.checker.proxy_pool import ProxyPool, UpstreamProxy
 from config import config
 
 try:
@@ -40,6 +42,7 @@ except Exception:
     pass
 
 _redis_pool = None
+logger = logging.getLogger("CheckerService")
 
 
 async def get_redis_pool():
@@ -86,12 +89,31 @@ async def cleanup_zombie_xrays():
         pass
 
 
-async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
-    timeout = aiohttp.ClientTimeout(
-        total=config.CONNECTIVITY_TIMEOUT, connect=4.0, sock_read=4.0
-    )
+async def refresh_proxy_pool_loop():
+    try:
+        await ProxyPool.refresh(force=True)
+    except Exception as e:
+        logger.warning(f"ProxyPool initial refresh failed: {e}")
 
-    primary_url = "http://cp.cloudflare.com/"
+    try:
+        while True:
+            await asyncio.sleep(max(60, int(getattr(ProxyPool, "REFRESH_INTERVAL_SEC", 300))))
+            try:
+                await ProxyPool.refresh(force=True)
+            except Exception as e:
+                logger.warning(f"ProxyPool periodic refresh failed: {e}")
+    except asyncio.CancelledError:
+        pass
+
+
+async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
+    timeout_sec = max(3.0, min(float(config.CONNECTIVITY_TIMEOUT), 10.0))
+    timeout = aiohttp.ClientTimeout(
+        total=timeout_sec,
+        connect=min(3.5, timeout_sec),
+        sock_read=min(3.5, timeout_sec),
+    )
+    primary_url = "http://cp.cloudflare.com/generate_204"
 
     connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
     try:
@@ -100,8 +122,8 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
         ) as session:
             start_time = time.monotonic()
 
-            async with session.get(primary_url, allow_redirects=True) as response:
-                if 100 <= response.status < 500:
+            async with session.get(primary_url, allow_redirects=False) as response:
+                if response.status in {200, 204}:
                     latency = int((time.monotonic() - start_time) * 1000)
                     return True, latency, "OK"
                 return False, 9999, f"Factor 4: HTTP {response.status}"
@@ -110,6 +132,143 @@ async def check_connectivity(local_port: int) -> tuple[bool, int, str]:
         return False, 9999, "Factor 4: HTTP Timeout"
     except Exception as e:
         return False, 9999, f"Factor 4: Connectivity Failed ({str(e)})"
+
+
+def _is_reset_like_error(err: Exception) -> bool:
+    if isinstance(err, ConnectionResetError):
+        return True
+
+    text = str(err or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "connection reset",
+        "reset by peer",
+        "broken pipe",
+        "connection aborted",
+        "eof",
+        "server disconnected",
+    )
+    return any(marker in text for marker in markers)
+
+
+async def deep_traffic_test(local_port: int) -> tuple[bool, int, float, str]:
+    required_bytes = 2 * 1024 * 1024
+    test_url = "https://speed.cloudflare.com/__down?bytes=2000000"
+
+    timeout = aiohttp.ClientTimeout(
+        total=max(12.0, float(config.SPEED_TEST_TIMEOUT) + 7.0),
+        connect=4.0,
+        sock_read=6.0,
+    )
+
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
+
+    started = time.monotonic()
+    downloaded = 0
+
+    try:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            cookie_jar=aiohttp.DummyCookieJar(),
+        ) as session:
+            async with session.get(test_url, allow_redirects=True) as response:
+                if response.status != 200:
+                    return False, 9999, 0.0, f"Factor 4: Deep HTTP {response.status}"
+
+                while downloaded < required_bytes:
+                    chunk = await asyncio.wait_for(
+                        response.content.read(min(262144, required_bytes - downloaded)),
+                        timeout=2.0,
+                    )
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+
+        elapsed = time.monotonic() - started
+        if downloaded < required_bytes:
+            return (
+                False,
+                9999,
+                0.0,
+                f"Factor 4: Deep Traffic Incomplete ({downloaded}/{required_bytes})",
+            )
+
+        if elapsed <= 0.05:
+            return False, 9999, 0.0, "Factor 4: Deep Traffic Invalid Timing"
+
+        speed_mbps = (downloaded * 8) / (elapsed * 1_000_000)
+        latency_ms = max(1, int(elapsed * 1000))
+        return True, latency_ms, max(1.0, round(speed_mbps, 2)), "OK"
+
+    except asyncio.TimeoutError:
+        return False, 9999, 0.0, "Factor 4: Deep Traffic Timeout"
+    except Exception as e:
+        if _is_reset_like_error(e):
+            return False, 9999, 0.0, "Factor 4: Deep Traffic Reset"
+        return False, 9999, 0.0, f"Factor 4: Deep Traffic Failed ({str(e)})"
+
+
+async def quick_speed_probe(local_port: int) -> float:
+    test_urls = [
+        "https://speed.cloudflare.com/__down?bytes=1200000",
+        "https://speed.cloudflare.com/__down?bytes=2000000",
+    ]
+
+    timeout = aiohttp.ClientTimeout(total=6.0, connect=3.0, sock_read=4.0)
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}", rdns=True)
+
+    best_speed = 0.0
+    try:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            cookie_jar=aiohttp.DummyCookieJar(),
+        ) as session:
+            for url in test_urls:
+                started = time.monotonic()
+                downloaded = 0
+                try:
+                    async with session.get(url, allow_redirects=True) as response:
+                        if response.status != 200:
+                            continue
+
+                        while downloaded < 1200000:
+                            chunk = await asyncio.wait_for(
+                                response.content.read(262144),
+                                timeout=1.4,
+                            )
+                            if not chunk:
+                                break
+                            downloaded += len(chunk)
+
+                    elapsed = time.monotonic() - started
+                    if downloaded >= 400000 and elapsed > 0.1:
+                        speed_mbps = (downloaded * 8) / (elapsed * 1_000_000)
+                        if speed_mbps > best_speed:
+                            best_speed = speed_mbps
+                except Exception:
+                    continue
+    except Exception:
+        return 0.0
+
+    if best_speed <= 0.0:
+        return 0.0
+    return round(max(1.0, best_speed), 2)
+
+
+async def _classify_vless_failure_with_proxy_recheck(
+    upstream_proxy: UpstreamProxy,
+    factor_error: str,
+) -> str:
+    proxy_ok, proxy_err = await ProxyPool.probe_proxy(upstream_proxy, force=True)
+    if proxy_ok:
+        return factor_error
+
+    ProxyPool.mark_bad(upstream_proxy)
+    return f"SYS_ERR: RU Proxy Dead ({proxy_err})"
 
 
 async def probe_geoip(local_port: int) -> dict:
@@ -220,57 +379,6 @@ async def check_no_ads(local_port: int) -> bool:
     return fails == len(ad_domains)
 
 
-def _pick_representative_speed(samples: list[float]) -> float:
-    clean_samples = [float(v) for v in samples if float(v) > 0.0]
-    if not clean_samples:
-        return 0.0
-
-    clean_samples.sort()
-    count = len(clean_samples)
-
-    if count >= 3:
-        return clean_samples[count // 2]
-    if count == 2:
-        return (clean_samples[0] + clean_samples[1]) / 2.0
-    return clean_samples[0]
-
-
-async def _measure_speed_sample(
-    session: aiohttp.ClientSession,
-    url: str,
-    per_url_timeout: float,
-    max_bytes: int,
-) -> float:
-    started = time.monotonic()
-    downloaded = 0
-
-    try:
-        async with session.get(url, allow_redirects=True) as response:
-            if response.status != 200:
-                return 0.0
-
-            while downloaded < max_bytes:
-                if (time.monotonic() - started) >= per_url_timeout:
-                    break
-
-                try:
-                    chunk = await asyncio.wait_for(response.content.read(262144), timeout=1.0)
-                except asyncio.TimeoutError:
-                    break
-
-                if not chunk:
-                    break
-                downloaded += len(chunk)
-    except Exception:
-        return 0.0
-
-    elapsed = time.monotonic() - started
-    if downloaded < 262144 or elapsed <= 0.1:
-        return 0.0
-
-    return (downloaded * 8) / (elapsed * 1_000_000)
-
-
 async def check_handler(request):
     try:
         data = await request.json()
@@ -284,6 +392,8 @@ async def check_handler(request):
     process = None
     config_path = None
     local_port = 0
+    upstream_proxy: UpstreamProxy | None = None
+    use_ru_proxy_chain = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
 
     response_data = {
         "success": False,
@@ -296,20 +406,71 @@ async def check_handler(request):
     }
 
     try:
-        process, local_port, config_path = await XrayExecutor.start_xray(config_url)
+        if use_ru_proxy_chain:
+            upstream_proxy, proxy_err = await ProxyPool.acquire_working_proxy(max_attempts=6)
+            if not upstream_proxy:
+                err_text = str(proxy_err or "SYS_ERR: RU Proxy Pool Empty")
+                if not err_text.startswith("SYS_ERR"):
+                    err_text = f"SYS_ERR: {err_text}"
+                response_data["error"] = err_text
+                return web.json_response(response_data)
+
+        process, local_port, config_path = await XrayExecutor.start_xray(
+            config_url,
+            upstream_proxy=(upstream_proxy.to_xray_dict() if upstream_proxy else None),
+        )
 
         if not process:
-            response_data["error"] = config_path
+            err_text = str(config_path or "SYS_ERR: Checker Init Failed")
+            if (
+                "SYS_ERR" not in err_text
+                and (
+                    "Xray Crashed" in err_text
+                    or "Port Bind Timeout" in err_text
+                    or "Worker Busy" in err_text
+                )
+            ):
+                err_text = f"SYS_ERR: {err_text}"
+            response_data["error"] = err_text
             return web.json_response(response_data)
 
         is_alive, latency, error_msg = await check_connectivity(local_port)
 
         if not is_alive:
-            response_data["error"] = error_msg
+            if use_ru_proxy_chain and upstream_proxy:
+                classified_err = await _classify_vless_failure_with_proxy_recheck(
+                    upstream_proxy,
+                    error_msg,
+                )
+            else:
+                classified_err = error_msg
+            response_data["error"] = classified_err
             return web.json_response(response_data)
+
+        deep_latency = latency
+        deep_speed = 0.0
+        if use_ru_proxy_chain:
+            deep_ok, deep_latency, deep_speed, deep_err = await deep_traffic_test(local_port)
+            if not deep_ok:
+                classified_err = await _classify_vless_failure_with_proxy_recheck(
+                    upstream_proxy,
+                    deep_err,
+                )
+                response_data["error"] = classified_err
+                return web.json_response(response_data)
+        else:
+            deep_speed = await quick_speed_probe(local_port)
+
+        if deep_speed <= 0.0:
+            estimated = 2400.0 / max(float(latency), 1.0)
+            deep_speed = round(max(1.0, min(250.0, estimated)), 2)
 
         response_data["success"] = True
         response_data["latency"] = latency
+        if not isinstance(response_data["latency"], int) or response_data["latency"] <= 0:
+            response_data["latency"] = deep_latency
+        response_data["speed_mbps"] = max(1.0, float(deep_speed or 1.0))
+        response_data["rkn_mode"] = "ru_proxy" if use_ru_proxy_chain else "ru_direct"
         response_data["error"] = "OK"
 
         geo_info = await probe_geoip(local_port)
@@ -336,7 +497,13 @@ async def check_handler(request):
             if cached_ai is not None:
                 response_data["ai"] = cached_ai
             else:
-                response_data["ai"] = await check_ai_availability(local_port)
+                try:
+                    response_data["ai"] = await asyncio.wait_for(
+                        check_ai_availability(local_port),
+                        timeout=2.5,
+                    )
+                except Exception:
+                    response_data["ai"] = False
                 if ip and r_client:
                     try:
                         await r_client.setex(
@@ -350,7 +517,13 @@ async def check_handler(request):
             if cached_ads is not None:
                 response_data["no_ads"] = cached_ads
             else:
-                response_data["no_ads"] = await check_no_ads(local_port)
+                try:
+                    response_data["no_ads"] = await asyncio.wait_for(
+                        check_no_ads(local_port),
+                        timeout=2.5,
+                    )
+                except Exception:
+                    response_data["no_ads"] = False
                 if ip and r_client:
                     try:
                         await r_client.setex(
@@ -361,47 +534,9 @@ async def check_handler(request):
                     except:
                         pass
 
-        SPEED_TEST_URLS = [
-            "https://speed.cloudflare.com/__down?bytes=20000000",
-            "https://speed.hetzner.de/10MB.bin",
-            "https://ash-speed.hetzner.com/10MB.bin",
-            "https://fsn1-speed.hetzner.com/10MB.bin",
-        ]
-
-        try:
-            connector_speed = ProxyConnector.from_url(
-                f"socks5://127.0.0.1:{local_port}", rdns=True
-            )
-            async with aiohttp.ClientSession(
-                connector=connector_speed,
-                timeout=aiohttp.ClientTimeout(
-                    total=max(6.0, float(config.SPEED_TEST_TIMEOUT) + 3.0),
-                    connect=3.0,
-                ),
-            ) as st_session:
-                speed_samples = []
-                per_url_timeout = max(2.0, float(config.SPEED_TEST_TIMEOUT))
-                max_bytes_per_url = 20 * 1024 * 1024
-
-                for test_url in SPEED_TEST_URLS:
-                    sample = await _measure_speed_sample(
-                        st_session,
-                        test_url,
-                        per_url_timeout=per_url_timeout,
-                        max_bytes=max_bytes_per_url,
-                    )
-                    if sample > 0.0:
-                        speed_samples.append(sample)
-
-                representative = _pick_representative_speed(speed_samples)
-                if representative > 0.0:
-                    response_data["speed_mbps"] = round(representative, 2)
-
-        except Exception:
-            pass
-
     except Exception as e:
-        response_data["error"] = str(e)
+        response_data["success"] = False
+        response_data["error"] = f"SYS_ERR: Checker Handler Exception ({str(e)})"
     finally:
         await XrayExecutor.cleanup(process, config_path)
 
@@ -416,16 +551,19 @@ async def start_background_tasks(app):
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(custom_exception_handler)
     app["cleanup_task"] = asyncio.create_task(cleanup_zombie_xrays())
+    if bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True)):
+        app["proxy_pool_task"] = asyncio.create_task(refresh_proxy_pool_loop())
 
 
 async def cleanup_background_tasks(app):
-    task = app.get("cleanup_task")
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except:
-            pass
+    for task_key in ("cleanup_task", "proxy_pool_task"):
+        task = app.get(task_key)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
 
 
 def app_factory():

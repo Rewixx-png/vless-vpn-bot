@@ -106,6 +106,41 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
                 return (False, {"status": "failed", "error": "System Overload. Try again later."})
                 
             if is_alive:
+                parsed = VlessChecker.parse_config(updated_link if updated_link else link)
+                if not parsed:
+                    return (False, {"status": "failed", "error": "Invalid config format"})
+
+                jitter_host = str(parsed.get("server", "") or "").strip()
+                jitter_port = int(parsed.get("port", 0) or 0)
+                if not jitter_host or jitter_port < 1 or jitter_port > 65535:
+                    return (False, {"status": "failed", "error": "Invalid host/port"})
+
+                jitter_ok, jitter_ms, _ = await VlessChecker.measure_tcp_jitter(
+                    host=jitter_host,
+                    port=jitter_port,
+                )
+
+                if not jitter_ok:
+                    return (False, {"status": "failed", "error": "Jitter check failed"})
+
+                if int(jitter_ms) > 20:
+                    return (
+                        False,
+                        {
+                            "status": "failed",
+                            "error": f"High jitter: {int(jitter_ms)}ms",
+                        },
+                    )
+
+                if float(speed_mbps or 0.0) < 10.0:
+                    return (
+                        False,
+                        {
+                            "status": "failed",
+                            "error": f"Low speed: {float(speed_mbps or 0.0):.2f} Mbps",
+                        },
+                    )
+
                 added = await SubRepo.smart_add_subscription(
                     vless_key=updated_link,
                     region=region,

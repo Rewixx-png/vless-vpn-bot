@@ -60,7 +60,7 @@ app.conf.task_routes = {
     "tasks.check_stability_task": {"queue": "low_priority"},
     "tasks.update_geoip_task": {"queue": "low_priority"},
     "tasks.run_backup_snapshot_task": {"queue": "low_priority"},
-    "tasks.update_tg_proxy_task": {"queue": "low_priority"},
+    "tasks.update_tg_proxy_task": {"queue": "high_priority"},
     "tasks.probe_blocked_users_task": {"queue": "low_priority"},
 }
 

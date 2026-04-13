@@ -19,13 +19,15 @@ from utils.qr import QRGenerator
 
 router = Router()
 
+_PRIMARY_SUB_DOMAIN = "direct.rewexx.ru"
+
 
 async def get_base_url():
     db_domain = await SystemRepo.get_config("public_domain")
-    domain = db_domain if db_domain else config.public_domain
-    if domain:
-        return f"https://{domain}"
-    return f"http://{config.PUBLIC_IP}:{config.WEB_PORT}"
+    domain = str(db_domain if db_domain else config.public_domain or "").strip()
+    if not domain or not domain.startswith("direct."):
+        domain = _PRIMARY_SUB_DOMAIN
+    return f"https://{domain}"
 
 
 @router.callback_query(F.data == "groups_list")
@@ -127,7 +129,7 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
         return
 
     base = await get_base_url()
-    link_url = f"{base}/sub?id={callback.from_user.id}/{group.name}"
+    link_url = f"{base}/sub64?id={callback.from_user.id}/{group.name}"
 
     countries_txt = "Все доступные"
     if group.country_filter:
@@ -169,7 +171,7 @@ async def show_group_qr(callback: CallbackQuery):
         return
 
     base = await get_base_url()
-    link_url = f"{base}/sub?id={callback.from_user.id}/{group.name}"
+    link_url = f"{base}/sub64?id={callback.from_user.id}/{group.name}"
 
     qr_file = QRGenerator.generate(link_url)
     await callback.message.answer_photo(

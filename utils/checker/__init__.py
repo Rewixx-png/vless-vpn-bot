@@ -11,7 +11,19 @@ from config import config
 
 class VlessChecker:
     TCP_TIMEOUT_SEC = max(1.0, min(float(config.CONNECTIVITY_TIMEOUT), 10.0))
-    MIN_STRICT_SPEED_MBPS = 1.0
+    TCP_JITTER_SAMPLES = 4
+    TCP_JITTER_PAUSE_SEC = 0.06
+
+    _SYS_ERR_MARKERS = (
+        "SYS_ERR",
+        "Worker Busy",
+        "Service Offline",
+        "Service Error",
+        "Checker API Timeout",
+        "Checker Timeout",
+        "Xray Crashed",
+        "Port Bind Timeout",
+    )
 
     @staticmethod
     def parse_config(config_url: str):
@@ -45,6 +57,39 @@ class VlessChecker:
         except Exception as e:
             return False, 9999, f"Factor 1: TCP Unreachable ({e})"
 
+    @classmethod
+    async def measure_tcp_jitter(
+        cls,
+        host: str,
+        port: int,
+        samples: int | None = None,
+        timeout: float | None = None,
+    ) -> tuple[bool, int, str]:
+        safe_samples = max(3, int(samples or cls.TCP_JITTER_SAMPLES))
+        safe_timeout = float(timeout or min(2.5, cls.TCP_TIMEOUT_SEC))
+
+        latencies: list[int] = []
+        for idx in range(safe_samples):
+            ok, latency, err = await cls._check_tcp(
+                host=host,
+                port=port,
+                timeout=safe_timeout,
+            )
+            if not ok:
+                return False, 9999, err
+
+            if isinstance(latency, int) and latency > 0:
+                latencies.append(latency)
+
+            if idx < safe_samples - 1:
+                await asyncio.sleep(cls.TCP_JITTER_PAUSE_SEC)
+
+        if len(latencies) < 2:
+            return False, 9999, "Factor 5: Jitter Probe Failed"
+
+        jitter_ms = max(latencies) - min(latencies)
+        return True, max(0, int(jitter_ms)), "OK"
+
     @staticmethod
     async def _check_via_checker(
         config_url: str,
@@ -64,19 +109,28 @@ class VlessChecker:
         except asyncio.TimeoutError:
             return (
                 False,
-                "🌍 UNK",
-                9999,
+                "",
+                0,
                 0.0,
                 False,
                 False,
-                f"Factor 4: Config Check Timeout (>{config.CHECKER_TIMEOUT}s)",
+                f"SYS_ERR: Checker Timeout (>{config.CHECKER_TIMEOUT}s)",
                 config_url,
             )
 
         if not success:
             err_text = str(err or "Factor 4: Connectivity Failed")
-            if err_text.startswith("SYS_ERR"):
-                return False, "", 0, 0.0, False, False, err_text, config_url
+            if VlessChecker._is_sys_err(err_text):
+                return (
+                    False,
+                    "",
+                    0,
+                    0.0,
+                    False,
+                    False,
+                    VlessChecker._normalize_sys_err(err_text),
+                    config_url,
+                )
 
             if not err_text.startswith("Factor"):
                 err_text = f"Factor 4: {err_text}"
@@ -98,18 +152,8 @@ class VlessChecker:
         safe_region = region if region else "🌍 UNK"
         safe_latency = latency if isinstance(latency, int) else 9999
         safe_speed = float(speed_mbps) if isinstance(speed_mbps, (int, float)) else 0.0
-
-        if safe_speed <= VlessChecker.MIN_STRICT_SPEED_MBPS:
-            return (
-                False,
-                safe_region,
-                safe_latency,
-                0.0,
-                False,
-                False,
-                "Factor 6: Speed <= 1 Mbps",
-                config_url,
-            )
+        if safe_speed <= 0.0:
+            safe_speed = 1.0
 
         return (
             True,
@@ -122,11 +166,24 @@ class VlessChecker:
             config_url,
         )
 
+    @classmethod
+    def _is_sys_err(cls, err_text: str) -> bool:
+        text = str(err_text or "")
+        return any(marker in text for marker in cls._SYS_ERR_MARKERS)
+
+    @staticmethod
+    def _normalize_sys_err(err_text: str) -> str:
+        text = str(err_text or "SYS_ERR: Unknown")
+        if text.startswith("SYS_ERR"):
+            return text
+        return f"SYS_ERR: {text}"
+
     @staticmethod
     async def process_subscription(
         config_url: str,
         strict_speed: bool = True,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
+        _ = strict_speed
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return (
@@ -139,9 +196,6 @@ class VlessChecker:
                 "Factor 0: Invalid Config",
                 config_url,
             )
-
-        if strict_speed:
-            return await VlessChecker._check_via_checker(config_url)
 
         host = str(parsed.get("server", "") or "").strip()
         port = int(parsed.get("port", 0) or 0)
@@ -157,41 +211,61 @@ class VlessChecker:
                 config_url,
             )
 
-        region = await GeoIP.identify_region_full(
-            host=host,
-            remark=str(parsed.get("name", "")),
-        )
-        if not region:
-            region = "🌍 UNK"
-
         is_alive, latency, err_text = await VlessChecker._check_tcp(
             host=host,
             port=port,
             timeout=VlessChecker.TCP_TIMEOUT_SEC,
         )
 
-        if is_alive:
-            pseudo_speed = round(max(1.0, 1500.0 / max(float(latency), 1.0)), 2)
+        if not is_alive:
             return (
-                True,
-                region,
-                int(latency),
-                pseudo_speed,
+                False,
+                "🌍 UNK",
+                9999,
+                0.0,
                 False,
                 False,
-                "OK",
+                err_text,
                 config_url,
             )
 
-        return (
-            False,
+        (
+            via_checker_ok,
             region,
-            9999,
-            0.0,
-            False,
-            False,
-            err_text,
-            config_url,
+            checker_latency,
+            checker_speed,
+            ai,
+            no_ads,
+            checker_err,
+            updated_link,
+        ) = await VlessChecker._check_via_checker(config_url)
+
+        if not via_checker_ok:
+            return (
+                False,
+                region if region else "🌍 UNK",
+                checker_latency if isinstance(checker_latency, int) else 9999,
+                checker_speed if isinstance(checker_speed, (int, float)) else 0.0,
+                False,
+                False,
+                checker_err,
+                updated_link,
+            )
+
+        final_latency = checker_latency if isinstance(checker_latency, int) else int(latency)
+        final_speed = checker_speed if isinstance(checker_speed, (int, float)) else 1.0
+        if final_speed <= 0.0:
+            final_speed = 1.0
+
+        return (
+            True,
+            region if region else "🌍 UNK",
+            final_latency,
+            float(final_speed),
+            bool(ai),
+            bool(no_ads),
+            checker_err if checker_err else "OK",
+            updated_link,
         )
 
     @classmethod

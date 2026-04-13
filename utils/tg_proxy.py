@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import ipaddress
 import json
 import re
@@ -18,16 +19,35 @@ class TelegramProxyService:
         "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
     ]
     CACHE_KEY = "tg_proxy_cache"
-    CHECK_TIMEOUT = 1.8
-    CHECK_CONCURRENCY = 35
-    MAX_CHECK_LIMIT = 300
-    MAX_OUTPUT_PROXIES = 50
+    CHECK_TIMEOUT = 2.5
+    CHECK_CONCURRENCY = 45
+    MAX_CHECK_LIMIT = 500
+    MAX_OUTPUT_PROXIES = 200
     MAX_MERGED_CANDIDATES = 1500
+    MAX_ACCEPT_LATENCY_MS = 1800
+    SOCKS_TEST_HOST = "api.telegram.org"
+    SOCKS_TEST_PORT = 443
 
     _HEX_RE = re.compile(r"^[0-9a-f]+$")
     _BASE64_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{22,512}$")
     _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$")
     _PLAIN_HOST_PORT_RE = re.compile(r"^([A-Za-z0-9.-]+):(\d{1,5})(?::.*)?$")
+
+    @staticmethod
+    def _decode_base64_secret(secret: str) -> bytes | None:
+        token = (secret or "").strip()
+        if not token:
+            return None
+
+        normalized = token.replace("-", "+").replace("_", "/")
+        padding = len(normalized) % 4
+        if padding:
+            normalized += "=" * (4 - padding)
+
+        try:
+            return base64.b64decode(normalized, validate=True)
+        except Exception:
+            return None
 
     @classmethod
     def _is_valid_host(cls, host: str) -> bool:
@@ -61,11 +81,34 @@ class TelegramProxyService:
         if cls._HEX_RE.fullmatch(lower_token) and len(lower_token) % 2 == 0:
             if lower_token.startswith("dd") and len(lower_token) == 34:
                 return lower_token, "dd"
-            if lower_token.startswith("ee") and 34 <= len(lower_token) <= 512:
-                return lower_token, "ee"
+            if lower_token.startswith("ee") and 36 <= len(lower_token) <= 512:
+                try:
+                    host = bytes.fromhex(lower_token[34:]).decode("ascii", errors="strict")
+                except Exception:
+                    host = ""
+
+                if cls._is_valid_host(host):
+                    return lower_token, "ee"
+                return None
 
         if cls._BASE64_SECRET_RE.fullmatch(token):
-            return token, "base64"
+            decoded = cls._decode_base64_secret(token)
+            if not decoded:
+                return None
+
+            if decoded[0] == 0xDD and len(decoded) == 17:
+                return token, "dd"
+
+            if decoded[0] == 0xEE and len(decoded) >= 18:
+                try:
+                    host = decoded[17:].decode("ascii", errors="strict")
+                except Exception:
+                    host = ""
+
+                if cls._is_valid_host(host):
+                    return token, "ee"
+
+            return None
 
         return None
 
@@ -244,6 +287,80 @@ class TelegramProxyService:
         except Exception:
             return False
 
+    @staticmethod
+    async def _read_exact(reader: asyncio.StreamReader, size: int, timeout: float) -> bytes:
+        return await asyncio.wait_for(reader.readexactly(size), timeout=timeout)
+
+    @classmethod
+    async def _check_socks5(cls, server: str, port: int, timeout: float) -> tuple[bool, int]:
+        writer = None
+        start = time.monotonic()
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(server, port),
+                timeout=timeout,
+            )
+
+            writer.write(b"\x05\x01\x00")
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+            greeting = await cls._read_exact(reader, 2, timeout)
+            if greeting != b"\x05\x00":
+                return False, 0
+
+            host_bytes = cls.SOCKS_TEST_HOST.encode("idna")
+            connect_req = (
+                b"\x05\x01\x00\x03"
+                + bytes([len(host_bytes)])
+                + host_bytes
+                + cls.SOCKS_TEST_PORT.to_bytes(2, byteorder="big")
+            )
+            writer.write(connect_req)
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+            header = await cls._read_exact(reader, 4, timeout)
+            if header[0] != 0x05 or header[1] != 0x00:
+                return False, 0
+
+            atyp = header[3]
+            if atyp == 0x01:
+                await cls._read_exact(reader, 4, timeout)
+            elif atyp == 0x03:
+                domain_len = await cls._read_exact(reader, 1, timeout)
+                await cls._read_exact(reader, domain_len[0], timeout)
+            elif atyp == 0x04:
+                await cls._read_exact(reader, 16, timeout)
+            else:
+                return False, 0
+
+            await cls._read_exact(reader, 2, timeout)
+
+            latency_ms = int((time.monotonic() - start) * 1000)
+            return True, max(latency_ms, 1)
+        except Exception:
+            return False, 0
+        finally:
+            if writer is not None:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+    @classmethod
+    async def _check_mtproto(cls, server: str, port: int, timeout: float) -> tuple[bool, int]:
+        start = time.monotonic()
+        is_alive_1 = await cls._check_tcp(server, port, timeout=timeout)
+        if not is_alive_1:
+            return False, 0
+
+        is_alive_2 = await cls._check_tcp(server, port, timeout=timeout)
+        if not is_alive_2:
+            return False, 0
+
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return True, max(latency_ms, 1)
+
     @classmethod
     async def _fetch_source_lines(
         cls,
@@ -343,36 +460,39 @@ class TelegramProxyService:
 
         def kind_priority(proxy: dict) -> int:
             kind = str(proxy.get("kind", ""))
+            if kind == "socks5":
+                return 0
+
             if kind == "mtproto":
                 secret_kind = str(proxy.get("secret_kind", ""))
                 if secret_kind == "dd":
-                    return 0
-                if secret_kind == "ee":
                     return 1
-                return 2
-            return 3
+                if secret_kind == "ee":
+                    return 2
+                return 3
+            return 4
 
         async def check_one(proxy: dict) -> tuple[int, int, dict] | None:
             async with sem:
-                is_alive_1 = await cls._check_tcp(
-                    proxy["server"],
-                    proxy["port"],
-                    timeout=cls.CHECK_TIMEOUT,
-                )
+                if str(proxy.get("kind", "")) == "socks5":
+                    is_alive, latency_ms = await cls._check_socks5(
+                        proxy["server"],
+                        proxy["port"],
+                        timeout=cls.CHECK_TIMEOUT,
+                    )
+                else:
+                    is_alive, latency_ms = await cls._check_mtproto(
+                        proxy["server"],
+                        proxy["port"],
+                        timeout=cls.CHECK_TIMEOUT,
+                    )
 
-                if not is_alive_1:
+                if not is_alive:
                     return None
 
-                start = time.monotonic()
-                is_alive_2 = await cls._check_tcp(
-                    proxy["server"],
-                    proxy["port"],
-                    timeout=cls.CHECK_TIMEOUT,
-                )
-                if not is_alive_2:
+                if latency_ms <= 0 or latency_ms > cls.MAX_ACCEPT_LATENCY_MS:
                     return None
 
-                latency_ms = int((time.monotonic() - start) * 1000)
                 return kind_priority(proxy), latency_ms, proxy
 
         results = await asyncio.gather(
@@ -382,7 +502,9 @@ class TelegramProxyService:
 
         alive_items = [r for r in results if r]
         alive_items.sort(key=lambda item: (item[0], item[1]))
+        alive_total = len(alive_items)
         best_items = alive_items[: cls.MAX_OUTPUT_PROXIES]
+        alive_shown = len(best_items)
 
         proxy_items = [
             {
@@ -404,7 +526,9 @@ class TelegramProxyService:
             "parsed": len(candidates),
             "parsed_total": parsed_total,
             "checked": len(checked_candidates),
-            "alive": len(alive_links),
+            "alive": alive_total,
+            "alive_shown": alive_shown,
+            "output_limit": cls.MAX_OUTPUT_PROXIES,
             "proxies": alive_links,
             "proxy_items": proxy_items,
         }

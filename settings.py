@@ -23,7 +23,7 @@ WORKER_SETTINGS = {
 }
 
 BEAT_SCHEDULE = {
-    "collector_interval": 3600,
+    "collector_interval": 600,
     "stability_interval": 3600,
     "backup_interval": 3600,
     "tg_proxy_interval": 3600,

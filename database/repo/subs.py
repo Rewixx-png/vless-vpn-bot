@@ -15,7 +15,9 @@ _session_factory = async_session_factory
 
 _cache = {}
 _cache_ttl = {}
-_MIN_ACTIVE_SPEED_MBPS = 1.0
+_MIN_ACTIVE_SPEED_MBPS = 10.0
+_DEACTIVATE_DEATH_COUNT = 3
+_PURGE_DEATH_COUNT = 10
 
 _TAG_PATTERNS = {
     "mts": [
@@ -112,6 +114,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
+                        Subscription.death_count,
                         Subscription.region,
                     )
                 )
@@ -129,6 +132,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
+                        Subscription.death_count,
                         Subscription.region,
                     )
                 )
@@ -146,6 +150,7 @@ class SubRepo:
                         Subscription.id,
                         Subscription.vless_key,
                         Subscription.is_active,
+                        Subscription.death_count,
                         Subscription.region,
                     )
                 )
@@ -189,7 +194,7 @@ class SubRepo:
                 select(Subscription.vless_key)
                 .where(
                     Subscription.is_active == True,
-                    Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
+                    Subscription.speed_mbps >= _MIN_ACTIVE_SPEED_MBPS,
                 )
                 .order_by(Subscription.speed_mbps.desc())
             )
@@ -219,7 +224,7 @@ class SubRepo:
         async with async_session_factory() as session:
             stmt = select(Subscription).where(
                 Subscription.is_active == True,
-                Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
+                Subscription.speed_mbps >= _MIN_ACTIVE_SPEED_MBPS,
             )
 
             if auto_clean:
@@ -312,7 +317,7 @@ class SubRepo:
         async with async_session_factory() as session:
             stmt = select(Subscription.region).where(
                 Subscription.is_active == True,
-                Subscription.speed_mbps > _MIN_ACTIVE_SPEED_MBPS,
+                Subscription.speed_mbps >= _MIN_ACTIVE_SPEED_MBPS,
             )
             stmt = stmt.distinct().order_by(Subscription.region)
             result = await session.execute(stmt)
@@ -347,7 +352,55 @@ class SubRepo:
         if not updates:
             return
 
-        updates.sort(key=lambda x: x["id"])
+        normalized_by_id: Dict[int, Dict[str, Any]] = {}
+        for upd in updates:
+            try:
+                sub_id = int(upd.get("id"))
+            except Exception:
+                continue
+
+            if sub_id <= 0:
+                continue
+
+            check_status = str(upd.get("check_status", "") or "").strip().lower()
+            if check_status not in {"alive", "dead", "sys_err"}:
+                if bool(upd.get("sys_err", False)):
+                    check_status = "sys_err"
+                elif bool(upd.get("is_active", upd.get("is_alive", False))):
+                    check_status = "alive"
+                else:
+                    check_status = "dead"
+
+            try:
+                latency_ms = int(upd.get("latency_ms", upd.get("latency", 9999)) or 9999)
+            except Exception:
+                latency_ms = 9999
+
+            latency_ms = max(1, min(latency_ms, 9999))
+
+            try:
+                speed_mbps = float(upd.get("speed_mbps", 0.0) or 0.0)
+            except Exception:
+                speed_mbps = 0.0
+
+            if speed_mbps != speed_mbps or speed_mbps < 0.0:
+                speed_mbps = 0.0
+
+            normalized_by_id[sub_id] = {
+                "id": sub_id,
+                "check_status": check_status,
+                "latency_ms": latency_ms,
+                "speed_mbps": speed_mbps,
+                "ai_available": bool(upd.get("ai_available", upd.get("ai", False))),
+                "no_ads": bool(upd.get("no_ads", False)),
+            }
+
+        if not normalized_by_id:
+            return
+
+        normalized_updates = [
+            normalized_by_id[sub_id] for sub_id in sorted(normalized_by_id)
+        ]
 
         async with async_session_factory() as session:
             case_active = []
@@ -356,50 +409,87 @@ class SubRepo:
             case_ai = []
             case_no_ads = []
             case_death = []
+            case_checked_at = []
             ids = []
 
-            for upd in updates:
-                speed_value = float(upd.get("speed_mbps", 0.0) or 0.0)
-                if speed_value <= _MIN_ACTIVE_SPEED_MBPS:
-                    upd["is_active"] = False
-                    upd["speed_mbps"] = 0.0
-                    upd["ai_available"] = False
-                    upd["no_ads"] = False
+            for upd in normalized_updates:
+                sub_id = upd["id"]
+                status = upd["check_status"]
+                ids.append(sub_id)
 
-                ids.append(upd["id"])
-                case_active.append(
-                    f"WHEN {upd['id']} THEN {str(upd['is_active']).lower()}"
-                )
-                case_latency.append(f"WHEN {upd['id']} THEN {upd['latency_ms']}")
-                case_speed.append(f"WHEN {upd['id']} THEN {upd.get('speed_mbps', 0.0)}")
-                case_ai.append(
-                    f"WHEN {upd['id']} THEN {str(upd['ai_available']).lower()}"
-                )
-                case_no_ads.append(
-                    f"WHEN {upd['id']} THEN {str(upd.get('no_ads', False)).lower()}"
-                )
-                if (not upd["is_active"]) and upd.get("was_active", False):
-                    case_death.append(f"WHEN {upd['id']} THEN death_count + 1")
-                else:
-                    case_death.append(f"WHEN {upd['id']} THEN death_count")
+                if status == "alive":
+                    case_active.append(f"WHEN {sub_id} THEN true")
+                    case_latency.append(f"WHEN {sub_id} THEN {upd['latency_ms']}")
+                    case_speed.append(f"WHEN {sub_id} THEN {upd['speed_mbps']}")
+                    case_ai.append(
+                        f"WHEN {sub_id} THEN {str(upd['ai_available']).lower()}"
+                    )
+                    case_no_ads.append(
+                        f"WHEN {sub_id} THEN {str(upd['no_ads']).lower()}"
+                    )
+                    case_death.append(f"WHEN {sub_id} THEN 0")
+                    case_checked_at.append(f"WHEN {sub_id} THEN NOW()")
+                    continue
 
-            sql = text(f"""
+                if status == "dead":
+                    case_active.append(
+                        "WHEN "
+                        f"{sub_id} THEN CASE WHEN death_count + 1 >= {_DEACTIVATE_DEATH_COUNT} "
+                        "THEN false ELSE true END"
+                    )
+                    case_latency.append(
+                        "WHEN "
+                        f"{sub_id} THEN CASE WHEN death_count + 1 >= {_DEACTIVATE_DEATH_COUNT} "
+                        "THEN 9999 ELSE latency_ms END"
+                    )
+                    case_speed.append(
+                        "WHEN "
+                        f"{sub_id} THEN CASE WHEN death_count + 1 >= {_DEACTIVATE_DEATH_COUNT} "
+                        "THEN 0.0 ELSE speed_mbps END"
+                    )
+                    case_ai.append(
+                        "WHEN "
+                        f"{sub_id} THEN CASE WHEN death_count + 1 >= {_DEACTIVATE_DEATH_COUNT} "
+                        "THEN false ELSE ai_available END"
+                    )
+                    case_no_ads.append(
+                        "WHEN "
+                        f"{sub_id} THEN CASE WHEN death_count + 1 >= {_DEACTIVATE_DEATH_COUNT} "
+                        "THEN false ELSE no_ads END"
+                    )
+                    case_death.append(f"WHEN {sub_id} THEN death_count + 1")
+                    case_checked_at.append(f"WHEN {sub_id} THEN NOW()")
+                    continue
+
+                case_active.append(f"WHEN {sub_id} THEN is_active")
+                case_latency.append(f"WHEN {sub_id} THEN latency_ms")
+                case_speed.append(f"WHEN {sub_id} THEN speed_mbps")
+                case_ai.append(f"WHEN {sub_id} THEN ai_available")
+                case_no_ads.append(f"WHEN {sub_id} THEN no_ads")
+                case_death.append(f"WHEN {sub_id} THEN death_count")
+                case_checked_at.append(f"WHEN {sub_id} THEN last_checked_at")
+
+            sql = text(
+                f"""
                 UPDATE subscriptions
-                SET 
-                    is_active = CASE id {" ".join(case_active)} END,
-                    latency_ms = CASE id {" ".join(case_latency)} END,
-                    speed_mbps = CASE id {" ".join(case_speed)} END,
-                    ai_available = CASE id {" ".join(case_ai)} END,
-                    no_ads = CASE id {" ".join(case_no_ads)} END,
-                    death_count = CASE id {" ".join(case_death)} END,
-                    last_checked_at = NOW()
-                WHERE id IN ({",".join(map(str, ids))})
-            """)
+                SET
+                    is_active = CASE id {' '.join(case_active)} ELSE is_active END,
+                    latency_ms = CASE id {' '.join(case_latency)} ELSE latency_ms END,
+                    speed_mbps = CASE id {' '.join(case_speed)} ELSE speed_mbps END,
+                    ai_available = CASE id {' '.join(case_ai)} ELSE ai_available END,
+                    no_ads = CASE id {' '.join(case_no_ads)} ELSE no_ads END,
+                    death_count = CASE id {' '.join(case_death)} ELSE death_count END,
+                    last_checked_at = CASE id {' '.join(case_checked_at)} ELSE last_checked_at END
+                WHERE id IN ({','.join(map(str, ids))})
+                """
+            )
 
             try:
                 await session.execute(sql)
                 await session.commit()
                 _invalidate_cache("subscription")
+                _invalidate_cache("all_keys_set")
+                _invalidate_cache("regions_")
             except Exception as e:
                 logger.error(f"Batch update status failed: {e}")
                 await session.rollback()
@@ -507,6 +597,38 @@ class SubRepo:
             await session.commit()
 
     @staticmethod
+    async def delete_subs_by_ids(sub_ids: List[int]) -> int:
+        if not sub_ids:
+            return 0
+
+        unique_ids_set = set()
+        for sub_id in sub_ids:
+            try:
+                value = int(sub_id)
+            except Exception:
+                continue
+            if value > 0:
+                unique_ids_set.add(value)
+
+        unique_ids = sorted(unique_ids_set)
+        if not unique_ids:
+            return 0
+
+        async with async_session_factory() as session:
+            stmt = delete(Subscription).where(Subscription.id.in_(unique_ids))
+            result = await session.execute(stmt)
+            await session.commit()
+
+        _invalidate_cache("subscription")
+        _invalidate_cache("all_keys_set")
+        _invalidate_cache("regions_")
+
+        try:
+            return int(result.rowcount or 0)
+        except Exception:
+            return len(unique_ids)
+
+    @staticmethod
     async def move_subs_to_blacklist(
         sub_ids: List[int],
         reason: str = "Admin Bulk Blacklist",
@@ -581,7 +703,7 @@ class SubRepo:
                 return 0
 
     @staticmethod
-    async def cleanup_dead_subs(max_deaths: int = 5) -> int:
+    async def cleanup_dead_subs(max_deaths: int = _PURGE_DEATH_COUNT) -> int:
         async with async_session_factory() as session:
             stmt = delete(Subscription).where(Subscription.death_count >= max_deaths)
             result = await session.execute(stmt)
@@ -695,7 +817,7 @@ class SubRepo:
         ai_available: bool = False,
         no_ads: bool = False,
     ):
-        if float(speed_mbps or 0.0) <= _MIN_ACTIVE_SPEED_MBPS:
+        if float(speed_mbps or 0.0) < _MIN_ACTIVE_SPEED_MBPS:
             return
 
         async with async_session_factory() as session:
@@ -743,7 +865,7 @@ class SubRepo:
         ai_available: bool = False,
         no_ads: bool = False,
     ) -> bool:
-        if float(speed_mbps or 0.0) <= _MIN_ACTIVE_SPEED_MBPS:
+        if float(speed_mbps or 0.0) < _MIN_ACTIVE_SPEED_MBPS:
             return False
 
         is_banned = await BlacklistRepo.is_blacklisted(vless_key)

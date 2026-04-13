@@ -78,6 +78,7 @@ async def run_admin_recheck_task(
             "id": s.id,
             "vless_key": s.vless_key,
             "is_active": s.is_active,
+            "death_count": int(getattr(s, "death_count", 0) or 0),
             "region": s.region,
         }
         for s in raw_subs
@@ -235,6 +236,12 @@ async def run_admin_recheck_task(
                     first_check, first_error = await run_single_check(sub["vless_key"])
                     if first_error == "timeout" or first_check is None:
                         async with update_lock:
+                            status_buffer.append(
+                                {
+                                    "id": sub["id"],
+                                    "check_status": "sys_err",
+                                }
+                            )
                             stats["sys_err"] += 1
                             stats["completed"] += 1
                         return (False, {"status": "timeout"})
@@ -250,13 +257,14 @@ async def run_admin_recheck_task(
                         updated_link,
                     ) = first_check
 
+                    err_str = str(err or "")
                     status_upd = None
                     region_upd = None
                     key_upd = None
 
                     def _is_standard_error(err_value: str) -> bool:
                         return err_value and any(
-                            f"Factor {i}" in str(err_value) for i in range(1, 7)
+                            f"Factor {i}" in str(err_value) for i in range(0, 7)
                         )
 
                     if updated_link != sub["vless_key"]:
@@ -264,9 +272,22 @@ async def run_admin_recheck_task(
                         sub["vless_key"] = updated_link
 
                     is_standard_err = _is_standard_error(err)
+                    measured_speed = float(speed_mbps or 0.0)
+
+                    if is_alive and measured_speed < 10.0:
+                        is_alive = False
+                        err = f"Factor 6: Speed < 10 Mbps ({measured_speed:.2f})"
+                        err_str = str(err)
+                        is_standard_err = True
 
                     if not is_alive and not is_standard_err:
                         async with update_lock:
+                            status_buffer.append(
+                                {
+                                    "id": sub["id"],
+                                    "check_status": "sys_err",
+                                }
+                            )
                             stats["sys_err"] += 1
                             stats["completed"] += 1
                         return (False, {"status": "error"})
@@ -276,13 +297,14 @@ async def run_admin_recheck_task(
                         survived_ids.add(sub["id"])
                         if not sub["is_active"]:
                             stats["revived"] += 1
+                        sub["death_count"] = 0
 
                         status_upd = {
                             "id": sub["id"],
+                            "check_status": "alive",
                             "is_active": True,
-                            "was_active": sub["is_active"],
                             "latency_ms": latency,
-                            "speed_mbps": speed_mbps,
+                            "speed_mbps": measured_speed,
                             "ai_available": ai_avail,
                             "no_ads": no_ads,
                         }
@@ -290,14 +312,15 @@ async def run_admin_recheck_task(
                             region_upd = {"id": sub["id"], "region": region}
                         result_status = "active"
                     else:
-                        err_str = str(err)
                         if err_str.startswith("SYS_ERR"):
                             stats["sys_err"] += 1
                             result_status = "sys_err"
-                            status_upd = None
-                            region_upd = None
-                            key_upd = None
+                            status_upd = {
+                                "id": sub["id"],
+                                "check_status": "sys_err",
+                            }
                             async with update_lock:
+                                status_buffer.append(status_upd)
                                 stats["completed"] += 1
                             return (True, {"status": result_status})
 
@@ -314,13 +337,16 @@ async def run_admin_recheck_task(
                         else:
                             stats["f3_dead"] += 1
 
-                        if sub["is_active"]:
+                        next_death_count = int(sub.get("death_count", 0) or 0) + 1
+                        sub["death_count"] = next_death_count
+
+                        if sub["is_active"] and next_death_count >= 3:
                             stats["died"] += 1
 
                         status_upd = {
                             "id": sub["id"],
+                            "check_status": "dead",
                             "is_active": False,
-                            "was_active": sub["is_active"],
                             "latency_ms": 9999,
                             "speed_mbps": 0.0,
                             "ai_available": False,
@@ -331,7 +357,11 @@ async def run_admin_recheck_task(
                     async with update_lock:
                         if status_upd:
                             status_buffer.append(status_upd)
-                            sub["is_active"] = status_upd["is_active"]
+                            status_value = status_upd.get("check_status")
+                            if status_value == "alive":
+                                sub["is_active"] = True
+                            elif status_value == "dead":
+                                sub["is_active"] = bool(sub.get("death_count", 0) < 3)
                         if region_upd:
                             region_buffer.append(region_upd)
                         if key_upd:
@@ -341,6 +371,12 @@ async def run_admin_recheck_task(
                     return (True, {"status": result_status})
                 except asyncio.CancelledError:
                     async with update_lock:
+                        status_buffer.append(
+                            {
+                                "id": sub["id"],
+                                "check_status": "sys_err",
+                            }
+                        )
                         stats["sys_err"] += 1
                         stats["completed"] += 1
                     return (False, {"status": "cancelled"})
@@ -348,6 +384,12 @@ async def run_admin_recheck_task(
                     if "SoftTimeLimitExceeded" not in type(e).__name__:
                         logger.error(f"Process Sub Error: {e}")
                     async with update_lock:
+                        status_buffer.append(
+                            {
+                                "id": sub["id"],
+                                "check_status": "sys_err",
+                            }
+                        )
                         stats["sys_err"] += 1
                         stats["completed"] += 1
                     return (False, {"status": "error"})
@@ -407,7 +449,7 @@ async def run_admin_recheck_task(
                     current_subs = [s for s in current_subs if s["id"] in survived_ids]
                 await asyncio.sleep(2)
 
-        await SubRepo.cleanup_dead_subs(max_deaths=20)
+        await SubRepo.cleanup_dead_subs(max_deaths=10)
         checked_after = await SubRepo.get_subs_by_ids(checked_ids)
         global_active = sum(1 for s in checked_after if s.is_active)
         global_died = total_died

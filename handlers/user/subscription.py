@@ -23,6 +23,19 @@ from utils.tg_proxy import TelegramProxyService
 
 router = Router()
 
+_PRIMARY_SUB_DOMAIN = "direct.rewexx.ru"
+
+
+async def _build_subscription_url(user_id: str | int) -> str:
+    encoded_id = urllib.parse.quote(str(user_id), safe="/")
+
+    db_domain = await SystemRepo.get_config("public_domain")
+    domain = str(db_domain if db_domain else config.public_domain or "").strip()
+    if not domain or not domain.startswith("direct."):
+        domain = _PRIMARY_SUB_DOMAIN
+
+    return f"https://{domain}/sub64?id={encoded_id}"
+
 
 def _extract_proxy_items(data: dict) -> list[dict]:
     if not isinstance(data, dict):
@@ -89,6 +102,15 @@ def _build_tg_proxy_text(
         )
 
     total = len(proxy_items)
+    alive_total = int(data.get("alive", total) or total) if isinstance(data, dict) else total
+    alive_shown = int(data.get("alive_shown", total) or total) if isinstance(data, dict) else total
+    output_limit = int(data.get("output_limit", 0) or 0) if isinstance(data, dict) else 0
+
+    if alive_total < 0:
+        alive_total = total
+    if alive_shown < 0:
+        alive_shown = total
+
     mtproto_total = sum(1 for item in proxy_items if item.get("kind") == "mtproto")
     socks_total = total - mtproto_total
     safe_offset = max(0, min(offset, max(0, total - 1))) if total else 0
@@ -101,11 +123,22 @@ def _build_tg_proxy_text(
         "",
         f"<b>Обновлено:</b> {checked_at_text}",
         f"<b>Проверено:</b> {int(data.get('checked', 0) or 0)}",
-        f"<b>Рабочих:</b> {total}",
+        f"<b>Рабочих (всего):</b> {alive_total}",
+        f"<b>В списке:</b> {total}",
         f"<b>MTProto:</b> {mtproto_total}",
         f"<b>SOCKS5:</b> {socks_total}",
         f"<b>Показано:</b> {start_idx}-{end_idx}",
     ]
+
+    if alive_total > total:
+        if output_limit > 0:
+            lines.append(
+                f"<i>Показываю топ-{total} из {alive_total} (лимит выдачи: {output_limit}).</i>"
+            )
+        elif alive_shown > 0:
+            lines.append(
+                f"<i>Показываю топ-{total} из {alive_total} проверенных прокси.</i>"
+            )
 
     if is_stale:
         lines.append("<i>Показываю кэш; обновление уже запущено в фоне.</i>")
@@ -218,38 +251,24 @@ async def tg_proxy_page(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "my_subscription")
 async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-
-    db_domain = await SystemRepo.get_config("public_domain")
-    domain = db_domain if db_domain else config.public_domain
-
-    if domain:
-        protocol = "https"
-        host = domain
-    else:
-        protocol = "http"
-        host = f"{config.PUBLIC_IP}:{config.WEB_PORT}"
-
-    sub_url = f"{protocol}://{host}/sub?id={user_id}"
+    sub_url = await _build_subscription_url(user_id)
 
     user = await UserRepo.get_user(user_id)
     limit_txt = "Все доступные (∞)"
     if user and user.subscription_limit > 0:
         limit_txt = f"{user.subscription_limit} лучших"
 
-    encoded_url = urllib.parse.quote(sub_url)
+    links_block = f"<code>{sub_url}</code>"
 
-    warning = ""
-    if protocol == "http":
-        warning = (
-            "\n\n⚠️ <b>Важно (Android):</b>\n"
-            "В настройках клиента включите: <i>Allow Insecure / Небезопасные подключения</i>, так как используется HTTP."
-        )
+    warning = (
+        "\n\n⚠️ <b>Важно:</b> используйте только эту ссылку (формат <b>/sub64</b>) и удалите старые варианты из клиента."
+    )
 
     text = (
         "<b>🔑 PERSONAL ACCESS KEY</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "<b>🔗 Ваша ссылка подписки:</b>\n"
-        f"<code>{sub_url}</code>\n"
+        f"{links_block}\n"
         "👇 <i>Используйте кнопки ниже: открыть или скопировать ссылку.</i>\n\n"
         "<b>📋 Информация о ключе:</b>\n"
         f"▪️ <b>Формат:</b> Auto (VLESS / Clash)\n"
@@ -267,17 +286,7 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "sub_qr_main")
 async def show_main_qr(callback: CallbackQuery):
     user_id = callback.from_user.id
-    db_domain = await SystemRepo.get_config("public_domain")
-    domain = db_domain if db_domain else config.public_domain
-
-    if domain:
-        protocol = "https"
-        host = domain
-    else:
-        protocol = "http"
-        host = f"{config.PUBLIC_IP}:{config.WEB_PORT}"
-
-    sub_url = f"{protocol}://{host}/sub?id={user_id}"
+    sub_url = await _build_subscription_url(user_id)
     qr_file = QRGenerator.generate(sub_url)
 
     await callback.message.answer_photo(

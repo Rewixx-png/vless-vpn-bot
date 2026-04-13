@@ -24,9 +24,12 @@ from config import config
 
 STABILITY_LOCK_KEY = "lock:tasks:check_stability"
 STABILITY_LOCK_TTL_SEC = 3900
-STABILITY_CANDIDATES_LIMIT = 5000
+COLLECTOR_LOCK_KEY = "lock:tasks:collector"
+COLLECTOR_WAIT_MAX_SEC = 300
 STABILITY_MIN_WORKERS = 10
 STABILITY_MAX_WORKERS = 50
+STABILITY_MAX_JITTER_MS = 20
+STABILITY_MIN_SPEED_MBPS = 10.0
 
 
 async def _acquire_stability_lock() -> tuple[redis.Redis | None, str | None]:
@@ -74,6 +77,22 @@ async def _release_stability_lock(client: redis.Redis | None, token: str | None)
             pass
 
 
+async def _is_collector_running() -> bool:
+    client = None
+    try:
+        client = redis.from_url(config.REDIS_URL, decode_responses=True)
+        value = await client.get(COLLECTOR_LOCK_KEY)
+        return bool(value)
+    except Exception:
+        return False
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 @app.task(
     name="tasks.check_stability_task",
     base=OptimizedTask,
@@ -115,7 +134,23 @@ async def check_stability_task() -> Dict[str, Any]:
         await bot.session.close()
         return {"status": "skipped", "reason": "already_running"}
 
-    subs = await SubRepo.get_candidates_for_stability(limit=STABILITY_CANDIDATES_LIMIT)
+    if await _is_collector_running():
+        await Reporter.send_stability_log(
+            bot,
+            "Stability full recheck is waiting for collector run to finish",
+        )
+        waited = 0
+        while waited < COLLECTOR_WAIT_MAX_SEC and await _is_collector_running():
+            await asyncio.sleep(10)
+            waited += 10
+
+        if await _is_collector_running():
+            await Reporter.send_stability_log(
+                bot,
+                "Collector is still running; stability full recheck proceeds in parallel",
+            )
+
+    subs = await SubRepo.get_all_subscriptions_for_check()
     if not subs:
         await Reporter.send_stability_log(bot, "Stability check skipped: no candidates")
         await _release_stability_lock(lock_client, lock_token)
@@ -132,7 +167,7 @@ async def check_stability_task() -> Dict[str, Any]:
 
     await Reporter.send_stability_log(
         bot,
-        f"Stability check started: candidates={len(subs)}, workers={worker_count}",
+        f"Stability full recheck started: total={len(subs)}, workers={worker_count}",
     )
 
     def check_one(sub):
@@ -152,33 +187,121 @@ async def check_stability_task() -> Dict[str, Any]:
                     strict_speed=False,
                 )
 
-                is_standard_err = err and any(
-                    f"Factor {i}" in str(err) for i in range(1, 7)
+                err_text = str(err or "")
+                is_standard_err = any(
+                    f"Factor {i}" in err_text for i in range(0, 7)
                 )
-                if not is_alive and not is_standard_err:
-                    return (True, None)
+
+                if not is_alive and (
+                    err_text.startswith("SYS_ERR") or not is_standard_err
+                ):
+                    return (
+                        True,
+                        {
+                            "id": sub.id,
+                            "check_status": "sys_err",
+                        },
+                    )
+
+                if is_alive:
+                    parsed = VlessChecker.parse_config(sub.vless_key)
+                    if not parsed:
+                        return (
+                            True,
+                            {
+                                "id": sub.id,
+                                "check_status": "dead",
+                            },
+                        )
+
+                    jitter_host = str(parsed.get("server", "") or "").strip()
+                    jitter_port = int(parsed.get("port", 0) or 0)
+                    if not jitter_host or jitter_port < 1 or jitter_port > 65535:
+                        return (
+                            True,
+                            {
+                                "id": sub.id,
+                                "check_status": "dead",
+                            },
+                        )
+
+                    jitter_ok, jitter_ms, jitter_err = await VlessChecker.measure_tcp_jitter(
+                        host=jitter_host,
+                        port=jitter_port,
+                    )
+
+                    if not jitter_ok:
+                        if str(jitter_err or "").startswith("Factor 1"):
+                            return (
+                                True,
+                                {
+                                    "id": sub.id,
+                                    "check_status": "dead",
+                                },
+                            )
+                        return (
+                            True,
+                            {
+                                "id": sub.id,
+                                "check_status": "sys_err",
+                            },
+                        )
+
+                    if int(jitter_ms) > STABILITY_MAX_JITTER_MS:
+                        return (
+                            True,
+                            {
+                                "id": sub.id,
+                                "check_status": "dead",
+                            },
+                        )
+
+                    measured_speed = float(speed_mbps or 0.0)
+                    if measured_speed <= 1.05:
+                        estimated_speed = 2600.0 / max(float(latency or 1), 1.0)
+                        measured_speed = round(max(1.0, min(250.0, estimated_speed)), 2)
+
+                    if measured_speed < STABILITY_MIN_SPEED_MBPS:
+                        return (
+                            True,
+                            {
+                                "id": sub.id,
+                                "check_status": "dead",
+                            },
+                        )
+
+                    return (
+                        True,
+                        {
+                            "id": sub.id,
+                            "check_status": "alive",
+                            "is_alive": True,
+                            "latency": int(latency)
+                            if isinstance(latency, int)
+                            else 9999,
+                            "speed_mbps": measured_speed,
+                            "ai": bool(ai_avail),
+                            "no_ads": bool(no_ads),
+                        },
+                    )
 
                 return (
                     True,
                     {
                         "id": sub.id,
-                        "is_alive": bool(is_alive),
-                        "is_active": bool(is_alive),
-                        "was_active": bool(sub.is_active),
-                        "latency": int(latency) if isinstance(latency, int) else 9999,
-                        "speed_mbps": (
-                            float(sub.speed_mbps or 0.0)
-                            if bool(is_alive)
-                            else 0.0
-                        ),
-                        "ai": bool(sub.ai_available) if bool(is_alive) else False,
-                        "no_ads": bool(sub.no_ads) if bool(is_alive) else False,
+                        "check_status": "dead",
                     },
                 )
             except asyncio.CancelledError:
                 raise
             except Exception:
-                return (True, None)
+                return (
+                    True,
+                    {
+                        "id": sub.id,
+                        "check_status": "sys_err",
+                    },
+                )
 
         return _check()
 
@@ -193,32 +316,61 @@ async def check_stability_task() -> Dict[str, Any]:
             if item["success"] and item["result"] is not None
         ]
 
+        removed_dead = 0
+        sys_err_count = 0
+
         if updates:
-            await SubRepo.batch_update_stability(updates)
+            alive_updates = [u for u in updates if u.get("check_status") == "alive"]
+            dead_ids = [
+                int(u["id"])
+                for u in updates
+                if u.get("check_status") == "dead" and int(u.get("id", 0) or 0) > 0
+            ]
+            sys_err_count = len(
+                [u for u in updates if u.get("check_status") == "sys_err"]
+            )
+
+            if alive_updates:
+                await SubRepo.batch_update_stability(alive_updates)
+
             status_updates = [
                 {
                     "id": u["id"],
-                    "is_active": bool(u.get("is_active", u.get("is_alive", True))),
-                    "was_active": bool(u.get("was_active", True)),
-                    "latency_ms": u["latency"],
-                    "speed_mbps": u["speed_mbps"],
-                    "ai_available": u["ai"],
-                    "no_ads": u["no_ads"],
+                    "check_status": str(u.get("check_status", "dead")),
+                    "is_active": bool(u.get("is_alive", False)),
+                    "latency_ms": int(u.get("latency", 9999)),
+                    "speed_mbps": float(u.get("speed_mbps", 0.0) or 0.0),
+                    "ai_available": bool(u.get("ai", False)),
+                    "no_ads": bool(u.get("no_ads", False)),
                 }
                 for u in updates
+                if u.get("check_status") in {"alive", "sys_err"}
             ]
-            await SubRepo.batch_update_status(status_updates)
-            await SubRepo.cleanup_dead_subs(max_deaths=20)
+
+            if status_updates:
+                await SubRepo.batch_update_status(status_updates)
+
+            if dead_ids:
+                removed_dead = await SubRepo.delete_subs_by_ids(dead_ids)
+
+            await SubRepo.cleanup_dead_subs(max_deaths=10)
 
         new_counts = await StatsRepo.get_regions_counts()
         await SmartAlerts.process_changes(old_counts, new_counts)
 
         await Reporter.send_stability_log(
             bot,
-            f"Stability check finished: candidates={len(subs)}, checked={len(updates)}",
+            "Stability full recheck finished: "
+            f"total={len(subs)}, checked={len(updates)}, "
+            f"alive={len([u for u in updates if u.get('check_status') == 'alive'])}, "
+            f"removed_dead={removed_dead}, sys_err={sys_err_count}",
         )
 
-        return {"checked": len(updates)}
+        return {
+            "checked": len(updates),
+            "removed_dead": removed_dead,
+            "sys_err": sys_err_count,
+        }
     except Exception as e:
         if "SoftTimeLimitExceeded" in type(e).__name__:
             logger.warning("Stability check hit SoftTimeLimitExceeded.")

@@ -44,8 +44,10 @@ class Settings(BaseSettings):
 
     public_domain: str | None = None
     EXTERNAL_SUB_URL: str | None = None
+    RU_PAID_PROXIES: str | None = None
+    CHECKER_USE_RU_PROXY_CHAIN: bool = False
 
-    STRICT_RKN_FILTER: bool = True
+    STRICT_RKN_FILTER: bool = False
     BLOCKED_SNIS: List[str] =[
         "discord.com", "discord.gg", "rutracker.org", 
         "googlevideo.com", "youtube.com", "ytimg.com",
