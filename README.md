@@ -23,7 +23,7 @@ Telegram-бот и набор сервисов для автоматическо
 ## Требования
 
 - Ubuntu 20.04+ или Debian 11+
-- Python 3.10+
+- Python 3.12+
 - PostgreSQL
 - Redis
 - Xray-core
@@ -35,7 +35,7 @@ Telegram-бот и набор сервисов для автоматическо
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv postgresql redis-server git curl
+sudo apt install -y python3.12 python3.12-venv python3-pip postgresql redis-server git curl
 ```
 
 2) Установите Xray-core:
@@ -49,8 +49,8 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
 ```bash
 git clone https://github.com/your-username/vless-vpn-bot.git
 cd vless-vpn-bot
-python3 -m venv venv
-source venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
