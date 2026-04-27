@@ -78,6 +78,20 @@ module.exports = {
         PYTHONOPTIMIZE: "1",
         PYTHONDONTWRITEBYTECODE: "1"
       }
+    },
+    {
+      name: "RU_SSH_Proxy",
+      cwd: "/root/vless-vpn-bot",
+      script: "/usr/bin/ssh",
+      args: "-N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no -i /root/.ssh/ru_checker_tunnel -D 127.0.0.1:19080 user1@37.18.102.249",
+      interpreter: "none",
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      out_file: "/dev/null",
+      error_file: "/dev/null",
+      max_memory_restart: "64M",
+      kill_timeout: 5000
     }
   ]
 };
