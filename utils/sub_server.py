@@ -465,6 +465,27 @@ class SubscriptionServer:
             return web.Response(status=500, text=f"Error: {e}")
 
     @staticmethod
+    async def handle_redirect(request: web.Request) -> web.Response:
+        app_type = request.query.get("app")
+        sub_url = request.query.get("url")
+        
+        if not app_type or not sub_url:
+            return web.Response(status=400, text="Bad Request: Missing parameters")
+            
+        schemes = {
+            "hiddify": f"hiddify://install-config?url={sub_url}",
+            "v2raytun": f"v2raytun://import/{sub_url}",
+            "streisand": f"streisand://import/{sub_url}",
+            "singbox": f"sing-box://import-remote-profile?url={sub_url}"
+        }
+        
+        target = schemes.get(app_type.lower())
+        if not target:
+            return web.Response(status=400, text="Bad Request: Unsupported app")
+            
+        raise web.HTTPFound(target)
+
+    @staticmethod
     async def start():
         app = web.Application()
         cors = aiohttp_cors.setup(
@@ -477,6 +498,7 @@ class SubscriptionServer:
         )
         cors.add(app.router.add_get("/sub", SubscriptionServer.handle_subscription))
         cors.add(app.router.add_get("/sub64", SubscriptionServer.handle_subscription))
+        app.router.add_get("/redirect", SubscriptionServer.handle_redirect)
         app.router.add_get("/", lambda r: web.Response(text="VLESS Bot Online"))
 
         runner = web.AppRunner(app)

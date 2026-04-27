@@ -1,3 +1,4 @@
+import urllib.parse
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -61,15 +62,21 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
+    
+    base_url = url.split("/sub")[0]
+    safe_url = urllib.parse.quote(url, safe="")
+    
     kb.button(
-        text="Открыть подписку",
-        url=url,
-        style="primary",
+        text="🦊 В Hiddify",
+        url=f"{base_url}/redirect?app=hiddify&url={safe_url}",
+    )
+    kb.button(
+        text="🛡 В V2RayTun",
+        url=f"{base_url}/redirect?app=v2raytun&url={safe_url}",
     )
     kb.button(
         text="Скопировать ссылку",
         copy_text=CopyTextButton(text=url),
-        style="success",
     )
     kb.button(
         text="QR-Код",
@@ -91,7 +98,7 @@ def sub_action_kb(url: str):
         icon_custom_emoji_id="5938537205847822613",
         callback_data="home",
     )
-    kb.adjust(1, 1, 1, 1, 1, 1)
+    kb.adjust(2, 2, 2, 2)
     return kb.as_markup()
 
 
@@ -138,7 +145,7 @@ def settings_tags_kb(selected_tags: list, group_id: int | None = None):
         text=get_btn("stable", "🛡 Stable (24h Uptime)"),
         callback_data=f"{prefix}_stable",
     )
-    kb.button(text=get_btn("ai", "🤖 AI Ready (ChatGPT)"), callback_data=f"{prefix}_ai")
+    kb.button(text=get_btn("ai", "🤖 AI Ready"), callback_data=f"{prefix}_ai")
     kb.button(
         text=get_btn("fast", "⚡ High Speed (>100Mbps)"), callback_data=f"{prefix}_fast"
     )
@@ -263,23 +270,34 @@ def groups_list_kb(groups: list):
 
 def group_view_kb(group_id: int, url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="Открыть подписку", url=url, style="primary")
+    
+    base_url = url.split("/sub")[0]
+    safe_url = urllib.parse.quote(url, safe="")
+    
+    kb.button(
+        text="🦊 В Hiddify",
+        url=f"{base_url}/redirect?app=hiddify&url={safe_url}",
+    )
+    kb.button(
+        text="🛡 В V2RayTun",
+        url=f"{base_url}/redirect?app=v2raytun&url={safe_url}",
+    )
     kb.button(
         text="Скопировать ссылку",
         copy_text=CopyTextButton(text=url),
-        style="success",
     )
     kb.button(text="📱 QR-Код", callback_data=f"group_qr_{group_id}")
     kb.button(text="🌍 Выбор стран", callback_data=f"group_edit_countries_{group_id}")
     kb.button(text="⚡ Настройка тегов", callback_data=f"group_edit_tags_{group_id}")
     kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}", style="danger")
     kb.button(text="🔙 Назад", callback_data="groups_list")
-    kb.adjust(2, 2, 2, 1)
+    kb.adjust(2, 2, 2, 2, 1)
     return kb.as_markup()
 
 
 def donate_selection_kb():
     kb = InlineKeyboardBuilder()
+    kb.button(text="⭐️ Telegram Stars", callback_data="stars_selection")
     kb.button(text="💎 Crypto Pay", callback_data="crypto_selection")
     kb.button(text="🔙 Отмена", callback_data="home")
     kb.adjust(1)
@@ -292,6 +310,16 @@ def crypto_amount_kb():
     for amt in amounts:
         kb.button(text=f"{amt} $", callback_data=f"pay_create_{amt}")
     kb.button(text="✏️ Своя сумма", callback_data="pay_custom")
+    kb.adjust(3)
+    kb.button(text="🔙 Назад", callback_data="donate_info")
+    return kb.as_markup()
+
+
+def stars_amount_kb():
+    kb = InlineKeyboardBuilder()
+    amounts = [50, 100, 250, 500, 1000, 2500]
+    for amt in amounts:
+        kb.button(text=f"{amt} ⭐️", callback_data=f"stars_create_{amt}")
     kb.adjust(3)
     kb.button(text="🔙 Назад", callback_data="donate_info")
     return kb.as_markup()
@@ -332,7 +360,7 @@ def tg_proxy_kb(proxy_items: list | None = None, offset: int = 0, page_size: int
             link = str(item.get("link", "") or "").strip()
             latency_raw = item.get("latency_ms")
             kind_raw = str(item.get("kind", "mtproto") or "mtproto").strip().lower()
-            kind_text = "SOCKS5" if kind_raw == "socks5" else "MTProto"
+            kind_text = "MTProto"
             try:
                 latency_ms = int(latency_raw)
                 latency_text = f"{latency_ms}ms"

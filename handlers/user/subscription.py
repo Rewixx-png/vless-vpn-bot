@@ -56,8 +56,8 @@ def _extract_proxy_items(data: dict) -> list[dict]:
             except Exception:
                 latency_ms = 0
             kind = str(item.get("kind", "mtproto") or "mtproto").strip().lower()
-            if kind not in {"mtproto", "socks5"}:
-                kind = "mtproto"
+            if kind != "mtproto":
+                continue
             cleaned.append(
                 {
                     "link": link,
@@ -93,7 +93,7 @@ def _build_tg_proxy_text(
 
     if not proxy_items:
         return (
-            "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+            "<b>🧩 TG Proxy (MTProto)</b>\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "Сейчас нет рабочих прокси в кэше.\n"
             "Нажмите «Обновить список», чтобы запустить проверку в фоне.\n\n"
@@ -112,21 +112,18 @@ def _build_tg_proxy_text(
         alive_shown = total
 
     mtproto_total = sum(1 for item in proxy_items if item.get("kind") == "mtproto")
-    socks_total = total - mtproto_total
     safe_offset = max(0, min(offset, max(0, total - 1))) if total else 0
     start_idx = safe_offset + 1
     end_idx = min(total, safe_offset + page_size)
 
     lines = [
-        "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>",
+        "<b>🧩 TG Proxy (MTProto)</b>",
         "━━━━━━━━━━━━━━━━━━",
         "",
         f"<b>Обновлено:</b> {checked_at_text}",
         f"<b>Проверено:</b> {int(data.get('checked', 0) or 0)}",
         f"<b>Рабочих (всего):</b> {alive_total}",
         f"<b>В списке:</b> {total}",
-        f"<b>MTProto:</b> {mtproto_total}",
-        f"<b>SOCKS5:</b> {socks_total}",
         f"<b>Показано:</b> {start_idx}-{end_idx}",
     ]
 
@@ -173,7 +170,7 @@ async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: i
         queued = _queue_tg_proxy_refresh()
         if queued:
             text = (
-                "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+                "<b>🧩 TG Proxy (MTProto)</b>\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
                 "⏳ Первый список еще готовится.\n"
                 "Я запустил проверку в фоне — нажмите «Обновить список» через 20-40 секунд.\n\n"
@@ -182,7 +179,7 @@ async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: i
             )
         else:
             text = (
-                "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+                "<b>🧩 TG Proxy (MTProto)</b>\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
                 "⚠️ Не удалось запустить фоновое обновление. Попробуйте еще раз.\n\n"
                 "⚠️ <b>Важно:</b> проверяйте и подключайте прокси через <b>официальный Telegram</b>.\n"
@@ -348,7 +345,7 @@ async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
         "━━━━━━━━━━━━━━━━━━\n\n"
         "Выберите типы серверов, которые вам нужны:\n\n"
         "🛡 <b>Stable (Elite):</b> Серверы с аптаймом 24ч+ без единого сбоя.\n"
-        "▫️ <b>AI Ready:</b> Разблокирует ChatGPT, Gemini, Claude.\n"
+        "▫️ <b>AI Ready:</b> Проверено на доступ к ChatGPT и AI Studio. Ограничения Google по аккаунту/возрасту могут влиять отдельно.\n"
         "▫️ <b>High Speed:</b> Серверы со скоростью &gt; 100 Mbps.\n"
         "▫️ <b>Mobile/LTE:</b> Конфиги под мобильные сети (4G/5G).\n"
         "▫️ <b>Wi-Fi/Home:</b> Конфиги под домашний интернет/роутер.\n"
