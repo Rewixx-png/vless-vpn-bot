@@ -6,6 +6,7 @@ import resource
 import time
 import logging
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 if "uvloop" in sys.modules:
     del sys.modules["uvloop"]
@@ -44,6 +45,35 @@ except Exception:
 _redis_pool = None
 logger = logging.getLogger("CheckerService")
 
+_AI_CACHE_VERSION = "v2"
+_AI_STUDIO_BLOCK_URL_MARKERS = (
+    "ai.google.dev/gemini-api/docs/available-regions",
+    "/gemini-api/docs/available-regions",
+)
+_AI_STUDIO_BLOCK_TEXT_MARKERS = (
+    "available regions for google ai studio and gemini api",
+    "google ai studio is not available in your region",
+    "you do not meet the minimum age requirement",
+    "you haven't yet verified your age on your google account",
+    "403 access restricted",
+)
+_AI_STUDIO_ALLOWED_URL_PREFIXES = (
+    "https://aistudio.google.com",
+    "https://accounts.google.com",
+)
+_AI_STUDIO_ALLOWED_REDIRECT_HOSTS = {
+    "aistudio.google.com",
+    "accounts.google.com",
+}
+_AI_STUDIO_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 async def get_redis_pool():
     global _redis_pool
@@ -68,7 +98,7 @@ async def cleanup_zombie_xrays():
     try:
         tmp_dir = Path("/tmp")
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(120)
             try:
                 XrayExecutor.cleanup_zombies(max_age_sec=300)
 
@@ -309,6 +339,52 @@ async def probe_geoip(local_port: int) -> dict:
     return result
 
 
+def _normalize_probe_text(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _get_allowed_redirect_target(current_url: str, location: str | None) -> str | None:
+    target = str(location or "").strip()
+    if not target:
+        return None
+
+    resolved = urljoin(current_url, target)
+    parsed = urlparse(resolved)
+    host = str(parsed.netloc or "").strip().lower()
+    if parsed.scheme != "https" or host not in _AI_STUDIO_ALLOWED_REDIRECT_HOSTS:
+        return None
+
+    return resolved
+
+
+def _is_ai_studio_response_usable(
+    status: int,
+    visited_urls: list[str],
+    body_text: str,
+) -> bool:
+    normalized_urls = [_normalize_probe_text(url) for url in visited_urls if url]
+    normalized_body = _normalize_probe_text(body_text)
+
+    if status == 403:
+        return False
+
+    if any(
+        marker in url
+        for url in normalized_urls
+        for marker in _AI_STUDIO_BLOCK_URL_MARKERS
+    ):
+        return False
+
+    if any(marker in normalized_body for marker in _AI_STUDIO_BLOCK_TEXT_MARKERS):
+        return False
+
+    return any(
+        url.startswith(prefix)
+        for url in normalized_urls
+        for prefix in _AI_STUDIO_ALLOWED_URL_PREFIXES
+    )
+
+
 async def check_ai_availability(local_port: int) -> bool:
     timeout = aiohttp.ClientTimeout(total=5.0)
     openai_ok = False
@@ -329,24 +405,39 @@ async def check_ai_availability(local_port: int) -> bool:
                 pass
 
             try:
-                async with session.get(
-                    "https://gemini.google.com/app", allow_redirects=True
-                ) as resp:
-                    if resp.status in [200, 302]:
-                        google_ok = True
+                current_url = "https://aistudio.google.com/"
+                visited_urls: list[str] = []
+                max_redirects = 4
+
+                for _ in range(max_redirects + 1):
+                    async with session.get(
+                        current_url,
+                        allow_redirects=False,
+                        headers=_AI_STUDIO_HEADERS,
+                    ) as resp:
+                        response_url = str(resp.url)
+                        visited_urls.append(response_url)
+
+                        if resp.status in {301, 302, 303, 307, 308}:
+                            redirect_target = _get_allowed_redirect_target(
+                                current_url=response_url,
+                                location=resp.headers.get("Location"),
+                            )
+                            if not redirect_target:
+                                break
+                            current_url = redirect_target
+                            continue
+
+                        body_text = await resp.text(errors="ignore")
+                        if _is_ai_studio_response_usable(
+                            status=resp.status,
+                            visited_urls=visited_urls,
+                            body_text=body_text[:12000],
+                        ):
+                            google_ok = True
+                        break
             except:
                 pass
-
-            if not google_ok:
-                try:
-                    async with session.get(
-                        "https://generativelanguage.googleapis.com/v1beta/models",
-                        allow_redirects=False,
-                    ) as resp:
-                        if resp.status in [200, 400, 401, 403, 404]:
-                            google_ok = True
-                except:
-                    pass
     except:
         pass
 
@@ -485,7 +576,7 @@ async def check_handler(request):
 
             if ip and r_client:
                 try:
-                    keys = [f"chk:ai:{ip}", f"chk:ads:{ip}"]
+                    keys = [f"chk:ai:{_AI_CACHE_VERSION}:{ip}", f"chk:ads:{ip}"]
                     vals = await r_client.mget(keys)
                     if vals[0] is not None:
                         cached_ai = vals[0].decode() == "1"
@@ -507,7 +598,7 @@ async def check_handler(request):
                 if ip and r_client:
                     try:
                         await r_client.setex(
-                            f"chk:ai:{ip}",
+                            f"chk:ai:{_AI_CACHE_VERSION}:{ip}",
                             3600,
                             "1" if response_data["ai"] else "0",
                         )
