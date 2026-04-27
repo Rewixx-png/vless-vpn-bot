@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     CHECKER_PORT: int = 8081
     CHECKER_URL: str = "http://127.0.0.1:8081"
 
-    REPORT_CHAT_ID: int = -1003724265330
+    REPORT_CHAT_ID: int | None = None
 
-    VIDEO_SOURCE_URL: str = "https://raw.githubusercontent.com/Rewixx-png/rew-host-assets/main/banner.mp4"
+    VIDEO_SOURCE_URL: str | None = None
 
     CHECKER_TIMEOUT: float = 25.0
     CONNECTIVITY_TIMEOUT: float = 8.0

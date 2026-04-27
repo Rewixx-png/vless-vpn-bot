@@ -20,6 +20,10 @@ class VideoManager:
     
     @classmethod
     async def prepare(cls):
+        if not cls.SOURCE_URL:
+            logger.info("🎬 Video preparation skipped (VIDEO_SOURCE_URL is not set)")
+            return
+            
         if not os.path.exists("storage"):
             os.makedirs("storage")
         

@@ -32,6 +32,9 @@ class Reporter:
         topic_name: str,
         config_key: str,
     ) -> int:
+        if not config.REPORT_CHAT_ID:
+            return 0
+            
         try:
             topic = await bot.create_forum_topic(
                 chat_id=config.REPORT_CHAT_ID,
@@ -77,6 +80,10 @@ class Reporter:
         text: str,
         fallback_prefix: str,
     ) -> None:
+        if not config.REPORT_CHAT_ID:
+            logger.info(f"Report '{topic_name}' skipped (REPORT_CHAT_ID is not set)")
+            return
+            
         payload = cls._trim(text)
         thread_id = await cls._get_or_create_topic(
             bot=bot,
@@ -300,6 +307,9 @@ class Reporter:
         file_name: str,
         caption: str,
     ) -> bool:
+        if not config.REPORT_CHAT_ID:
+            return False
+            
         thread_id = await cls._get_or_create_topic(bot, "BackUp", "topic_backup")
         document = FSInputFile(file_path, filename=file_name)
 
