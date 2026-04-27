@@ -11,6 +11,7 @@ from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
 from utils.parser import LinkParser
+from config import config
 
 logger = logging.getLogger("Collector")
 
@@ -64,6 +65,12 @@ class SubscriptionCollector:
     CHECK_MAX_WORKERS = 120
     CHECK_TARGET_CPU = 92.0
     CHECK_TARGET_RAM = 88.0
+
+    RU_CHAIN_CHECK_INITIAL_WORKERS = 16
+    RU_CHAIN_CHECK_MIN_WORKERS = 10
+    RU_CHAIN_CHECK_MAX_WORKERS = 32
+    RU_CHAIN_CHECK_TARGET_CPU = 75.0
+    RU_CHAIN_CHECK_TARGET_RAM = 82.0
 
     BLOCKED_HOSTS = {
         "in-pl-hn.ray-proxy.ru",
@@ -408,13 +415,23 @@ class SubscriptionCollector:
             "sys_err": 0,
         }
 
-        processor = CpuAdaptiveProcessor(
-            initial_workers=cls.CHECK_INITIAL_WORKERS,
-            min_workers=cls.CHECK_MIN_WORKERS,
-            max_workers=cls.CHECK_MAX_WORKERS,
-            target_cpu=cls.CHECK_TARGET_CPU,
-            target_ram=cls.CHECK_TARGET_RAM,
-        )
+        use_ru_chain = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
+        if use_ru_chain:
+            processor = CpuAdaptiveProcessor(
+                initial_workers=cls.RU_CHAIN_CHECK_INITIAL_WORKERS,
+                min_workers=cls.RU_CHAIN_CHECK_MIN_WORKERS,
+                max_workers=cls.RU_CHAIN_CHECK_MAX_WORKERS,
+                target_cpu=cls.RU_CHAIN_CHECK_TARGET_CPU,
+                target_ram=cls.RU_CHAIN_CHECK_TARGET_RAM,
+            )
+        else:
+            processor = CpuAdaptiveProcessor(
+                initial_workers=cls.CHECK_INITIAL_WORKERS,
+                min_workers=cls.CHECK_MIN_WORKERS,
+                max_workers=cls.CHECK_MAX_WORKERS,
+                target_cpu=cls.CHECK_TARGET_CPU,
+                target_ram=cls.CHECK_TARGET_RAM,
+            )
 
         async def process_link(link: str):
             try:
@@ -442,6 +459,22 @@ class SubscriptionCollector:
                     link,
                     strict_speed=False,
                 )
+
+                if (not is_alive) and str(err or "").startswith("SYS_ERR"):
+                    await asyncio.sleep(0.12)
+                    (
+                        is_alive,
+                        region,
+                        latency,
+                        speed_mbps,
+                        ai_avail,
+                        no_ads,
+                        err,
+                        updated_link,
+                    ) = await VlessChecker.process_subscription(
+                        link,
+                        strict_speed=False,
+                    )
 
                 is_standard_err = err and any(
                     f"Factor {i}" in str(err) for i in range(0, 7)
@@ -484,6 +517,15 @@ class SubscriptionCollector:
                     samples=cls.JITTER_SAMPLES,
                     timeout=cls.JITTER_TIMEOUT_SEC,
                 )
+                if (not jitter_ok) and (not str(jitter_err or "").startswith("Factor 1")):
+                    await asyncio.sleep(0.08)
+                    jitter_ok, jitter_ms, jitter_err = await VlessChecker.measure_tcp_jitter(
+                        host=jitter_host,
+                        port=jitter_port,
+                        samples=cls.JITTER_SAMPLES,
+                        timeout=cls.JITTER_TIMEOUT_SEC,
+                    )
+
                 if not jitter_ok:
                     if str(jitter_err or "").startswith("Factor 1"):
                         return False, "dead"

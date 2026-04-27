@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import ipaddress
 import time
 
 import aiohttp
@@ -6,6 +8,7 @@ import aiohttp
 from utils.parser import LinkParser
 from utils.checker.api import CheckerAPI
 from utils.checker.geo_ip import GeoIP
+from utils.checker.proxy_pool import ProxyPool, UpstreamProxy
 from config import config
 
 
@@ -13,6 +16,10 @@ class VlessChecker:
     TCP_TIMEOUT_SEC = max(1.0, min(float(config.CONNECTIVITY_TIMEOUT), 10.0))
     TCP_JITTER_SAMPLES = 4
     TCP_JITTER_PAUSE_SEC = 0.06
+    TCP_PROXY_CACHE_TTL_SEC = 25.0
+
+    _cached_tcp_proxy: UpstreamProxy | None = None
+    _cached_tcp_proxy_at: float = 0.0
 
     _SYS_ERR_MARKERS = (
         "SYS_ERR",
@@ -58,6 +65,232 @@ class VlessChecker:
             return False, 9999, f"Factor 1: TCP Unreachable ({e})"
 
     @classmethod
+    async def _acquire_tcp_probe_proxy(cls) -> tuple[UpstreamProxy | None, str]:
+        now = time.monotonic()
+        if (
+            cls._cached_tcp_proxy is not None
+            and (now - cls._cached_tcp_proxy_at) <= cls.TCP_PROXY_CACHE_TTL_SEC
+        ):
+            return cls._cached_tcp_proxy, "OK"
+
+        proxy, proxy_err = await ProxyPool.acquire_working_proxy(max_attempts=3)
+        if proxy:
+            cls._cached_tcp_proxy = proxy
+            cls._cached_tcp_proxy_at = time.monotonic()
+            return proxy, "OK"
+
+        cls._cached_tcp_proxy = None
+        cls._cached_tcp_proxy_at = 0.0
+        err_text = str(proxy_err or "SYS_ERR: RU TCP Proxy Unavailable")
+        if not err_text.startswith("SYS_ERR"):
+            err_text = f"SYS_ERR: {err_text}"
+        return None, err_text
+
+    @classmethod
+    def _drop_cached_tcp_proxy(cls) -> None:
+        cls._cached_tcp_proxy = None
+        cls._cached_tcp_proxy_at = 0.0
+
+    @staticmethod
+    async def _read_exact(reader: asyncio.StreamReader, size: int, timeout: float) -> bytes:
+        return await asyncio.wait_for(reader.readexactly(size), timeout=timeout)
+
+    @staticmethod
+    def _build_socks_target(host: str, port: int) -> bytes:
+        try:
+            ip_v4 = ipaddress.IPv4Address(host)
+            return b"\x01" + ip_v4.packed + int(port).to_bytes(2, byteorder="big")
+        except Exception:
+            pass
+
+        try:
+            ip_v6 = ipaddress.IPv6Address(host)
+            return b"\x04" + ip_v6.packed + int(port).to_bytes(2, byteorder="big")
+        except Exception:
+            pass
+
+        host_bytes = host.encode("idna")
+        if len(host_bytes) > 255:
+            raise ValueError("Host is too long for SOCKS5 domain target")
+        return (
+            b"\x03"
+            + bytes([len(host_bytes)])
+            + host_bytes
+            + int(port).to_bytes(2, byteorder="big")
+        )
+
+    @staticmethod
+    async def _consume_http_headers(reader: asyncio.StreamReader, timeout: float) -> None:
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            if not line or line in {b"\r\n", b"\n"}:
+                return
+
+    @classmethod
+    async def _check_tcp_via_proxy(
+        cls,
+        host: str,
+        port: int,
+        timeout: float,
+        proxy: UpstreamProxy,
+    ) -> tuple[bool, int, str]:
+        reader = None
+        writer = None
+        started = time.monotonic()
+        phase = "connect_proxy"
+
+        scheme = str(proxy.scheme or "").strip().lower()
+        try:
+            conn = asyncio.open_connection(proxy.host, proxy.port)
+            reader, writer = await asyncio.wait_for(conn, timeout=timeout)
+
+            if scheme.startswith("socks"):
+                methods = [0x00]
+                if proxy.username:
+                    methods.append(0x02)
+
+                writer.write(bytes([0x05, len(methods), *methods]))
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+                phase = "proxy_greeting"
+                greeting = await cls._read_exact(reader, 2, timeout)
+                if greeting[0] != 0x05:
+                    cls._drop_cached_tcp_proxy()
+                    return False, 9999, "SYS_ERR: TCP Proxy Invalid SOCKS Greeting"
+
+                method = greeting[1]
+                if method == 0xFF:
+                    cls._drop_cached_tcp_proxy()
+                    return False, 9999, "SYS_ERR: TCP Proxy Auth Method Rejected"
+
+                if method == 0x02:
+                    if not proxy.username:
+                        cls._drop_cached_tcp_proxy()
+                        return False, 9999, "SYS_ERR: TCP Proxy Requested Auth"
+
+                    uname = proxy.username.encode("utf-8")
+                    passwd = proxy.password.encode("utf-8")
+                    if len(uname) > 255 or len(passwd) > 255:
+                        cls._drop_cached_tcp_proxy()
+                        return False, 9999, "SYS_ERR: TCP Proxy Credentials Too Long"
+
+                    auth_packet = (
+                        bytes([0x01, len(uname)])
+                        + uname
+                        + bytes([len(passwd)])
+                        + passwd
+                    )
+                    writer.write(auth_packet)
+                    await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+                    phase = "proxy_auth"
+                    auth_reply = await cls._read_exact(reader, 2, timeout)
+                    if auth_reply[1] != 0x00:
+                        cls._drop_cached_tcp_proxy()
+                        return False, 9999, "SYS_ERR: TCP Proxy Authentication Failed"
+
+                target = cls._build_socks_target(host, port)
+                writer.write(b"\x05\x01\x00" + target)
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+                phase = "proxy_connect"
+                head = await cls._read_exact(reader, 4, timeout)
+                if head[0] != 0x05:
+                    return False, 9999, "Factor 1: TCP Proxy Protocol Error"
+
+                reply = head[1]
+                if reply != 0x00:
+                    reply_map = {
+                        0x01: "General Failure",
+                        0x02: "Rule Set Denied",
+                        0x03: "Network Unreachable",
+                        0x04: "Host Unreachable",
+                        0x05: "Connection Refused",
+                        0x06: "TTL Expired",
+                        0x07: "Command Not Supported",
+                        0x08: "Address Type Not Supported",
+                    }
+                    reason = reply_map.get(reply, f"Reply {reply}")
+                    return False, 9999, f"Factor 1: TCP Unreachable ({reason})"
+
+                atyp = head[3]
+                if atyp == 0x01:
+                    await cls._read_exact(reader, 4, timeout)
+                elif atyp == 0x03:
+                    size = await cls._read_exact(reader, 1, timeout)
+                    await cls._read_exact(reader, size[0], timeout)
+                elif atyp == 0x04:
+                    await cls._read_exact(reader, 16, timeout)
+                else:
+                    return False, 9999, "Factor 1: TCP Proxy Address Error"
+
+                await cls._read_exact(reader, 2, timeout)
+
+                latency_ms = max(1, int((time.monotonic() - started) * 1000))
+                return True, latency_ms, "OK"
+
+            if scheme.startswith("http"):
+                auth_line = ""
+                if proxy.username:
+                    credentials = f"{proxy.username}:{proxy.password}".encode("utf-8")
+                    auth_line = (
+                        "Proxy-Authorization: Basic "
+                        + base64.b64encode(credentials).decode("ascii")
+                        + "\r\n"
+                    )
+
+                request = (
+                    f"CONNECT {host}:{port} HTTP/1.1\r\n"
+                    f"Host: {host}:{port}\r\n"
+                    f"{auth_line}"
+                    "Proxy-Connection: Keep-Alive\r\n\r\n"
+                )
+                writer.write(request.encode("utf-8"))
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+                phase = "http_proxy_tunnel"
+                status_line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+                if not status_line:
+                    return False, 9999, "Factor 1: TCP Proxy Empty HTTP Reply"
+
+                status_text = status_line.decode("latin-1", errors="ignore").strip()
+                if " " not in status_text:
+                    cls._drop_cached_tcp_proxy()
+                    return False, 9999, "SYS_ERR: TCP Proxy Invalid HTTP Reply"
+
+                parts = status_text.split(" ", 2)
+                code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+                await cls._consume_http_headers(reader, timeout=timeout)
+
+                if code != 200:
+                    if code in {401, 403, 407}:
+                        cls._drop_cached_tcp_proxy()
+                        return False, 9999, f"SYS_ERR: TCP Proxy Auth/ACL HTTP {code}"
+                    return False, 9999, f"Factor 1: TCP Unreachable (HTTP Proxy {code})"
+
+                latency_ms = max(1, int((time.monotonic() - started) * 1000))
+                return True, latency_ms, "OK"
+
+            cls._drop_cached_tcp_proxy()
+            return False, 9999, f"SYS_ERR: Unsupported TCP Proxy Scheme ({proxy.scheme})"
+
+        except asyncio.TimeoutError:
+            if phase in {"connect_proxy", "proxy_greeting", "proxy_auth"}:
+                cls._drop_cached_tcp_proxy()
+                return False, 9999, "SYS_ERR: TCP Probe Proxy Timeout"
+            return False, 9999, f"Factor 1: TCP Timeout via RU Proxy (>{int(timeout)}s)"
+        except Exception as e:
+            cls._drop_cached_tcp_proxy()
+            return False, 9999, f"SYS_ERR: TCP Probe Proxy Error ({e})"
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+    @classmethod
     async def measure_tcp_jitter(
         cls,
         host: str,
@@ -67,14 +300,30 @@ class VlessChecker:
     ) -> tuple[bool, int, str]:
         safe_samples = max(3, int(samples or cls.TCP_JITTER_SAMPLES))
         safe_timeout = float(timeout or min(2.5, cls.TCP_TIMEOUT_SEC))
+        use_ru_proxy = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
+
+        probe_proxy = None
+        if use_ru_proxy:
+            probe_proxy, proxy_err = await cls._acquire_tcp_probe_proxy()
+            if not probe_proxy:
+                return False, 9999, proxy_err
 
         latencies: list[int] = []
         for idx in range(safe_samples):
-            ok, latency, err = await cls._check_tcp(
-                host=host,
-                port=port,
-                timeout=safe_timeout,
-            )
+            if probe_proxy is not None:
+                ok, latency, err = await cls._check_tcp_via_proxy(
+                    host=host,
+                    port=port,
+                    timeout=safe_timeout,
+                    proxy=probe_proxy,
+                )
+            else:
+                ok, latency, err = await cls._check_tcp(
+                    host=host,
+                    port=port,
+                    timeout=safe_timeout,
+                )
+
             if not ok:
                 return False, 9999, err
 
@@ -94,6 +343,10 @@ class VlessChecker:
     async def _check_via_checker(
         config_url: str,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
+        checker_timeout = float(config.CHECKER_TIMEOUT)
+        if bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True)):
+            checker_timeout = max(checker_timeout, 35.0)
+
         try:
             (
                 success,
@@ -104,7 +357,7 @@ class VlessChecker:
                 no_ads,
                 err,
             ) = await asyncio.wait_for(
-                CheckerAPI.check(config_url), timeout=config.CHECKER_TIMEOUT
+                CheckerAPI.check(config_url), timeout=checker_timeout
             )
         except asyncio.TimeoutError:
             return (
@@ -114,7 +367,7 @@ class VlessChecker:
                 0.0,
                 False,
                 False,
-                f"SYS_ERR: Checker Timeout (>{config.CHECKER_TIMEOUT}s)",
+                f"SYS_ERR: Checker Timeout (>{checker_timeout}s)",
                 config_url,
             )
 
@@ -184,6 +437,7 @@ class VlessChecker:
         strict_speed: bool = True,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
         _ = strict_speed
+        use_ru_proxy = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return (
@@ -211,11 +465,34 @@ class VlessChecker:
                 config_url,
             )
 
-        is_alive, latency, err_text = await VlessChecker._check_tcp(
-            host=host,
-            port=port,
-            timeout=VlessChecker.TCP_TIMEOUT_SEC,
-        )
+        probe_proxy = None
+        if use_ru_proxy:
+            probe_proxy, proxy_err = await VlessChecker._acquire_tcp_probe_proxy()
+            if not probe_proxy:
+                return (
+                    False,
+                    "🌍 UNK",
+                    9999,
+                    0.0,
+                    False,
+                    False,
+                    proxy_err,
+                    config_url,
+                )
+
+        if probe_proxy is not None:
+            is_alive, latency, err_text = await VlessChecker._check_tcp_via_proxy(
+                host=host,
+                port=port,
+                timeout=VlessChecker.TCP_TIMEOUT_SEC,
+                proxy=probe_proxy,
+            )
+        else:
+            is_alive, latency, err_text = await VlessChecker._check_tcp(
+                host=host,
+                port=port,
+                timeout=VlessChecker.TCP_TIMEOUT_SEC,
+            )
 
         if not is_alive:
             return (

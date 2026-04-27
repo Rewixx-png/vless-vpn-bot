@@ -100,6 +100,39 @@ class ProxyPool:
     _health_cache: dict[str, tuple[bool, float]] = {}
     _geo_cache: dict[str, tuple[bool, float]] = {}
 
+    @staticmethod
+    async def _quick_probe_paid_proxy(proxy: UpstreamProxy) -> tuple[bool, str]:
+        timeout = 2.0
+        conn = None
+        try:
+            conn = await asyncio.wait_for(
+                asyncio.open_connection(proxy.host, proxy.port),
+                timeout=timeout,
+            )
+            reader, writer = conn
+
+            scheme = str(proxy.scheme or "").strip().lower()
+            if scheme.startswith("socks"):
+                writer.write(b"\x05\x01\x00")
+                await asyncio.wait_for(writer.drain(), timeout=timeout)
+                data = await asyncio.wait_for(reader.readexactly(2), timeout=timeout)
+                if data[0] != 0x05 or data[1] not in {0x00, 0x02}:
+                    writer.close()
+                    try:
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+                    return False, "Paid proxy SOCKS greeting failed"
+
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return True, "OK"
+        except Exception as e:
+            return False, f"Paid proxy unreachable ({str(e)})"
+
     @classmethod
     def _iter_proxy_tokens(cls, raw: str) -> list[str]:
         text = str(raw or "")
@@ -543,6 +576,14 @@ class ProxyPool:
     ) -> tuple[bool, str]:
         cache_key = proxy.to_url()
         now = time.time()
+
+        if str(proxy.source or "").startswith("paid:"):
+            ok, err = await cls._quick_probe_paid_proxy(proxy)
+            cls._health_cache[cache_key] = (bool(ok), time.time())
+            if ok:
+                return True, "OK"
+            return False, err
+
         if not force:
             cached = cls._health_cache.get(cache_key)
             if cached and (now - cached[1]) <= cls.RUNTIME_HEALTH_CACHE_TTL:
@@ -597,13 +638,11 @@ class ProxyPool:
         paid_proxies = cls._load_paid_proxies(force=False)
         if paid_proxies:
             for proxy in paid_proxies:
-                if cls._bad_until.get(proxy.to_url(), 0) > time.time():
-                    continue
-
-                ok, _probe_err = await cls.probe_proxy(proxy)
+                ok, _probe_err = await cls._quick_probe_paid_proxy(proxy)
                 if ok:
                     return proxy, "OK"
-                cls.mark_bad(proxy, cooldown_sec=30)
+
+            return None, "SYS_ERR: RU Paid Proxy Unreachable"
 
         now = time.time()
         if not cls._proxies:
