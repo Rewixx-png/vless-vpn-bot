@@ -43,10 +43,11 @@ def _get_recheck_runtime_status() -> tuple[bool, list[str], list[str]]:
 @router.callback_query(F.data == "admin_recheck_menu")
 async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
     try:
-        total_count = await SubRepo.get_total_count()
-        active_count = await SubRepo.get_active_count()
-        dead_count = await SubRepo.get_dead_count()
-        unknown_region = await SubRepo.get_unknown_region_count()
+        stats = await SubRepo.get_recheck_stats()
+        total_count = stats["total"]
+        active_count = stats["active"]
+        dead_count = stats["dead"]
+        unknown_region = stats["unknown_region"]
         maint_mode = await BotState.is_maintenance()
         is_running, active_ids, reserved_ids = _get_recheck_runtime_status()
         runtime_id = active_ids[0] if active_ids else (reserved_ids[0] if reserved_ids else "—")
@@ -86,6 +87,8 @@ async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_recheck_stop_active")
 async def stop_active_recheck(callback: CallbackQuery, state: FSMContext):
+    if not callback.bot or not callback.from_user:
+        return
     try:
         is_running, active_ids, reserved_ids = _get_recheck_runtime_status()
         if not is_running:
@@ -129,6 +132,8 @@ async def stop_active_recheck(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_recheck_run_"))
 async def run_recheck(callback: CallbackQuery, state: FSMContext):
+    if not callback.bot or not callback.data or not callback.from_user or not isinstance(callback.message, Message):
+        return
     try:
         await callback.answer("⏳ Запуск проверки...", show_alert=False)
     except Exception:
@@ -178,12 +183,13 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         logger.info(f"Starting recheck: mode={mode}, passes={passes}")
 
         try:
+            stats = await SubRepo.get_recheck_stats()
             if mode == "all":
-                subs_count = await SubRepo.get_total_count()
+                subs_count = stats["total"]
             elif mode == "active":
-                subs_count = await SubRepo.get_active_count()
+                subs_count = stats["active"]
             elif mode == "dead":
-                subs_count = await SubRepo.get_dead_count()
+                subs_count = stats["dead"]
             else:
                 subs_count = 0
         except Exception as e:
@@ -221,7 +227,7 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
 
         from tasks import run_admin_recheck_task
 
-        task = run_admin_recheck_task.delay(
+        task = getattr(run_admin_recheck_task, "delay")(
             mode=mode,
             total_passes=passes,
             chat_id=msg_obj.chat.id,

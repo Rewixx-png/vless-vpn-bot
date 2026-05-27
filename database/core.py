@@ -13,8 +13,8 @@ logger = logging.getLogger("Database")
 engine = create_async_engine(
     config.DB_URL, 
     echo=False,
-    pool_size=20,
-    max_overflow=30,
+    pool_size=30,
+    max_overflow=20,
     pool_timeout=30,
     pool_recycle=config.DB_POOL_RECYCLE,
     pool_pre_ping=True,
@@ -51,7 +51,9 @@ async def init_db():
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stable_state INTEGER DEFAULT 0",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stability_streak INTEGER DEFAULT 0",
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS speed_mbps FLOAT DEFAULT 0.0",
-                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS protocol_filter VARCHAR DEFAULT NULL",
+                "ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS protocol_filter VARCHAR DEFAULT NULL",
             ]
 
             for sql in migrations:
@@ -62,6 +64,22 @@ async def init_db():
                          logger.warning(f"⚠️ Migration warning: {e}")
 
             logger.info("✅ Migrations completed.")
+
+        async with engine.connect() as conn:
+            logger.info("🔄 Checking concurrent index migrations...")
+            concurrent_migrations = [
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_is_active ON subscriptions (is_active)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_speed_mbps ON subscriptions (speed_mbps)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_last_checked ON subscriptions (last_checked_at)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_death_count ON subscriptions (death_count)",
+            ]
+            for sql in concurrent_migrations:
+                try:
+                    await conn.execute(text(sql))
+                except Exception as e:
+                    if "exists" not in str(e).lower():
+                        logger.warning(f"⚠️ Concurrent migration warning: {e}")
+            logger.info("✅ Concurrent index migrations completed.")
 
     except Exception as e:
         logger.critical(f"❌ CRITICAL DATABASE ERROR: {e}")

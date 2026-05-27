@@ -21,12 +21,15 @@ class CheckerAPI:
         return cls._session
 
     @staticmethod
-    async def check(config_url: str) -> tuple:
+    async def check(config_url: str, skip_speed: bool = False) -> tuple:
         session = await CheckerAPI.get_session()
         try:
+            payload = {"config": config_url}
+            if skip_speed:
+                payload["skip_speed"] = True
             async with session.post(
                 f"{config.CHECKER_URL}/check",
-                json={"config": config_url}
+                json=payload
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()

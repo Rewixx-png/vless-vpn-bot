@@ -13,7 +13,8 @@ class User(Base):
     
     country_filter = Column(Text, nullable=True, default=None)
     tags_filter = Column(Text, nullable=True, default=None)
-    
+    protocol_filter = Column(String, nullable=True, default=None)
+
     subscription_limit = Column(Integer, default=0)
     language = Column(String, default="ru")
     use_fragment = Column(Boolean, default=False)
@@ -30,6 +31,7 @@ class UserGroup(Base):
     name = Column(String, nullable=False)
     country_filter = Column(Text, nullable=True)
     tags_filter = Column(Text, nullable=True, default=None)
+    protocol_filter = Column(String, nullable=True, default=None)
 
     created_at = Column(
         DateTime(timezone=True), server_default=func.now()
@@ -44,16 +46,16 @@ class Subscription(Base):
     vless_key = Column(Text, unique=True, nullable=False)
     region = Column(String, nullable=False, index=True)
     latency_ms = Column(Integer, default=9999)
-    speed_mbps = Column(Float, default=0.0)
+    speed_mbps = Column(Float, default=0.0, index=True)
     ai_available = Column(Boolean, default=False)
     no_ads = Column(Boolean, default=False)
     
-    is_active = Column(Boolean, default=True)
-    death_count = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True, index=True)
+    death_count = Column(Integer, default=0, index=True)
     stability_streak = Column(Integer, default=0)
     
     last_checked_at = Column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     added_at = Column(
         DateTime(timezone=True), server_default=func.now()

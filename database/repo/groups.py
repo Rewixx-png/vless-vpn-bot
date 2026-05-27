@@ -57,6 +57,13 @@ class GroupRepo:
             await session.commit()
 
     @staticmethod
+    async def update_group_protocol(group_id: int, protocol: str | None):
+        async with async_session_factory() as session:
+            stmt = update(UserGroup).where(UserGroup.id == group_id).values(protocol_filter=protocol)
+            await session.execute(stmt)
+            await session.commit()
+
+    @staticmethod
     async def get_all_groups():
         async with async_session_factory() as session:
             result = await session.execute(select(UserGroup).order_by(UserGroup.user_id))

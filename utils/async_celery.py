@@ -11,16 +11,7 @@ from celery_app import app
 class AsyncTask(Task):
     def __call__(self, *args, **kwargs):
         if asyncio.iscoroutinefunction(self.run):
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            return loop.run_until_complete(self.run(*args, **kwargs))
+            return asyncio.run(self.run(*args, **kwargs))
         return self.run(*args, **kwargs)
 
 
@@ -74,15 +65,16 @@ class RateLimiter:
         self.calls = []
         self.lock = asyncio.Lock()
     
-    async def acquire(self):
-        async with self.lock:
-            now = asyncio.get_event_loop().time()
-            self.calls = [c for c in self.calls if now - c < self.period]
-            
-            if len(self.calls) >= self.max_calls:
-                sleep_time = self.calls[0] + self.period - now
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-                    return await self.acquire()
-            
-            self.calls.append(now)
+    async def acquire(self) -> None:
+        while True:
+            sleep_time = 0.0
+            async with self.lock:
+                now = asyncio.get_event_loop().time()
+                self.calls = [c for c in self.calls if now - c < self.period]
+                if len(self.calls) >= self.max_calls:
+                    sleep_time = self.calls[0] + self.period - now
+                else:
+                    self.calls.append(now)
+                    return
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)

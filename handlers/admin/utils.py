@@ -1,13 +1,12 @@
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, InputMediaVideo
+from aiogram.types import CallbackQuery, InputMediaVideo, Message, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
 from utils.video import VideoManager
 
 
-async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="HTML"):
-    if not message:
+async def safe_edit_message(message: Message | None, text: str, reply_markup: InlineKeyboardMarkup | None = None, parse_mode: str = "HTML"):
+    if not isinstance(message, Message):
         return
     try:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -30,16 +29,19 @@ async def safe_edit_message(message, text: str, reply_markup=None, parse_mode="H
             pass
         
         try:
-            await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            if isinstance(message, Message):
+                await message.delete()
         except:
             pass
     except Exception:
         pass
 
 
-async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text: str, reply_markup=None):
+async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext | None, text: str, reply_markup: InlineKeyboardMarkup | None = None):
+    if not callback.bot:
+        return
     message = callback.message
-    if not message:
+    if not isinstance(message, Message):
         return
     
     try:
@@ -74,7 +76,7 @@ async def admin_edit_or_answer(callback: CallbackQuery, state: FSMContext, text:
                         media=media,
                         reply_markup=reply_markup
                     )
-                    if hasattr(edited_msg, 'video') and edited_msg.video and not isinstance(video_file, str):
+                    if isinstance(edited_msg, Message) and edited_msg.video and not isinstance(video_file, str):
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     
                     if state:

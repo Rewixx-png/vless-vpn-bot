@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -57,7 +57,7 @@ async def _release_probe_lock(client: redis.Redis | None, token: str | None) -> 
         return
 
     try:
-        await client.eval(
+        await cast(Any, client).eval(
             "if redis.call('get', KEYS[1]) == ARGV[1] then "
             "return redis.call('del', KEYS[1]) else return 0 end",
             1,

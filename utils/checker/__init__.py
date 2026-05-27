@@ -279,7 +279,14 @@ class VlessChecker:
                 cls._drop_cached_tcp_proxy()
                 return False, 9999, "SYS_ERR: TCP Probe Proxy Timeout"
             return False, 9999, f"Factor 1: TCP Timeout via RU Proxy (>{int(timeout)}s)"
+        except asyncio.IncompleteReadError as e:
+            if phase == "proxy_connect":
+                return False, 9999, "Factor 1: TCP Unreachable (Proxy Target Rejected/Dropped)"
+            cls._drop_cached_tcp_proxy()
+            return False, 9999, f"SYS_ERR: TCP Probe Proxy IncompleteRead ({e})"
         except Exception as e:
+            if phase == "proxy_connect" and ("0 bytes read" in str(e) or "Connection reset" in str(e)):
+                return False, 9999, "Factor 1: TCP Unreachable (Proxy Target Dropped)"
             cls._drop_cached_tcp_proxy()
             return False, 9999, f"SYS_ERR: TCP Probe Proxy Error ({e})"
         finally:
@@ -342,6 +349,7 @@ class VlessChecker:
     @staticmethod
     async def _check_via_checker(
         config_url: str,
+        skip_speed: bool = False,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
         checker_timeout = float(config.CHECKER_TIMEOUT)
         if bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True)):
@@ -356,9 +364,9 @@ class VlessChecker:
                 ai,
                 no_ads,
                 err,
-            ) = await asyncio.wait_for(
-                CheckerAPI.check(config_url), timeout=checker_timeout
-            )
+             ) = await asyncio.wait_for(
+                 CheckerAPI.check(config_url, skip_speed=skip_speed), timeout=checker_timeout
+             )
         except asyncio.TimeoutError:
             return (
                 False,
@@ -435,6 +443,7 @@ class VlessChecker:
     async def process_subscription(
         config_url: str,
         strict_speed: bool = True,
+        skip_speed: bool = False,
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
         _ = strict_speed
         use_ru_proxy = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
@@ -515,7 +524,7 @@ class VlessChecker:
             no_ads,
             checker_err,
             updated_link,
-        ) = await VlessChecker._check_via_checker(config_url)
+        ) = await VlessChecker._check_via_checker(config_url, skip_speed=skip_speed)
 
         if not via_checker_ok:
             return (

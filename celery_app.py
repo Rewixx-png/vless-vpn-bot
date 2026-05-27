@@ -25,17 +25,7 @@ os.environ.setdefault("C_FORCE_ROOT", "1")
 class AsyncTask(Task):
     def __call__(self, *args, **kwargs):
         if asyncio.iscoroutinefunction(self.run):
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            return loop.run_until_complete(self.run(*args, **kwargs))
-
+            return asyncio.run(self.run(*args, **kwargs))
         return self.run(*args, **kwargs)
 
 
@@ -55,10 +45,10 @@ app.conf.task_queues = (
 app.conf.task_routes = {
     "tasks.check_subs_batch_task": {"queue": "high_priority"},
     "tasks.run_admin_recheck_task": {"queue": "high_priority"},
-    "tasks.cleanup_database_task": {"queue": "high_priority"},
     "tasks.run_collector_task": {"queue": "low_priority"},
     "tasks.check_stability_task": {"queue": "low_priority"},
     "tasks.update_geoip_task": {"queue": "low_priority"},
+    "tasks.resolve_unk_regions_task": {"queue": "low_priority"},
     "tasks.run_backup_snapshot_task": {"queue": "low_priority"},
     "tasks.update_tg_proxy_task": {"queue": "high_priority"},
     "tasks.probe_blocked_users_task": {"queue": "low_priority"},
@@ -73,13 +63,17 @@ app.conf.beat_schedule = {
         "task": "tasks.check_stability_task",
         "schedule": float(BEAT_SCHEDULE.get("stability_interval", 3600.0)),
     },
-    "update-geoip-monthly": {
+    "update-geoip-biweekly": {
         "task": "tasks.update_geoip_task",
-        "schedule": 2592000.0,
+        "schedule": 1209600.0,
     },
-    "backup-db-hourly": {
+    "resolve-unk-regions-daily": {
+        "task": "tasks.resolve_unk_regions_task",
+        "schedule": 86400.0,
+    },
+    "backup-db-daily": {
         "task": "tasks.run_backup_snapshot_task",
-        "schedule": float(BEAT_SCHEDULE.get("backup_interval", 3600.0)),
+        "schedule": 86400.0,
     },
     "update-tg-proxy-hourly": {
         "task": "tasks.update_tg_proxy_task",

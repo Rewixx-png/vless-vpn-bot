@@ -11,6 +11,8 @@ ITEMS_PER_PAGE = 20
 
 @router.callback_query(F.data.startswith("manage_region_"))
 async def list_subs_in_region(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     data_part = callback.data.split("manage_region_")[1]
     
     if ":" in data_part:
@@ -64,6 +66,8 @@ async def list_subs_in_region(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("sub_detail_"))
 async def show_sub_details(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     try:
         sub_id = int(callback.data.split("sub_detail_")[1])
     except ValueError:
@@ -102,6 +106,8 @@ async def show_sub_details(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("sub_toggle_"))
 async def toggle_sub(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     try:
         sub_id = int(callback.data.split("sub_toggle_")[1])
     except ValueError:

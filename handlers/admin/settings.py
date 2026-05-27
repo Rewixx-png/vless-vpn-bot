@@ -57,6 +57,8 @@ async def ask_domain(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(DomainStates.waiting_for_domain), F.from_user.id.in_(config.ADMIN_IDS))
 async def process_domain_input(message: Message, state: FSMContext):
+    if not message.text or not message.bot or not message.from_user:
+        return
     domain = message.text.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
     
     msg = await message.answer(
@@ -81,6 +83,7 @@ async def process_domain_input(message: Message, state: FSMContext):
         )
         await state.clear()
     else:
+        await state.clear()
         await msg.edit_text(
             f"<blockquote>❌ <b>Ошибка проверки:</b>\n\n"
             f"{error}\n\n"
@@ -91,6 +94,8 @@ async def process_domain_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("force_save_domain:"))
 async def force_save_domain(callback: CallbackQuery, state: FSMContext):
+    if not callback.data or not callback.bot or not callback.from_user:
+        return
     domain = callback.data.split("force_save_domain:")[1]
 
     await SystemRepo.set_config("public_domain", domain)
@@ -112,6 +117,8 @@ async def force_save_domain(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "delete_domain")
 async def delete_domain(callback: CallbackQuery, state: FSMContext):
+    if not callback.bot or not callback.from_user:
+        return
     await SystemRepo.delete_config("public_domain")
     await Reporter.send_admin_action(
         callback.bot,

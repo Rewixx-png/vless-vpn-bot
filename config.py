@@ -21,8 +21,10 @@ class Settings(BaseSettings):
 
     CHECKER_TIMEOUT: float = 25.0
     CONNECTIVITY_TIMEOUT: float = 8.0
-    SPEED_TEST_TIMEOUT: float = 5.0
+    SPEED_TEST_TIMEOUT: float = 10.0
     BATCH_TIMEOUT_PER_ITEM: float = 60.0
+
+    MAX_CONFIGS_PER_REGION: int = 300
 
     MIN_SPEED_MBPS: float = 25.0
     MEMORY_LIMIT_MB: int = 450
@@ -54,6 +56,14 @@ class Settings(BaseSettings):
         "instagram.com", "facebook.com", "twitter.com", "x.com",
         "t.co", "linkedin.com", "netflix.com"
     ]
+
+    # Payment info (shown to users)
+    PAYMENT_PHONE: str = "+79121668033"
+    PAYMENT_CARD_RAIFFEISEN: str = "2200300581247390"
+
+    # Support contacts
+    SUPPORT_USERNAME: str = "@RewiX_X"
+    FEEDBACK_BOT_USERNAME: str = "@RewFeedBackBot"
 
     class Config:
         env_file = ".env"

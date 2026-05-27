@@ -11,6 +11,8 @@ router = Router()
 
 @router.callback_query(F.data.startswith("sub_delete_"))
 async def delete_sub(callback: CallbackQuery):
+    if not callback.data:
+        return
     sub_id = int(callback.data.split("sub_delete_")[1])
     sub = await SubRepo.get_sub_by_id(sub_id)
     if sub:
@@ -67,6 +69,8 @@ async def execute_delete_unknown(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("ask_delete_country_"))
 async def ask_delete_country(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     region = callback.data.split("ask_delete_country_")[1]
     count = await SubRepo.count_by_region(region)
     
@@ -81,6 +85,8 @@ async def ask_delete_country(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("confirm_del_country_"))
 async def execute_delete_country(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     region = callback.data.split("confirm_del_country_")[1]
     
     await SubRepo.delete_subs_by_region(region)

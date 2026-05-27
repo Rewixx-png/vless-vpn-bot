@@ -10,9 +10,10 @@ from typing import Optional
 from config import config
 
 class GeoIP:
-    MMDB_URLS =[
+    MMDB_URLS = [
         "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
-        "https://git.io/GeoLite2-Country.mmdb"
+        "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
+        "https://github.com/sapics/ip-location-db/raw/main/geolite2-country/geolite2-country.mmdb",
     ]
     DB_PATH = "utils/checker/mmdb/Country.mmdb"
 
@@ -195,21 +196,132 @@ class GeoIP:
         try:
             async with aiohttp.ClientSession() as session:
                 for url in cls.MMDB_URLS:
-                    async with session.get(url, timeout=30) as resp:
-                        if resp.status == 200:
-                            with open(cls.DB_PATH, 'wb') as f:
-                                f.write(await resp.read())
-                            success = True
-                            break
+                    try:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                if len(data) > 1_000_000:
+                                    with open(cls.DB_PATH, 'wb') as f:
+                                        f.write(data)
+                                    success = True
+                                    break
+                    except Exception:
+                        continue
         except Exception:
             pass
 
         if success:
             try:
                 cls._reader = geoip2.database.Reader(cls.DB_PATH)
-            except:
+            except Exception:
                 pass
         return success
+
+    @classmethod
+    async def resolve_unk_by_mmdb(cls, vless_keys: list[str]) -> list[dict]:
+        if cls._reader is None and os.path.exists(cls.DB_PATH):
+            try:
+                cls._reader = geoip2.database.Reader(cls.DB_PATH)
+            except Exception:
+                return []
+
+        if cls._reader is None:
+            return []
+
+        addr_re = re.compile(r'vless://[^@]+@([^:@/?#\s]+):\d+', re.ASCII)
+        updates: list[dict] = []
+        sem = asyncio.Semaphore(50)
+
+        async def _resolve_one(key: str) -> dict | None:
+            m = addr_re.search(key)
+            if not m:
+                return None
+            host = m.group(1).strip().lower()
+            async with sem:
+                ip = await cls.resolve_host(host)
+            if not ip:
+                return None
+            try:
+                code = cls._reader.country(ip).country.iso_code
+            except Exception:
+                return None
+            if not code:
+                return None
+            return {"vless_key": key, "region": cls.code_to_region(code)}
+
+        tasks = [_resolve_one(k) for k in vless_keys]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for r in results:
+            if isinstance(r, dict):
+                updates.append(r)
+        return updates
+
+    COUNTRY_NAMES: dict[str, str] = {
+        "AD": "Andorra", "AE": "UAE", "AF": "Afghanistan", "AG": "Antigua",
+        "AI": "Anguilla", "AL": "Albania", "AM": "Armenia", "AO": "Angola",
+        "AQ": "Antarctica", "AR": "Argentina", "AS": "Am. Samoa", "AT": "Austria",
+        "AU": "Australia", "AW": "Aruba", "AX": "Åland", "AZ": "Azerbaijan",
+        "BA": "Bosnia", "BB": "Barbados", "BD": "Bangladesh", "BE": "Belgium",
+        "BF": "Burkina Faso", "BG": "Bulgaria", "BH": "Bahrain", "BI": "Burundi",
+        "BJ": "Benin", "BL": "St. Barthélemy", "BM": "Bermuda", "BN": "Brunei",
+        "BO": "Bolivia", "BQ": "Caribbean NL", "BR": "Brazil", "BS": "Bahamas",
+        "BT": "Bhutan", "BV": "Bouvet Is.", "BW": "Botswana", "BY": "Belarus",
+        "BZ": "Belize", "CA": "Canada", "CC": "Cocos Is.", "CD": "DR Congo",
+        "CF": "C. African Rep.", "CG": "Congo", "CH": "Switzerland", "CI": "Côte d'Ivoire",
+        "CK": "Cook Is.", "CL": "Chile", "CM": "Cameroon", "CN": "China",
+        "CO": "Colombia", "CR": "Costa Rica", "CU": "Cuba", "CV": "Cape Verde",
+        "CW": "Curaçao", "CX": "Christmas Is.", "CY": "Cyprus", "CZ": "Czechia",
+        "DE": "Germany", "DJ": "Djibouti", "DK": "Denmark", "DM": "Dominica",
+        "DO": "Dominican Rep.", "DZ": "Algeria", "EC": "Ecuador", "EE": "Estonia",
+        "EG": "Egypt", "EH": "W. Sahara", "ER": "Eritrea", "ES": "Spain",
+        "ET": "Ethiopia", "EU": "Europe", "FI": "Finland", "FJ": "Fiji",
+        "FK": "Falkland Is.", "FM": "Micronesia", "FO": "Faroe Is.", "FR": "France",
+        "GA": "Gabon", "GB": "UK", "GD": "Grenada", "GE": "Georgia",
+        "GF": "French Guiana", "GG": "Guernsey", "GH": "Ghana", "GI": "Gibraltar",
+        "GL": "Greenland", "GM": "Gambia", "GN": "Guinea", "GP": "Guadeloupe",
+        "GQ": "Eq. Guinea", "GR": "Greece", "GS": "S. Georgia", "GT": "Guatemala",
+        "GU": "Guam", "GW": "Guinea-Bissau", "GY": "Guyana", "HK": "Hong Kong",
+        "HM": "Heard Is.", "HN": "Honduras", "HR": "Croatia", "HT": "Haiti",
+        "HU": "Hungary", "ID": "Indonesia", "IE": "Ireland", "IL": "Israel",
+        "IM": "Isle of Man", "IN": "India", "IO": "Br. Indian Ocean", "IQ": "Iraq",
+        "IR": "Iran", "IS": "Iceland", "IT": "Italy", "JE": "Jersey",
+        "JM": "Jamaica", "JO": "Jordan", "JP": "Japan", "KE": "Kenya",
+        "KG": "Kyrgyzstan", "KH": "Cambodia", "KI": "Kiribati", "KM": "Comoros",
+        "KN": "St. Kitts", "KP": "North Korea", "KR": "South Korea", "KW": "Kuwait",
+        "KY": "Cayman Is.", "KZ": "Kazakhstan", "LA": "Laos", "LB": "Lebanon",
+        "LC": "St. Lucia", "LI": "Liechtenstein", "LK": "Sri Lanka", "LR": "Liberia",
+        "LS": "Lesotho", "LT": "Lithuania", "LU": "Luxembourg", "LV": "Latvia",
+        "LY": "Libya", "MA": "Morocco", "MC": "Monaco", "MD": "Moldova",
+        "ME": "Montenegro", "MF": "St. Martin", "MG": "Madagascar", "MH": "Marshall Is.",
+        "MK": "North Macedonia", "ML": "Mali", "MM": "Myanmar", "MN": "Mongolia",
+        "MO": "Macau", "MP": "N. Mariana Is.", "MQ": "Martinique", "MR": "Mauritania",
+        "MS": "Montserrat", "MT": "Malta", "MU": "Mauritius", "MV": "Maldives",
+        "MW": "Malawi", "MX": "Mexico", "MY": "Malaysia", "MZ": "Mozambique",
+        "NA": "Namibia", "NC": "New Caledonia", "NE": "Niger", "NF": "Norfolk Is.",
+        "NG": "Nigeria", "NI": "Nicaragua", "NL": "Netherlands", "NO": "Norway",
+        "NP": "Nepal", "NR": "Nauru", "NU": "Niue", "NZ": "New Zealand",
+        "OM": "Oman", "PA": "Panama", "PE": "Peru", "PF": "French Polynesia",
+        "PG": "Papua New Guinea", "PH": "Philippines", "PK": "Pakistan", "PL": "Poland",
+        "PM": "St. Pierre", "PN": "Pitcairn", "PR": "Puerto Rico", "PS": "Palestine",
+        "PT": "Portugal", "PW": "Palau", "PY": "Paraguay", "QA": "Qatar",
+        "RE": "Réunion", "RO": "Romania", "RS": "Serbia", "RU": "Russia",
+        "RW": "Rwanda", "SA": "Saudi Arabia", "SB": "Solomon Is.", "SC": "Seychelles",
+        "SD": "Sudan", "SE": "Sweden", "SG": "Singapore", "SH": "St. Helena",
+        "SI": "Slovenia", "SJ": "Svalbard", "SK": "Slovakia", "SL": "Sierra Leone",
+        "SM": "San Marino", "SN": "Senegal", "SO": "Somalia", "SR": "Suriname",
+        "SS": "South Sudan", "ST": "São Tomé", "SV": "El Salvador", "SX": "Sint Maarten",
+        "SY": "Syria", "SZ": "Eswatini", "TC": "Turks & Caicos", "TD": "Chad",
+        "TF": "Fr. S. Territories", "TG": "Togo", "TH": "Thailand", "TJ": "Tajikistan",
+        "TK": "Tokelau", "TL": "Timor-Leste", "TM": "Turkmenistan", "TN": "Tunisia",
+        "TO": "Tonga", "TR": "Turkey", "TT": "Trinidad", "TV": "Tuvalu",
+        "TW": "Taiwan", "TZ": "Tanzania", "UA": "Ukraine", "UG": "Uganda",
+        "UM": "US Minor Is.", "US": "USA", "UY": "Uruguay", "UZ": "Uzbekistan",
+        "VA": "Vatican", "VC": "St. Vincent", "VE": "Venezuela", "VG": "Br. Virgin Is.",
+        "VI": "US Virgin Is.", "VN": "Vietnam", "VU": "Vanuatu", "WF": "Wallis & Futuna",
+        "WS": "Samoa", "XK": "Kosovo", "YE": "Yemen", "YT": "Mayotte",
+        "ZA": "South Africa", "ZM": "Zambia", "ZW": "Zimbabwe",
+    }
 
     @classmethod
     def code_to_region(cls, code: str) -> str:
@@ -218,16 +330,7 @@ class GeoIP:
 
         code = code.upper()
         flag = cls.FLAGS.get(code, "🌍")
-
-        names = {
-            "DE": "Germany", "US": "USA", "NL": "Netherlands", "RU": "Russia",
-            "FI": "Finland", "FR": "France", "GB": "UK", "UA": "Ukraine",
-            "TR": "Turkey", "KZ": "Kazakhstan", "PL": "Poland", "SE": "Sweden",
-            "CH": "Switzerland", "IT": "Italy", "ES": "Spain", "CA": "Canada",
-            "JP": "Japan", "KR": "South Korea", "SG": "Singapore", "AE": "UAE"
-        }
-
-        name = names.get(code, code)
+        name = cls.COUNTRY_NAMES.get(code, code)
         return f"{flag} {name}"
 
     @classmethod

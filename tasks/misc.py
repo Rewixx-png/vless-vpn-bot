@@ -3,7 +3,7 @@ from celery_app import app
 from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler
 
 @app.task(name="tasks.check_subs_batch_task", base=OptimizedTask, bind=True, max_retries=3, time_limit=3600, soft_time_limit=3540)
-async def check_subs_batch_task(self, sub_ids: list) -> Dict[str, Any]:
+async def check_subs_batch_task(self, sub_ids: list[Any]) -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
     return {"status": "disabled"}

@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 from database.repo import SubRepo
@@ -14,6 +14,8 @@ router = Router()
 @router.callback_query(F.data == "admin_fix_regions")
 @router.callback_query(F.data == "admin_recheck_regions_force")
 async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
+    if not callback.data or not isinstance(callback.message, Message):
+        return
     is_force = "force" in callback.data
 
     try: await callback.answer()
@@ -44,7 +46,7 @@ async def fix_regions_logic(callback: CallbackQuery, state: FSMContext):
 
     for sub in subs:
         parsed = VlessChecker.parse_config(sub.vless_key)
-        if parsed and parsed.get("host") or parsed.get("server"):
+        if parsed and (parsed.get("host") or parsed.get("server")):
             host = parsed.get("host") or parsed.get("server")
             remark = parsed.get("ps", "") or parsed.get("name", "")
 

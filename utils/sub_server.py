@@ -11,6 +11,7 @@ from database.repo import SubRepo, UserRepo, SystemRepo, GroupRepo
 from config import config
 from utils.parser import LinkParser
 from utils.clash import ClashGenerator
+from utils.singbox import SingBoxGenerator
 
 logger = logging.getLogger("SubServer")
 
@@ -151,7 +152,11 @@ class SubscriptionServer:
 
     @staticmethod
     def _is_whitelist_config(link: str) -> bool:
-        return "security=reality" in link or "flow=xtls-rprx-vision" in link
+        return (
+            "security=reality" in link
+            or "flow=xtls-rprx-vision" in link
+            or "obfs=salamander" in link
+        )
 
     @staticmethod
     def _extract_links(text: str, allowed_schemes: set[str]) -> list[str]:
@@ -251,7 +256,10 @@ class SubscriptionServer:
             is_clash = any(
                 x in user_agent for x in ["clash", "flclash", "stash", "meta", "verge"]
             )
-            is_hiddify = "hiddify" in user_agent
+            is_singbox = any(
+                x in user_agent for x in ["sing-box", "singbox", "nekobox", "nekoray", "hiddify-next"]
+            ) or format_param in ("singbox", "sing-box", "sb")
+            is_hiddify = "hiddify" in user_agent and not is_singbox
             is_v2raytun = "v2raytun" in user_agent
             is_happ = "happ" in user_agent.lower()
 
@@ -285,6 +293,7 @@ class SubscriptionServer:
                     countries_filter = None
                     tags_filter = None
 
+                    protocol_filter = None
                     if group_name:
                         group = await GroupRepo.get_group_by_name(user_id, group_name)
                         if group:
@@ -296,12 +305,26 @@ class SubscriptionServer:
 
                             if group.tags_filter:
                                 tags_filter = group.tags_filter.split(",")
+
+                            if group.protocol_filter:
+                                protocol_filter = group.protocol_filter
                     else:
                         if user.country_filter:
                             countries_filter = user.country_filter.split(",")
 
                         if user.tags_filter:
                             tags_filter = user.tags_filter.split(",")
+
+                        if user.protocol_filter:
+                            protocol_filter = user.protocol_filter
+
+                    if not types_param and protocol_filter:
+                        if protocol_filter == "both":
+                            types_param = "vless,hy2,hysteria2,tuic"
+                        elif protocol_filter == "hy2":
+                            types_param = "hy2,hysteria2,tuic"
+                        else:
+                            types_param = protocol_filter
 
                     subs = await SubRepo.get_smart_keys(
                         regions=countries_filter,
@@ -369,10 +392,18 @@ class SubscriptionServer:
                                 base_link, "fragment", "10-30,10-30,tlshello"
                             )
 
-                new_link = SubscriptionServer._rename_vless(base_link, final_name)
-                renamed_links.append(new_link)
+                scheme = base_link.split("://", 1)[0].lower() if "://" in base_link else ""
+                if scheme in ("hy2", "hysteria2", "tuic"):
+                    clean_link = base_link.split("#", 1)[0]
+                    renamed_links.append(f"{clean_link}#{urllib.parse.quote(final_name)}")
+                else:
+                    new_link = SubscriptionServer._rename_vless(base_link, final_name)
+                    renamed_links.append(new_link)
 
-            renamed_links = [k for k in renamed_links if k.startswith("vless://")]
+            renamed_links = [
+                k for k in renamed_links
+                if k.split("://", 1)[0].lower() in {"vless", "hy2", "hysteria2", "tuic", "trojan"}
+            ]
 
             supported_schemes = {
                 "vless",
@@ -394,10 +425,10 @@ class SubscriptionServer:
                         if t.strip() in supported_schemes
                     }
             else:
-                allowed_schemes = {"vless"}
+                allowed_schemes = {"vless", "hy2", "hysteria2", "tuic", "trojan"}
 
             if not allowed_schemes:
-                allowed_schemes = {"vless"}
+                allowed_schemes = {"vless", "hy2", "hysteria2", "tuic", "trojan"}
 
             renamed_links = [
                 k
@@ -415,7 +446,23 @@ class SubscriptionServer:
             ):
                 combined_links = ["# no-active-configs"]
 
-            if format_param in ["hiddify", "hdy"] or is_hiddify or is_happ:
+            if is_singbox:
+                parsed_configs = []
+                for k in combined_links:
+                    scheme = k.split("://", 1)[0].lower() if "://" in k else ""
+                    if scheme in ("hy2", "hysteria2"):
+                        cfg = SingBoxGenerator.parse_hysteria2(k)
+                    elif scheme == "trojan":
+                        cfg = LinkParser.parse_trojan(k)
+                    else:
+                        cfg = LinkParser.parse_vless(k)
+                    if cfg:
+                        parsed_configs.append(cfg)
+
+                response_text = SingBoxGenerator.generate(parsed_configs)
+                filename = "config.json"
+                content_type = "application/json; charset=utf-8"
+            elif format_param in ["hiddify", "hdy"] or is_hiddify or is_happ:
                 text_data = "\n".join(combined_links)
                 response_text = base64.b64encode(text_data.encode("utf-8")).decode(
                     "utf-8"
@@ -425,7 +472,11 @@ class SubscriptionServer:
             elif format_param in ["clash", "yaml", "yml"] or is_clash:
                 parsed_configs = []
                 for k in combined_links:
-                    cfg = LinkParser.parse_vless(k)
+                    scheme = k.split("://", 1)[0].lower() if "://" in k else ""
+                    if scheme == "trojan":
+                        cfg = LinkParser.parse_trojan(k)
+                    else:
+                        cfg = LinkParser.parse_vless(k)
                     if cfg:
                         parsed_configs.append(cfg)
 
@@ -472,21 +523,28 @@ class SubscriptionServer:
         if not app_type or not sub_url:
             return web.Response(status=400, text="Bad Request: Missing parameters")
             
+        encoded_url = urllib.parse.quote(sub_url, safe="")
         schemes = {
-            "hiddify": f"hiddify://install-config?url={sub_url}",
-            "v2raytun": f"v2raytun://import/{sub_url}",
-            "streisand": f"streisand://import/{sub_url}",
-            "singbox": f"sing-box://import-remote-profile?url={sub_url}"
+            "hiddify": f"hiddify://install-config?url={encoded_url}",
+            "v2raytun": f"v2raytun://import/{encoded_url}",
+            "streisand": f"streisand://import/{encoded_url}",
+            "singbox": f"sing-box://import-remote-profile?url={encoded_url}",
         }
         
         target = schemes.get(app_type.lower())
         if not target:
             return web.Response(status=400, text="Bad Request: Unsupported app")
-            
-        raise web.HTTPFound(target)
 
-    @staticmethod
-    async def start():
+        return web.Response(
+            status=302,
+            headers={"Location": target},
+            text="Redirecting...",
+        )
+
+    _runner: web.AppRunner | None = None
+
+    @classmethod
+    async def start(cls) -> None:
         app = web.Application()
         cors = aiohttp_cors.setup(
             app,
@@ -502,6 +560,15 @@ class SubscriptionServer:
         app.router.add_get("/", lambda r: web.Response(text="VLESS Bot Online"))
 
         runner = web.AppRunner(app)
+        cls._runner = runner
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", config.WEB_PORT)
         await site.start()
+        logger.info(f"Subscription server started on port {config.WEB_PORT}")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            logger.info("Subscription server shutting down...")
+        finally:
+            await runner.cleanup()
+            cls._runner = None

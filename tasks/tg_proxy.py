@@ -1,6 +1,7 @@
 import asyncio
 import html
-from typing import Dict, Any
+import logging
+from typing import Dict, Any, cast
 import uuid
 
 import redis.asyncio as redis
@@ -13,6 +14,8 @@ from config import config
 from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler
 from utils.reporter import Reporter
 from utils.tg_proxy import TelegramProxyService
+
+logger = logging.getLogger(__name__)
 
 
 TG_PROXY_LOCK_KEY = "lock:tasks:tg_proxy_update"
@@ -32,14 +35,14 @@ async def _acquire_tg_proxy_lock() -> tuple[redis.Redis | None, str | None]:
         )
         if acquired:
             return client, token
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"_acquire_tg_proxy_lock error: {e}")
 
     if client is not None:
         try:
             await client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"_acquire_tg_proxy_lock close error: {e}")
     return None, None
 
 
@@ -48,20 +51,20 @@ async def _release_tg_proxy_lock(client: redis.Redis | None, token: str | None) 
         return
 
     try:
-        await client.eval(
+        await cast(Any, client).eval(
             "if redis.call('get', KEYS[1]) == ARGV[1] then "
             "return redis.call('del', KEYS[1]) else return 0 end",
             1,
             TG_PROXY_LOCK_KEY,
             token,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"_release_tg_proxy_lock error: {e}")
     finally:
         try:
             await client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"_release_tg_proxy_lock close error: {e}")
 
 
 @app.task(
@@ -74,20 +77,17 @@ async def update_tg_proxy_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
 
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
     lock_client = None
     lock_token = None
-
-    lock_client, lock_token = await _acquire_tg_proxy_lock()
-    if lock_client is None:
-        await Reporter.send_system_log(
-            bot,
-            "TG Proxy update skipped: previous run is still active",
-        )
-        await bot.session.close()
-        return {"status": "skipped", "reason": "already_running"}
-
+    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
     try:
+        lock_client, lock_token = await _acquire_tg_proxy_lock()
+        if lock_client is None:
+            await Reporter.send_system_log(
+                bot,
+                "TG Proxy update skipped: previous run is still active",
+            )
+            return {"status": "skipped", "reason": "already_running"}
         result = await TelegramProxyService.refresh_cache()
 
         parsed_unique = int(result.get("parsed", 0) or 0)
@@ -129,7 +129,7 @@ async def update_tg_proxy_task() -> Dict[str, Any]:
                 parsed = int(stat.get("parsed", 0) or 0)
                 unique = int(stat.get("unique", 0) or 0)
                 lines.append(
-                    f"• raw={raw}, parsed={parsed}, unique={unique} | <code>{source}</code>"
+                    f"• raw={raw}, parsed={parsed}, unique={unique} | <code>{html.escape(source)}</code>"
                 )
 
         proxies = result.get("proxies", [])

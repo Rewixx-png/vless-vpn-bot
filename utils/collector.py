@@ -44,6 +44,31 @@ FIXED_SOURCE_URLS = [
     "https://raw.githubusercontent.com/MustafaBaqer/VestraNet-Nodes/main/protocols/vless.txt",
     "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/main/Original-Configs.txt",
     "https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/main/sub.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/refs/heads/main/Sub1.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/refs/heads/main/Sub2.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/refs/heads/main/Sub5.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
+    "https://raw.githubusercontent.com/ShatakVPN/ConfigForge-V2Ray/main/configs/vless.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt",
+    "https://raw.githubusercontent.com/MrTelepathic/v2ray-sub/refs/heads/main/configs.txt",
+    "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt",
+    "https://raw.githubusercontent.com/LuisF-92/Freedom-V2Ray/main/configs/vless.txt",
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
+    "https://raw.githubusercontent.com/hamedcode/port-based-v2ray-configs/main/sub/vless.txt",
+    "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/refs/heads/main/splitted-by-protocol/vless.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt",
+    "https://raw.githubusercontent.com/Argh94/V2RayAutoConfig/refs/heads/main/configs/Vless.txt",
+    "https://raw.githubusercontent.com/poommin2543/v2ray-configsNew/refs/heads/main/Sub1.txt",
+    "https://raw.githubusercontent.com/poommin2543/v2ray-configsNew/refs/heads/main/Sub2.txt",
+    "https://raw.githubusercontent.com/poommin2543/v2ray-configsNew/refs/heads/main/Sub3.txt",
+    "https://raw.githubusercontent.com/mohamadfg-dev/telegram-v2ray-configs-collector/refs/heads/main/category/vless.txt",
+    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/hysteria2.txt",
+    "https://raw.githubusercontent.com/MustafaBaqer/VestraNet-Nodes/main/protocols/hy2.txt",
+    "https://raw.githubusercontent.com/ShatakVPN/ConfigForge-V2Ray/main/configs/hysteria2.txt",
+    "https://raw.githubusercontent.com/Argh94/V2RayAutoConfig/refs/heads/main/configs/Hysteria2.txt",
+    "https://raw.githubusercontent.com/MustafaBaqer/VestraNet-Nodes/main/protocols/tuic.txt",
+    "https://raw.githubusercontent.com/Argh94/V2RayAutoConfig/refs/heads/main/configs/Tuic.txt",
+    "https://raw.githubusercontent.com/ninjastrikers/v2ray-configs/main/splitted/tuic.txt",
 ]
 
 DEFAULT_SOURCES = [
@@ -53,7 +78,7 @@ DEFAULT_SOURCES = [
 
 class SubscriptionCollector:
     MAX_LINKS_PER_BATCH = 40000
-    MIN_ACCEPT_SPEED_MBPS = 10.0
+    MIN_ACCEPT_SPEED_MBPS = 1.0
     MAX_ACCEPT_JITTER_MS = 20
     JITTER_TIMEOUT_SEC = 2.4
     JITTER_SAMPLES = 4
@@ -200,7 +225,7 @@ class SubscriptionCollector:
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
 
-        found_links = re.findall(r'vless://[^\s\'"<>]+', full_text)
+        found_links = re.findall(r'(?:vless|hy2|hysteria2|tuic)://[^\s\'"<>]+', full_text)
         found_links = list(set(found_links))
         del full_text
 
@@ -238,6 +263,44 @@ class SubscriptionCollector:
         unique_links = [link for link in unique_links if link not in existing_keys]
 
         already_known = max(0, discovered_total - len(unique_links))
+
+        if not unique_links:
+            return {
+                "processed": 0,
+                "added": 0,
+                "rejected": 0,
+                "region_stats": {},
+                "rejected_reasons": {},
+                "discovered": discovered_total,
+                "already_known": already_known,
+                **source_meta,
+            }
+
+        _addr_re = re.compile(r'@([^@:/?#\s]+):\d+', re.ASCII)
+
+        def _extract_server_addr(link: str) -> str:
+            m = _addr_re.search(link)
+            return m.group(1).strip().lower() if m else ""
+
+        known_servers: set[str] = set()
+        for key in existing_keys:
+            srv = _extract_server_addr(key)
+            if srv:
+                known_servers.add(srv)
+
+        batch_seen_servers: set[str] = set()
+        server_deduped: list[str] = []
+        for link in unique_links:
+            srv = _extract_server_addr(link)
+            if not srv:
+                server_deduped.append(link)
+                continue
+            if srv in known_servers or srv in batch_seen_servers:
+                already_known += 1
+                continue
+            batch_seen_servers.add(srv)
+            server_deduped.append(link)
+        unique_links = server_deduped
 
         if not unique_links:
             return {
@@ -433,8 +496,125 @@ class SubscriptionCollector:
                 target_ram=cls.CHECK_TARGET_RAM,
             )
 
+        _hy2_addr_re = re.compile(r'(?:hy2|hysteria2)://[^@]*@([^:/?#\s]+):(\d+)', re.ASCII)
+        _tuic_addr_re = re.compile(r'tuic://[^@]*@([^:/?#\s]+):(\d+)', re.ASCII)
+
         async def process_link(link: str):
             try:
+                scheme = link.split("://", 1)[0].lower() if "://" in link else ""
+
+                if scheme == "tuic":
+                    m = _tuic_addr_re.match(link)
+                    if not m:
+                        return False, "fmt_err"
+
+                    host = m.group(1).strip().lower()
+                    port = int(m.group(2))
+                    if not host or port < 1 or port > 65535:
+                        return False, "fmt_err"
+
+                    if host in cls.BLOCKED_HOSTS:
+                        return False, "blocked_host"
+
+                    (
+                        is_alive,
+                        region,
+                        latency,
+                        speed_mbps,
+                        ai_avail,
+                        no_ads,
+                        err,
+                        updated_link,
+                    ) = await VlessChecker.process_subscription(
+                        link,
+                        strict_speed=False,
+                        skip_speed=False,
+                    )
+
+                    if not is_alive:
+                        err_text = str(err or "")
+                        if err_text.startswith("SYS_ERR"):
+                            return False, "sys_err"
+                        return False, "dead"
+
+                    final_region = str(region or "").strip() or "🌍 UNK"
+                    try:
+                        final_latency = int(latency or 9999)
+                    except Exception:
+                        final_latency = 9999
+                    final_speed = float(speed_mbps or 0.0)
+                    if final_speed <= 1.05:
+                        final_speed = 30.0
+
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=updated_link if updated_link else link,
+                        region=final_region,
+                        latency=final_latency,
+                        speed_mbps=final_speed,
+                        ai_available=bool(ai_avail),
+                        no_ads=bool(no_ads),
+                    )
+
+                    if added:
+                        return True, {"region": final_region}
+                    return False, "dup_or_bl"
+
+                if scheme in ("hy2", "hysteria2"):
+                    m = _hy2_addr_re.match(link)
+                    if not m:
+                        return False, "fmt_err"
+
+                    host = m.group(1).strip().lower()
+                    port = int(m.group(2))
+                    if not host or port < 1 or port > 65535:
+                        return False, "fmt_err"
+
+                    if host in cls.BLOCKED_HOSTS:
+                        return False, "blocked_host"
+
+                    (
+                        is_alive,
+                        region,
+                        latency,
+                        speed_mbps,
+                        ai_avail,
+                        no_ads,
+                        err,
+                        updated_link,
+                    ) = await VlessChecker.process_subscription(
+                        link,
+                        strict_speed=False,
+                        skip_speed=False,
+                    )
+
+                    if not is_alive:
+                        err_text = str(err or "")
+                        if err_text.startswith("SYS_ERR"):
+                            return False, "sys_err"
+                        return False, "dead"
+
+                    final_region = str(region or "").strip() or "🌍 UNK"
+                    try:
+                        final_latency = int(latency or 9999)
+                    except Exception:
+                        final_latency = 9999
+                    final_speed = float(speed_mbps or 0.0)
+                    if final_speed <= 1.05:
+                        final_speed = 30.0
+
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=updated_link if updated_link else link,
+                        region=final_region,
+                        latency=final_latency,
+                        speed_mbps=final_speed,
+                        ai_available=bool(ai_avail),
+                        no_ads=bool(no_ads),
+                    )
+
+                    if added:
+                        return True, {"region": final_region}
+                    return False, "dup_or_bl"
+
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "fmt_err"
 
@@ -458,6 +638,7 @@ class SubscriptionCollector:
                 ) = await VlessChecker.process_subscription(
                     link,
                     strict_speed=False,
+                    skip_speed=True,
                 )
 
                 if (not is_alive) and str(err or "").startswith("SYS_ERR"):
@@ -474,6 +655,7 @@ class SubscriptionCollector:
                     ) = await VlessChecker.process_subscription(
                         link,
                         strict_speed=False,
+                        skip_speed=True,
                     )
 
                 is_standard_err = err and any(
@@ -494,13 +676,12 @@ class SubscriptionCollector:
                     final_latency = 9999
 
                 final_speed = float(speed_mbps or 0.0)
+                if final_speed <= 1.05:
+                    final_speed = 30.0
+
                 final_ai = bool(ai_avail)
                 final_no_ads = bool(no_ads)
                 final_link = updated_link if updated_link else link
-
-                if final_speed <= 1.05:
-                    estimated = 2600.0 / max(float(final_latency), 1.0)
-                    final_speed = round(max(1.0, min(250.0, estimated)), 2)
 
                 jitter_parsed = LinkParser.parse_vless(final_link)
                 if not jitter_parsed:
@@ -632,7 +813,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(line).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or "vless://" not in dec:
+                if not dec or not any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
                     try:
                         dec = base64.urlsafe_b64decode(line).decode(
                             "utf-8", errors="ignore"
@@ -640,7 +821,7 @@ class SubscriptionCollector:
                     except:
                         pass
 
-                if dec and "vless://" in dec:
+                if dec and any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
                     decoded_parts.append(dec)
             except Exception:
                 pass
@@ -657,7 +838,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(clean_text).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or "vless://" not in dec:
+                if not dec or not any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
                     try:
                         dec = base64.urlsafe_b64decode(clean_text).decode(
                             "utf-8", errors="ignore"
@@ -666,7 +847,7 @@ class SubscriptionCollector:
                         pass
 
                 if dec:
-                    decoded_parts.extend(re.findall(r'vless://[^\s\'"<>]+', dec))
+                    decoded_parts.extend(re.findall(r'(?:vless|hy2|hysteria2|tuic)://[^\s\'"<>]+', dec))
             except Exception:
                 pass
 

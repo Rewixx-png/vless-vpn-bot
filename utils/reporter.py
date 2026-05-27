@@ -153,7 +153,11 @@ class Reporter:
         regions: dict,
         meta: Optional[dict] = None,
     ) -> None:
-        lines = [f"🆕 <b>Новые конфиги:</b> {count}"]
+        lines = [
+            f"🆕 <b>Сбор завершен!</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            f"✅ Добавлено новых: <b>{count}</b>"
+        ]
 
         if meta:
             processed = int(meta.get("processed", 0) or 0)
@@ -161,28 +165,27 @@ class Reporter:
             sources_used = int(meta.get("sources_used", 0) or 0)
             custom_sources = int(meta.get("custom_sources_used", 0) or 0)
             duration = float(meta.get("duration", 0.0) or 0.0)
-            lines.append(
-                "📊 <b>Статистика:</b> "
-                f"processed={processed}, rejected={rejected}, "
-                f"sources={sources_used} (custom={custom_sources}), "
-                f"duration={duration:.1f}s"
-            )
+            lines.append(f"🔍 Обработано всего: <b>{processed}</b>")
+            lines.append(f"🗑 Отбраковано: <b>{rejected}</b>")
+            lines.append(f"📡 Источников: <b>{sources_used}</b> (из них {custom_sources} кастомных)")
+            lines.append(f"⏱ Время сбора: <b>{duration:.1f} сек</b>")
+            lines.append("━━━━━━━━━━━━━━━━━━")
 
         if count > 0 and regions:
-            lines.append("\n🌍 <b>По регионам:</b>")
+            lines.append("\n🌍 <b>Топ регионов:</b>")
             sorted_regions = sorted(
                 regions.items(),
                 key=lambda item: item[1],
                 reverse=True,
             )
-            visible = sorted_regions[:40]
+            visible = sorted_regions[:15]
             for region, amount in visible:
                 lines.append(f"• {cls._escape(region)}: <b>+{int(amount)}</b>")
             hidden = len(sorted_regions) - len(visible)
             if hidden > 0:
                 lines.append(f"• ... и еще {hidden} регионов")
         else:
-            lines.append("\nℹ️ Новых конфигов в этом запуске нет.")
+            lines.append("\nℹ️ Новых рабочих конфигов не найдено.")
 
         await cls._send_text(
             bot=bot,
@@ -201,22 +204,35 @@ class Reporter:
         meta: Optional[dict] = None,
     ) -> None:
         dead = int(reasons.get("dead", 0) or 0)
+        high_jitter = int(reasons.get("high_jitter", 0) or 0)
         dup_or_bl = int(reasons.get("dup_or_bl", 0) or 0)
         fmt_err = int(reasons.get("fmt_err", 0) or 0)
         sys_err = int(reasons.get("sys_err", 0) or 0)
+        blocked = int(reasons.get("blocked_host", 0) or 0)
 
         lines = [
-            f"🚫 <b>Не добавлено конфигов:</b> {count}",
-            "📉 <b>Причины:</b>",
-            f"• Dead/Failed Check: <b>{dead}</b>",
-            f"• Duplicate/Blacklist: <b>{dup_or_bl}</b>",
-            f"• Format Error: <b>{fmt_err}</b>",
-            f"• System Error: <b>{sys_err}</b>",
+            f"🚫 <b>Отбраковка конфигов:</b> {count}",
+            "━━━━━━━━━━━━━━━━━━",
+            "📉 <b>Детализация причин:</b>",
+            f"💀 Нерабочие (TCP/VPN): <b>{dead}</b>",
+            f"📶 Высокий джиттер: <b>{high_jitter}</b>",
+            f"🔄 Дубликаты / В бане: <b>{dup_or_bl}</b>",
+            f"🚷 Заблокированный хост: <b>{blocked}</b>",
+            f"❌ Битый формат: <b>{fmt_err}</b>",
+            f"⚙️ Системные ошибки: <b>{sys_err}</b>",
         ]
 
         if meta:
             processed = int(meta.get("processed", 0) or 0)
-            lines.append(f"\n📊 Processed: <b>{processed}</b>")
+            already_known = int(meta.get("already_known", 0) or 0)
+            discovered = int(meta.get("discovered", 0) or 0)
+            lines.append("━━━━━━━━━━━━━━━━━━")
+            if discovered:
+                lines.append(f"🔍 Найдено в источниках: <b>{discovered}</b>")
+            if already_known:
+                lines.append(f"📚 Уже известны: <b>{already_known}</b>")
+            if processed:
+                lines.append(f"📊 Проверено: <b>{processed}</b>")
 
         await cls._send_text(
             bot=bot,
@@ -229,7 +245,7 @@ class Reporter:
     @classmethod
     async def send_error(cls, bot: Bot, error_msg: str) -> None:
         safe = cls._escape(error_msg)
-        text = f"⚠️ <b>ОШИБКА</b>\n<pre>{safe}</pre>"
+        text = f"⚠️ <b>ОШИБКА</b>\n━━━━━━━━━━━━━━━━━━\n<pre>{safe}</pre>"
         await cls._send_text(
             bot=bot,
             topic_name="Errors",
@@ -240,7 +256,7 @@ class Reporter:
 
     @classmethod
     async def send_info(cls, bot: Bot, info_msg: str) -> None:
-        text = f"ℹ️ <b>INFO</b>\n{cls._trim(info_msg)}"
+        text = f"ℹ️ <b>ИНФОРМАЦИЯ</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(info_msg)}"
         await cls._send_text(
             bot=bot,
             topic_name="INFO",
@@ -255,7 +271,7 @@ class Reporter:
             bot=bot,
             topic_name="Collector Logs",
             config_key="topic_collector",
-            text=f"🧲 <b>Collector</b>\n{cls._trim(message)}",
+            text=f"🧲 <b>Коллектор</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(message)}",
             fallback_prefix="Collector",
         )
 
@@ -265,7 +281,7 @@ class Reporter:
             bot=bot,
             topic_name="Stability Logs",
             config_key="topic_stability",
-            text=f"🛡 <b>Stability</b>\n{cls._trim(message)}",
+            text=f"🛡 <b>Стабильность</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(message)}",
             fallback_prefix="Stability",
         )
 
@@ -275,7 +291,7 @@ class Reporter:
             bot=bot,
             topic_name="System Events",
             config_key="topic_system",
-            text=f"🧭 <b>System</b>\n{cls._trim(message)}",
+            text=f"🧭 <b>Системное событие</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(message)}",
             fallback_prefix="System",
         )
 
@@ -285,7 +301,7 @@ class Reporter:
             bot=bot,
             topic_name="User Actions",
             config_key="topic_user_actions",
-            text=f"👤 <b>User Action</b>\n{cls._trim(message)}",
+            text=f"👤 <b>Действие пользователя</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(message)}",
             fallback_prefix="User Action",
         )
 
@@ -295,7 +311,7 @@ class Reporter:
             bot=bot,
             topic_name="Admin Actions",
             config_key="topic_admin_actions",
-            text=f"🔐 <b>Admin Action</b>\n{cls._trim(message)}",
+            text=f"🔐 <b>Действие админа</b>\n━━━━━━━━━━━━━━━━━━\n{cls._trim(message)}",
             fallback_prefix="Admin Action",
         )
 

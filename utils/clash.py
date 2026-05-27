@@ -3,6 +3,29 @@ import re
 
 logger = logging.getLogger("ClashGen")
 
+_RU_DOMAIN_SUFFIXES = [
+    "ru", "xn--p1ai",
+    "vk.com", "vk.ru", "vkontakte.ru",
+    "yandex.ru", "yandex.net", "yandex.com", "ya.ru", "yastatic.net",
+    "mail.ru", "list.ru", "inbox.ru", "bk.ru",
+    "ok.ru", "odnoklassniki.ru",
+    "sber.ru", "sberbank.ru", "sbp.ru",
+    "gosuslugi.ru", "mos.ru", "nalog.gov.ru",
+    "ozon.ru", "wildberries.ru", "wb.ru",
+    "avito.ru", "cian.ru", "hh.ru",
+    "rbc.ru", "kommersant.ru", "ria.ru", "tass.ru", "interfax.ru",
+    "lenta.ru", "gazeta.ru", "meduza.io",
+    "1tv.ru", "russia.tv", "ntv.ru", "rt.com",
+    "rambler.ru", "auto.ru", "drom.ru",
+    "2gis.ru", "2gis.com",
+    "kaspersky.ru", "drweb.ru",
+    "beeline.ru", "mts.ru", "megafon.ru", "tele2.ru", "rostelecom.ru",
+    "raiffeisen.ru", "tinkoff.ru", "alfabank.ru", "vtb.ru", "gazprombank.ru",
+    "kinopoisk.ru", "ivi.ru", "okko.tv", "more.tv", "premier.one",
+    "lamoda.ru", "dns-shop.ru", "mvideo.ru", "eldorado.ru", "citilink.ru",
+    "telegram.org", "t.me",
+]
+
 
 class ClashGenerator:
     @staticmethod
@@ -43,43 +66,61 @@ class ClashGenerator:
                     name_counter[base_name] = 1
                     final_name = base_name
 
-                proxy = {
-                    "name": final_name,
-                    "type": "vless",
-                    "server": cfg["server"],
-                    "port": cfg["port"],
-                    "uuid": cfg["uuid"],
-                    "cipher": "auto",
-                    "udp": True,
-                    "tls": False,
-                    "network": cfg.get("type", "tcp"),
-                    "skip-cert-verify": True,
-                }
+                if cfg.get("_protocol") == "trojan":
+                    proxy = {
+                        "name": final_name,
+                        "type": "trojan",
+                        "server": cfg["server"],
+                        "port": cfg["port"],
+                        "password": cfg["password"],
+                        "udp": True,
+                        "skip-cert-verify": True,
+                        "network": cfg.get("type", "tcp") or "tcp",
+                    }
+                else:
+                    proxy = {
+                        "name": final_name,
+                        "type": "vless",
+                        "server": cfg["server"],
+                        "port": cfg["port"],
+                        "uuid": cfg["uuid"],
+                        "cipher": "auto",
+                        "udp": True,
+                        "tls": False,
+                        "network": cfg.get("type", "tcp"),
+                        "skip-cert-verify": True,
+                    }
 
-                if cfg.get("flow"):
-                    proxy["flow"] = cfg["flow"]
+                if cfg.get("_protocol") == "trojan":
+                    security = cfg.get("security", "tls")
+                    if security != "none":
+                        proxy["tls"] = True
+                        proxy["servername"] = cfg.get("sni") or cfg.get("host") or cfg["server"]
+                else:
+                    if cfg.get("flow"):
+                        proxy["flow"] = cfg["flow"]
 
-                security = cfg.get("security", "none")
+                    security = cfg.get("security", "none")
 
-                if security in ["tls", "reality"]:
-                    proxy["tls"] = True
-                    proxy["servername"] = cfg.get("sni") or cfg.get("host") or cfg["server"]
-                    proxy["client-fingerprint"] = cfg.get("fp", "chrome")
+                    if security in ["tls", "reality"]:
+                        proxy["tls"] = True
+                        proxy["servername"] = cfg.get("sni") or cfg.get("host") or cfg["server"]
+                        proxy["client-fingerprint"] = cfg.get("fp", "chrome")
 
-                    if security == "reality":
-                        pbk = cfg.get("pbk", "")
-                        sid = cfg.get("sid", "")
+                        if security == "reality":
+                            pbk = cfg.get("pbk", "")
+                            sid = cfg.get("sid", "")
 
-                        if not ClashGenerator.is_valid_short_id(sid):
-                            logger.warning(
-                                f"Skipping config {final_name}: invalid short-id '{sid}'"
-                            )
-                            continue
+                            if not ClashGenerator.is_valid_short_id(sid):
+                                logger.warning(
+                                    f"Skipping config {final_name}: invalid short-id '{sid}'"
+                                )
+                                continue
 
-                        proxy["reality-opts"] = {
-                            "public-key": pbk,
-                            "short-id": sid,
-                        }
+                            proxy["reality-opts"] = {
+                                "public-key": pbk,
+                                "short-id": sid,
+                            }
 
                 if proxy["network"] == "ws":
                     proxy["ws-opts"] = {
@@ -91,6 +132,17 @@ class ClashGenerator:
                 elif proxy["network"] == "grpc":
                     proxy["grpc-opts"] = {
                         "grpc-service-name": cfg.get("serviceName", "")
+                    }
+                elif proxy["network"] == "httpupgrade":
+                    proxy["httpupgrade-opts"] = {
+                        "path": cfg.get("path", "/"),
+                        "host": cfg.get("host") or cfg.get("sni") or cfg["server"],
+                    }
+                elif proxy["network"] in ("splithttp", "xhttp"):
+                    proxy["network"] = "splithttp"
+                    proxy["splithttp-opts"] = {
+                        "path": cfg.get("path", "/"),
+                        "host": cfg.get("host") or cfg.get("sni") or cfg["server"],
                     }
 
                 proxies.append(proxy)
@@ -117,10 +169,13 @@ class ClashGenerator:
             yaml_lines.append(f"    type: {proxy['type']}")
             yaml_lines.append(f"    server: {proxy['server']}")
             yaml_lines.append(f"    port: {proxy['port']}")
-            yaml_lines.append(f"    uuid: {proxy['uuid']}")
-            yaml_lines.append(f"    cipher: {proxy['cipher']}")
+            if proxy["type"] == "vless":
+                yaml_lines.append(f"    uuid: {proxy['uuid']}")
+                yaml_lines.append(f"    cipher: {proxy['cipher']}")
+            elif proxy["type"] == "trojan":
+                yaml_lines.append(f"    password: {proxy['password']}")
             yaml_lines.append(f"    udp: {str(proxy['udp']).lower()}")
-            yaml_lines.append(f"    tls: {str(proxy['tls']).lower()}")
+            yaml_lines.append(f"    tls: {str(proxy.get('tls', False)).lower()}")
             yaml_lines.append(f"    network: {proxy['network']}")
             yaml_lines.append(
                 f"    skip-cert-verify: {str(proxy['skip-cert-verify']).lower()}"
@@ -158,6 +213,16 @@ class ClashGenerator:
                 yaml_lines.append(
                     f"      grpc-service-name: \"{proxy['grpc-opts']['grpc-service-name']}\""
                 )
+
+            if "httpupgrade-opts" in proxy:
+                yaml_lines.append("    httpupgrade-opts:")
+                yaml_lines.append(f"      path: \"{proxy['httpupgrade-opts']['path']}\"")
+                yaml_lines.append(f"      host: {proxy['httpupgrade-opts']['host']}")
+
+            if "splithttp-opts" in proxy:
+                yaml_lines.append("    splithttp-opts:")
+                yaml_lines.append(f"      path: \"{proxy['splithttp-opts']['path']}\"")
+                yaml_lines.append(f"      host: {proxy['splithttp-opts']['host']}")
 
         if proxy_names:
             country_map = {}
@@ -219,7 +284,21 @@ class ClashGenerator:
                 yaml_lines.append(f"      - \"{ClashGenerator.escape_yaml_str(name)}\"")
 
             yaml_lines.append("")
+            yaml_lines.append("  - name: \"Direct\"")
+            yaml_lines.append("    type: select")
+            yaml_lines.append("    proxies:")
+            yaml_lines.append("      - DIRECT")
+            yaml_lines.append("      - \"Proxy\"")
+
+            yaml_lines.append("")
             yaml_lines.append("rules:")
+            for domain_suffix in _RU_DOMAIN_SUFFIXES:
+                yaml_lines.append(f"  - DOMAIN-SUFFIX,{domain_suffix},DIRECT")
+            yaml_lines.append("  - GEOIP,RU,DIRECT,no-resolve")
+            yaml_lines.append("  - GEOSITE,category-ru,DIRECT")
+            yaml_lines.append("  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve")
+            yaml_lines.append("  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve")
+            yaml_lines.append("  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve")
             yaml_lines.append("  - MATCH,Proxy")
 
         return "\n".join(yaml_lines)

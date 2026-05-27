@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Dict, Any
+from typing import Dict, Any, cast
 import uuid
 
 import redis.asyncio as redis
@@ -88,14 +88,14 @@ async def _acquire_collector_lock(
                 )
                 if acquired:
                     return client, token
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"_acquire_collector_lock error: {e}")
 
     if client is not None:
         try:
             await client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"_acquire_collector_lock close error: {e}")
     return None, None
 
 
@@ -104,20 +104,20 @@ async def _release_collector_lock(client: redis.Redis | None, token: str | None)
         return
 
     try:
-        await client.eval(
+        await cast(Any, client).eval(
             "if redis.call('get', KEYS[1]) == ARGV[1] then "
             "return redis.call('del', KEYS[1]) else return 0 end",
             1,
             COLLECTOR_LOCK_KEY,
             token,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"_release_collector_lock error: {e}")
     finally:
         try:
             await client.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"_release_collector_lock close error: {e}")
 
 
 async def _is_stability_running() -> bool:
@@ -146,54 +146,48 @@ async def run_collector_task() -> Dict[str, Any]:
     setup_log_rotation()
     _setup_loop_exception_handler()
 
+    lock_client = None
+    lock_token = None
     bot_instance = Bot(
         token=config.BOT_TOKEN.get_secret_value(),
         session=AiohttpSession(),
     )
-
-    is_maint = await BotState.is_maintenance()
-    if is_maint:
-        await Reporter.send_collector_log(
-            bot_instance,
-            "Collector skipped: maintenance mode is enabled",
-        )
-        await bot_instance.session.close()
-        return {"status": "skipped", "reason": "maintenance"}
-
-    enabled_str = await SystemRepo.get_config("collector_enabled")
-    if enabled_str == "false":
-        await Reporter.send_collector_log(
-            bot_instance,
-            "Collector skipped: disabled by admin flag (collector_enabled=false)",
-        )
-        await bot_instance.session.close()
-        return {"status": "skipped", "reason": "admin_disabled"}
-
-    start_time = asyncio.get_event_loop().time()
-    result = {}
-    lock_client = None
-    lock_token = None
-    current_task_id = str(getattr(run_collector_task.request, "id", "") or "").strip()
-
-    lock_client, lock_token = await _acquire_collector_lock(current_task_id=current_task_id)
-    if lock_client is None:
-        await Reporter.send_collector_log(
-            bot_instance,
-            "Collector skipped: previous run is still active",
-        )
-        await bot_instance.session.close()
-        return {"status": "skipped", "reason": "already_running"}
-
-    if await _is_stability_running():
-        await Reporter.send_collector_log(
-            bot_instance,
-            "Collector skipped: stability full recheck is running",
-        )
-        await bot_instance.session.close()
-        await _release_collector_lock(lock_client, lock_token)
-        return {"status": "skipped", "reason": "stability_running"}
-
+    result: Dict[str, Any] = {}
     try:
+        is_maint = await BotState.is_maintenance()
+        if is_maint:
+            await Reporter.send_collector_log(
+                bot_instance,
+                "Collector skipped: maintenance mode is enabled",
+            )
+            return {"status": "skipped", "reason": "maintenance"}
+
+        enabled_str = await SystemRepo.get_config("collector_enabled")
+        if enabled_str == "false":
+            await Reporter.send_collector_log(
+                bot_instance,
+                "Collector skipped: disabled by admin flag (collector_enabled=false)",
+            )
+            return {"status": "skipped", "reason": "admin_disabled"}
+
+        start_time = asyncio.get_event_loop().time()
+        result = {}
+        current_task_id = str(getattr(cast(Any, run_collector_task), "request", "") or "").strip()
+
+        lock_client, lock_token = await _acquire_collector_lock(current_task_id=current_task_id)
+        if lock_client is None:
+            await Reporter.send_collector_log(
+                bot_instance,
+                "Collector skipped: previous run is still active",
+            )
+            return {"status": "skipped", "reason": "already_running"}
+
+        if await _is_stability_running():
+            await Reporter.send_collector_log(
+                bot_instance,
+                "Collector skipped: stability full recheck is running",
+            )
+            return {"status": "skipped", "reason": "stability_running"}
         await Reporter.send_collector_log(
             bot_instance,
             "Collector run started",
@@ -209,6 +203,9 @@ async def run_collector_task() -> Dict[str, Any]:
         old_counts = await StatsRepo.get_regions_counts()
         result = await SubscriptionCollector.run_collection()
         cleaned = await SubRepo.cleanup_dead_subs(max_deaths=10)
+        evicted = await SubRepo.enforce_limits()
+        if evicted:
+            logger.info(f"enforce_limits: evicted {evicted} over-cap configs")
         new_counts = await StatsRepo.get_regions_counts()
 
         await SystemRepo.set_config(
@@ -254,11 +251,27 @@ async def run_collector_task() -> Dict[str, Any]:
                     "duration": duration,
                 },
             )
+            reasons = result.get("rejected_reasons", {})
             await Reporter.send_not_configs(
                 bot_instance,
                 result.get("rejected", 0),
-                result.get("rejected_reasons", {}),
-                meta={"processed": result.get("processed", 0)},
+                reasons,
+                meta={
+                    "processed": result.get("processed", 0),
+                    "already_known": result.get("already_known", 0),
+                    "discovered": result.get("discovered", 0),
+                },
+            )
+            reasons_str = ", ".join(f"{k}={v}" for k, v in reasons.items() if v)
+            logger.info(
+                f"Collector finished: "
+                f"discovered={result.get('discovered', 0)}, "
+                f"known={result.get('already_known', 0)}, "
+                f"processed={result.get('processed', 0)}, "
+                f"added={result.get('added', 0)}, "
+                f"rejected={result.get('rejected', 0)} "
+                f"[{reasons_str}], "
+                f"cleaned={cleaned}, duration={duration:.1f}s"
             )
             await Reporter.send_collector_log(
                 bot_instance,
@@ -272,7 +285,7 @@ async def run_collector_task() -> Dict[str, Any]:
                 f"custom_accepted={result.get('custom_sources_accepted', 0)}, "
                 f"custom_ignored={result.get('custom_sources_ignored', 0)}, "
                 f"added={result.get('added', 0)}, "
-                f"rejected={result.get('rejected', 0)}, "
+                f"rejected={result.get('rejected', 0)} [{reasons_str}], "
                 f"cleaned={cleaned}, duration={duration:.1f}s",
             )
         except asyncio.CancelledError:
@@ -311,6 +324,11 @@ async def run_collector_task() -> Dict[str, Any]:
                         bot_instance,
                         result.get("rejected", 0),
                         result.get("rejected_reasons", {}),
+                        meta={
+                            "processed": result.get("processed", 0),
+                            "already_known": result.get("already_known", 0),
+                            "discovered": result.get("discovered", 0),
+                        },
                     )
                 await Reporter.send_info(
                     bot_instance,

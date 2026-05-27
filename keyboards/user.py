@@ -62,10 +62,14 @@ def user_main_kb(is_admin: bool = False):
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
-    
+
     base_url = url.split("/sub")[0]
     safe_url = urllib.parse.quote(url, safe="")
-    
+
+    user_id_part = url.split("?id=")[1].split("&")[0] if "?id=" in url else ""
+    singbox_sub_url = f"{base_url}/sub?id={user_id_part}&format=singbox"
+    safe_singbox_url = urllib.parse.quote(singbox_sub_url, safe="")
+
     kb.button(
         text="🦊 В Hiddify",
         url=f"{base_url}/redirect?app=hiddify&url={safe_url}",
@@ -102,7 +106,40 @@ def sub_action_kb(url: str):
     return kb.as_markup()
 
 
-def settings_main_kb(current_limit: int, use_fragment: bool = False):
+def _protocol_label(protocol_filter: str | None) -> str:
+    if protocol_filter == "vless":
+        return "Протокол: VLESS"
+    if protocol_filter == "hy2":
+        return "Протокол: Hysteria2"
+    if protocol_filter == "trojan":
+        return "Протокол: Trojan"
+    return "Протокол: Все (VLESS, Hy2, Trojan)"
+
+
+def settings_protocols_kb(selected_protocol: str | None, group_id: int | None = None):
+    kb = InlineKeyboardBuilder()
+    
+    prefix = "set_protocol" if group_id is None else f"g_set_protocol"
+    suffix = "" if group_id is None else f"_{group_id}"
+    
+    def get_btn(proto, label):
+        status = "✅" if selected_protocol == proto else "⬜️"
+        return f"{status} {label}"
+        
+    kb.button(text=get_btn(None, "Все вместе (VLESS + Hy2 + Trojan)"), callback_data=f"{prefix}_all{suffix}")
+    kb.button(text=get_btn("vless", "Только VLESS"), callback_data=f"{prefix}_vless{suffix}")
+    kb.button(text=get_btn("hy2", "Только Hysteria2"), callback_data=f"{prefix}_hy2{suffix}")
+    kb.button(text=get_btn("trojan", "Только Trojan"), callback_data=f"{prefix}_trojan{suffix}")
+    
+    kb.adjust(1)
+    if group_id is None:
+        kb.button(text="🔙 Назад", callback_data="settings_main")
+    else:
+        kb.button(text="🔙 Назад", callback_data=f"group_view_{group_id}")
+    return kb.as_markup()
+
+
+def settings_main_kb(current_limit: int, use_fragment: bool = False, protocol_filter: str | None = None):
     kb = InlineKeyboardBuilder()
     limit_text = "♾️ Безлимит" if current_limit == 0 else f"{current_limit} шт."
     frag_text = "✅ Вкл" if use_fragment else "❌ Выкл"
@@ -127,8 +164,13 @@ def settings_main_kb(current_limit: int, use_fragment: bool = False):
         icon_custom_emoji_id="6030445631921721471",
         callback_data="toggle_fragment",
     )
+    kb.button(
+        text=_protocol_label(protocol_filter),
+        icon_custom_emoji_id="5822006952977546737",
+        callback_data="settings_protocols",
+    )
     kb.button(text="🔙 Назад", callback_data="home")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -268,12 +310,12 @@ def groups_list_kb(groups: list):
     return kb.as_markup()
 
 
-def group_view_kb(group_id: int, url: str):
+def group_view_kb(group_id: int, url: str, protocol_filter: str | None = None):
     kb = InlineKeyboardBuilder()
-    
+
     base_url = url.split("/sub")[0]
     safe_url = urllib.parse.quote(url, safe="")
-    
+
     kb.button(
         text="🦊 В Hiddify",
         url=f"{base_url}/redirect?app=hiddify&url={safe_url}",
@@ -289,9 +331,14 @@ def group_view_kb(group_id: int, url: str):
     kb.button(text="📱 QR-Код", callback_data=f"group_qr_{group_id}")
     kb.button(text="🌍 Выбор стран", callback_data=f"group_edit_countries_{group_id}")
     kb.button(text="⚡ Настройка тегов", callback_data=f"group_edit_tags_{group_id}")
+    kb.button(
+        text=_protocol_label(protocol_filter),
+        icon_custom_emoji_id="5822006952977546737",
+        callback_data=f"g_settings_protocols_{group_id}",
+    )
     kb.button(text="🗑 Удалить", callback_data=f"group_delete_{group_id}", style="danger")
     kb.button(text="🔙 Назад", callback_data="groups_list")
-    kb.adjust(2, 2, 2, 2, 1)
+    kb.adjust(2, 2, 2, 1, 1, 1)
     return kb.as_markup()
 
 

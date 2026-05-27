@@ -1,6 +1,6 @@
 import asyncio
 import psutil
-from typing import Dict, Any
+from typing import Dict, Any, cast
 
 from celery_app import app
 from tasks.base import (
@@ -40,59 +40,57 @@ async def run_admin_recheck_task(
 
     session = AiohttpSession()
     bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=session)
-
-    await Reporter.send_admin_action(
-        bot,
-        f"Recheck task started: mode={mode}, passes={total_passes}, chat_id={chat_id}, message_id={message_id}",
-    )
-
-    raw_subs = []
-    if mode == "all":
-        raw_subs = await SubRepo.get_all_subscriptions_for_check()
-    elif mode == "active":
-        raw_subs = await SubRepo.get_active_subscriptions_for_check()
-    elif mode == "dead":
-        raw_subs = await SubRepo.get_dead_subscriptions_for_check()
-
-    if not raw_subs:
-        await BotState.set_maintenance(False)
+    try:
         await Reporter.send_admin_action(
             bot,
-            f"Recheck task finished early: no servers for mode={mode}",
+            f"Recheck task started: mode={mode}, passes={total_passes}, chat_id={chat_id}, message_id={message_id}",
         )
-        try:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text="<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
-                reply_markup=recheck_menu_kb(),
-                parse_mode="HTML",
+
+        raw_subs = []
+        if mode == "all":
+            raw_subs = await SubRepo.get_all_subscriptions_for_check()
+        elif mode == "active":
+            raw_subs = await SubRepo.get_active_subscriptions_for_check()
+        elif mode == "dead":
+            raw_subs = await SubRepo.get_dead_subscriptions_for_check()
+
+        if not raw_subs:
+            await BotState.set_maintenance(False)
+            await Reporter.send_admin_action(
+                bot,
+                f"Recheck task finished early: no servers for mode={mode}",
             )
-        except Exception:
-            pass
-        await bot.session.close()
-        return {"status": "empty"}
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="<blockquote>⚠️ <b>Нет серверов для проверки!</b></blockquote>",
+                    reply_markup=recheck_menu_kb(),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return {"status": "empty"}
 
-    current_subs = [
-        {
-            "id": s.id,
-            "vless_key": s.vless_key,
-            "is_active": s.is_active,
-            "death_count": int(getattr(s, "death_count", 0) or 0),
-            "region": s.region,
-        }
-        for s in raw_subs
-    ]
-    checked_ids = [s["id"] for s in current_subs]
-    del raw_subs
+        current_subs = [
+            {
+                "id": s.id,
+                "vless_key": s.vless_key,
+                "is_active": s.is_active,
+                "death_count": int(getattr(s, "death_count", 0) or 0),
+                "region": s.region,
+            }
+            for s in raw_subs
+        ]
+        checked_ids = [s["id"] for s in current_subs]
+        del raw_subs
 
-    global_active = 0
-    global_died = 0
-    total_died = 0
-    last_stats = None
-    effective_total_passes = 1
+        global_active = 0
+        global_died = 0
+        total_died = 0
+        last_stats = None
+        effective_total_passes = 1
 
-    try:
         for current_pass in range(1, effective_total_passes + 1):
             if not current_subs:
                 break
@@ -263,7 +261,7 @@ async def run_admin_recheck_task(
                     key_upd = None
 
                     def _is_standard_error(err_value: str) -> bool:
-                        return err_value and any(
+                        return bool(err_value) and any(
                             f"Factor {i}" in str(err_value) for i in range(0, 7)
                         )
 
@@ -408,7 +406,7 @@ async def run_admin_recheck_task(
 
                 await processor.process(
                     items=current_subs,
-                    process_func=process_sub,
+                    process_func=cast(Any, process_sub),
                     on_progress=None,
                     collect_results=False,
                 )
@@ -451,7 +449,7 @@ async def run_admin_recheck_task(
 
         await SubRepo.cleanup_dead_subs(max_deaths=10)
         checked_after = await SubRepo.get_subs_by_ids(checked_ids)
-        global_active = sum(1 for s in checked_after if s.is_active)
+        global_active = sum(1 for s in checked_after if bool(getattr(s, "is_active")))
         global_died = total_died
         await BotState.set_maintenance(False)
 
@@ -533,6 +531,9 @@ async def run_admin_recheck_task(
         raise
     finally:
         await BotState.set_maintenance(False)
-        await bot.session.close()
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
 
     return {"status": "done"}

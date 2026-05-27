@@ -1,5 +1,6 @@
 import json
 from redis import Redis
+from typing import Any, cast
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -8,7 +9,8 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.state import State, StatesGroup
 
 from config import config
-from database.repo import SourceRepo, SystemRepo
+from database.repo.sources import SourceRepo
+from database.repo.system import SystemRepo
 from keyboards.admin import back_to_admin, sources_list_kb
 from handlers.admin.utils import admin_edit_or_answer
 from tasks import run_collector_task
@@ -23,7 +25,7 @@ class SourceStates(StatesGroup):
     waiting_for_url = State()
 
 
-def _get_collector_runtime_status() -> dict:
+def _get_collector_runtime_status() -> dict[str, Any]:
     active_ids = []
     reserved_ids = []
     queue_len = 0
@@ -47,7 +49,11 @@ def _get_collector_runtime_status() -> dict:
 
     try:
         redis_client = Redis.from_url(config.REDIS_URL, decode_responses=True)
-        queue_len = int(redis_client.llen("low_priority"))
+        llen_val = redis_client.llen("low_priority")
+        if isinstance(llen_val, int):
+            queue_len = llen_val
+        else:
+            queue_len = 0
         redis_client.close()
     except Exception:
         queue_len = 0
@@ -62,10 +68,10 @@ def _get_collector_runtime_status() -> dict:
 @router.callback_query(F.data == "admin_sources")
 async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
     sources = await SourceRepo.get_all_sources()
-    enabled_count = len([s for s in sources if s.is_enabled])
+    enabled_count = len([s for s in sources if bool(getattr(s, "is_enabled"))])
     fixed_total = len(FIXED_SOURCE_URLS)
     fixed_set = set(FIXED_SOURCE_URLS)
-    enabled_urls = [s.url for s in sources if s.is_enabled]
+    enabled_urls = [str(getattr(s, "url")) for s in sources if bool(getattr(s, "is_enabled"))]
     accepted_custom = len([url for url in enabled_urls if url in fixed_set])
     ignored_custom = max(enabled_count - accepted_custom, 0)
     runtime = _get_collector_runtime_status()
@@ -142,14 +148,17 @@ async def ask_source_url(callback: CallbackQuery, state: FSMContext):
     StateFilter(SourceStates.waiting_for_url), F.from_user.id.in_(config.ADMIN_IDS)
 )
 async def add_source(message: Message, state: FSMContext):
+    if not message.text or not message.bot or not message.from_user:
+        return
     url = message.text.strip()
     if not url.startswith("http"):
+        await state.clear()
         await message.answer(
             "❌ Ссылка должна начинаться с http", reply_markup=back_to_admin()
         )
         return
 
-    success = await SourceRepo.add_source(url, title=None)
+    success = await SourceRepo.add_source(url, title=cast(Any, None))
     if success:
         is_accepted = url in set(FIXED_SOURCE_URLS)
         await Reporter.send_admin_action(
@@ -172,11 +181,14 @@ async def add_source(message: Message, state: FSMContext):
             message.bot,
             f"Source add skipped (duplicate) by admin {message.from_user.id}: {url}",
         )
+        await state.clear()
         await message.answer("⚠️ Такой источник уже есть.", reply_markup=back_to_admin())
 
 
 @router.callback_query(F.data.startswith("src_toggle_"))
 async def toggle_source(callback: CallbackQuery):
+    if not callback.bot or not callback.from_user or not callback.data or not isinstance(callback.message, Message):
+        return
     src_id = int(callback.data.split("src_toggle_")[1])
     new_state = await SourceRepo.toggle_source(src_id)
     await Reporter.send_admin_action(
@@ -191,6 +203,8 @@ async def toggle_source(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("src_del_"))
 async def delete_source(callback: CallbackQuery):
+    if not callback.bot or not callback.from_user or not callback.data or not isinstance(callback.message, Message):
+        return
     src_id = int(callback.data.split("src_del_")[1])
     await SourceRepo.delete_source(src_id)
     await Reporter.send_admin_action(
@@ -204,8 +218,10 @@ async def delete_source(callback: CallbackQuery):
 
 @router.callback_query(F.data == "src_force_run")
 async def force_run_collector(callback: CallbackQuery):
+    if not callback.bot or not callback.from_user:
+        return
     runtime = _get_collector_runtime_status()
-    task = run_collector_task.delay()
+    task = getattr(run_collector_task, "delay")()
     await Reporter.send_admin_action(
         callback.bot,
         f"Collector manual run queued by admin {callback.from_user.id}: task_id={task.id}",
@@ -213,10 +229,10 @@ async def force_run_collector(callback: CallbackQuery):
     await callback.answer("✅ Collector поставлен в очередь", show_alert=False)
 
     sources = await SourceRepo.get_all_sources()
-    enabled_count = len([s for s in sources if s.is_enabled])
+    enabled_count = len([s for s in sources if bool(getattr(s, "is_enabled"))])
     fixed_total = len(FIXED_SOURCE_URLS)
     fixed_set = set(FIXED_SOURCE_URLS)
-    enabled_urls = [s.url for s in sources if s.is_enabled]
+    enabled_urls = [str(getattr(s, "url")) for s in sources if bool(getattr(s, "is_enabled"))]
     accepted_custom = len([url for url in enabled_urls if url in fixed_set])
     ignored_custom = max(enabled_count - accepted_custom, 0)
 

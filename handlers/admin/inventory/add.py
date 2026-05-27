@@ -1,6 +1,7 @@
 import io
 import re
 import asyncio
+from typing import Any, cast
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
@@ -33,7 +34,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
     text_content = ""
     
     if message.document:
-        if not message.document.file_name.endswith('.txt'):
+        if not message.document.file_name or not message.document.file_name.endswith('.txt'):
             await message.answer(
                 "<blockquote>❌ Жду только .txt файл</blockquote>",
                 reply_markup=back_to_admin(),
@@ -172,8 +173,8 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
 
     result = await processor.process(
         items=links,
-        process_func=process_link,
-        on_progress=on_progress
+        process_func=cast(Any, process_link),
+        on_progress=cast(Any, on_progress)
     )
 
     added_count = 0

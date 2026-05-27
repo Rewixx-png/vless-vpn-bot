@@ -11,10 +11,13 @@ import gc
 import html
 import psutil
 from datetime import datetime, timedelta
-from typing import Iterable
-from aiogram import Bot, Dispatcher
+from typing import Iterable, Callable, Any
+from aiogram import Bot, Dispatcher, BaseMiddleware
+from cachetools import TTLCache
 
 from config import config
+
+logger = logging.getLogger(__name__)
 
 
 async def memory_monitor(bot: Bot):
@@ -55,7 +58,6 @@ logging.basicConfig(
     force=True,
 )
 
-from config import config
 from database.core import init_db
 from handlers.admin.router import admin_router
 from handlers.user.router import user_router
@@ -81,8 +83,6 @@ loggers_to_silence = [
 for logger_name in loggers_to_silence:
     logging.getLogger(logger_name).setLevel(logging.WARNING)
 
-logger = logging.getLogger(__name__)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CRASH_FILE = os.path.join(BASE_DIR, "crash_log.txt")
 OOM_HISTORY = os.path.join(BASE_DIR, ".oom_history")
@@ -93,6 +93,7 @@ class TelegramLogHandler(logging.Handler):
         super().__init__(level=logging.ERROR)
         self.bot = bot
         self.admin_ids = list(admin_ids)
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.name in ["aiohttp.server", "aiogram.dispatcher", "aiogram.event"]:
@@ -120,19 +121,17 @@ class TelegramLogHandler(logging.Handler):
 
             safe_msg = html.escape(msg)
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
+            if self._loop is None or self._loop.is_closed():
                 return
-
             for admin_id in self.admin_ids:
                 try:
-                    loop.create_task(
+                    asyncio.run_coroutine_threadsafe(
                         self.bot.send_message(
                             admin_id,
                             f"❗️ <b>Ошибка:</b>\n<pre>{safe_msg}</pre>",
                             parse_mode="HTML",
-                        )
+                        ),
+                        self._loop
                     )
                 except Exception:
                     pass
@@ -198,15 +197,21 @@ async def report_crash(bot: Bot) -> bool:
 
     try:
         cmd = "LC_ALL=C dmesg -T | grep -i -E 'killed process.*(python|node|xray|celery)' | tail -n 20"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.stdout.strip():
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        result_stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
+        if result_stdout.strip():
             new_ooms = []
             history = ""
             if os.path.exists(OOM_HISTORY):
                 with open(OOM_HISTORY, "r", encoding="utf-8") as hf:
                     history = hf.read()
 
-            lines = result.stdout.strip().split("\n")
+            lines = result_stdout.strip().split("\n")
             for line in lines:
                 if line not in history:
                     new_ooms.append(line)
@@ -234,7 +239,7 @@ def handle_sigterm(signum, frame):
             )
     except Exception:
         pass
-    os._exit(1)
+    sys.exit(1)
 
 
 def global_exception_handler(exctype, value, tb):
@@ -250,6 +255,26 @@ def global_exception_handler(exctype, value, tb):
         pass
 
     sys.__excepthook__(exctype, value, tb)
+
+
+def _status_emoji(x: bool) -> str:
+    return "✅" if x else "❌"
+
+
+class ThrottlingMiddleware(BaseMiddleware):
+    def __init__(self, rate_limit: float = 0.5):
+        self.rate_limit = rate_limit
+        self.cache: TTLCache[Any, Any] = TTLCache(maxsize=10000, ttl=rate_limit)
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if user is None:
+            return await handler(event, data)
+        user_id = user.id
+        if user_id in self.cache:
+            return
+        self.cache[user_id] = True
+        return await handler(event, data)
 
 
 async def main():
@@ -268,11 +293,14 @@ async def main():
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value())
     dp = Dispatcher()
+    dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
+    dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=0.3))
     dp.update.middleware(ActionLoggingMiddleware(bot))
 
     crashed = await report_crash(bot)
 
     tg_handler = TelegramLogHandler(bot, config.ADMIN_IDS)
+    tg_handler._loop = asyncio.get_running_loop()
     tg_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     logging.getLogger().addHandler(tg_handler)
 
@@ -295,14 +323,13 @@ async def main():
 
     startup_duration = time.time() - start_time
 
-    status_emoji = lambda x: "✅" if x else "❌"
     startup_msg = (
         f"🚀 <b>Бот запущен!</b>\n\n"
         f"⏱️ Время запуска: <code>{startup_duration:.1f}s</code>\n\n"
         f"📊 Статус сервисов:\n"
-        f"{status_emoji(service_status['database'])} База данных\n"
-        f"{status_emoji(service_status['checker'])} Checker Service\n"
-        f"{status_emoji(service_status['video'])} Видео UI\n"
+        f"{_status_emoji(service_status['database'])} База данных\n"
+        f"{_status_emoji(service_status['checker'])} Checker Service\n"
+        f"{_status_emoji(service_status['video'])} Видео UI\n"
     )
 
     if not crashed:

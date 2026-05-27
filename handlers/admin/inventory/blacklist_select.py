@@ -54,7 +54,7 @@ async def _get_selected_ids(state: FSMContext) -> set[int]:
 
 
 async def _set_selected_ids(state: FSMContext, selected_ids: set[int]) -> None:
-    await state.update_data(**{STATE_SELECTED: sorted(selected_ids)})
+    await state.update_data({STATE_SELECTED: sorted(selected_ids)})
 
 
 async def _render_regions_menu(
@@ -108,7 +108,7 @@ async def _render_regions_menu(
         f"{notice_block}</blockquote>"
     )
 
-    await state.update_data(**{STATE_REGION: None, STATE_PAGE: 0})
+    await state.update_data({STATE_REGION: None, STATE_PAGE: 0})
     await admin_edit_or_answer(
         callback,
         state,
@@ -168,7 +168,7 @@ async def _render_region_page(
         f"{hint_line}</blockquote>"
     )
 
-    await state.update_data(**{STATE_REGION: region, STATE_PAGE: safe_page})
+    await state.update_data({STATE_REGION: region, STATE_PAGE: safe_page})
     await admin_edit_or_answer(
         callback,
         state,
@@ -189,16 +189,18 @@ async def _render_region_page(
 @router.callback_query(F.data == "admin_bulk_blacklist_menu")
 async def open_bulk_blacklist_menu(callback: CallbackQuery, state: FSMContext):
     mode = await _get_mode(state)
-    await state.update_data(**{STATE_MODE: mode})
+    await state.update_data({STATE_MODE: mode})
     await _render_regions_menu(callback, state)
 
 
 @router.callback_query(F.data.startswith("bulk_bl_mode_"))
 async def switch_bulk_blacklist_mode(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     mode_raw = callback.data[len("bulk_bl_mode_") :]
     mode = _normalize_mode(mode_raw)
 
-    await state.update_data(**{STATE_MODE: mode, STATE_SELECTED: []})
+    await state.update_data({STATE_MODE: mode, STATE_SELECTED: []})
 
     data = await state.get_data()
     region = str(data.get(STATE_REGION, "") or "")
@@ -216,6 +218,8 @@ async def switch_bulk_blacklist_mode(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("bulk_bl_region_"))
 async def open_bulk_blacklist_region(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     payload = callback.data[len("bulk_bl_region_") :]
     region = payload
     page = 0
@@ -242,6 +246,8 @@ async def open_bulk_blacklist_region(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("bulk_bl_page_"))
 async def paginate_bulk_blacklist(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     data = await state.get_data()
     region = str(data.get(STATE_REGION, "") or "")
     if not region:
@@ -258,6 +264,8 @@ async def paginate_bulk_blacklist(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("bulk_bl_toggle_"))
 async def toggle_bulk_blacklist_item(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
     try:
         sub_id = int(callback.data[len("bulk_bl_toggle_") :])
     except Exception:
@@ -305,6 +313,8 @@ async def clear_bulk_blacklist_selection(callback: CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data == "bulk_bl_submit")
 async def submit_bulk_blacklist(callback: CallbackQuery, state: FSMContext):
+    if not callback.bot or not callback.from_user:
+        return
     mode = await _get_mode(state)
     selected_ids = await _get_selected_ids(state)
 

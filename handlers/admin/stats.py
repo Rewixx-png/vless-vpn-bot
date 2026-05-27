@@ -2,7 +2,7 @@ import io
 import datetime
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, BufferedInputFile
+from aiogram.types import CallbackQuery, BufferedInputFile, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -19,24 +19,28 @@ async def show_stats(callback: CallbackQuery, state: FSMContext):
     try:
         stats = await StatsRepo.get_full_stats()
         
-        users = stats.get('users', 0)
-        total = stats.get('total_subs', 0)
-        active = stats.get('active_subs', 0)
-        blacklist = stats.get('blacklist', 0)
-        regions = stats.get('regions', 'N/A')
+        users = int(stats.get('users', 0) or 0)
+        total = int(stats.get('total_subs', 0) or 0)
+        active = int(stats.get('active_subs', 0) or 0)
+        blacklist = int(stats.get('blacklist', 0) or 0)
+        regions = str(stats.get('regions', 'N/A') or 'N/A')
         
         if len(regions) > 3000:
             regions = regions[:3000] + "\n... (список обрезан)"
 
+        dead = total - active
         text = (
-            "<blockquote>"
-            f"📊 <b>System Statistics</b>\n\n"
-            f"👤 Всего юзеров: <b>{users}</b>\n"
-            f"🔑 Ключей в базе: <b>{total}</b>\n"
-            f"🟢 Рабочих: <b>{active}</b>\n"
-            f"🚫 В черном списке: <b>{blacklist}</b>\n\n"
-            f"<b>🌍 Распределение (Code):</b>\n<pre>{regions}</pre>"
-            "</blockquote>"
+            "<b>📊 Статистика системы</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>👥 Пользователи:</b>\n"
+            f"  👤 Всего: <b>{users}</b>\n\n"
+            "<b>🔑 Подписки:</b>\n"
+            f"  🟢 Рабочих: <b>{active}</b>\n"
+            f"  🔴 Мёртвых: <b>{dead}</b>\n"
+            f"  📦 Всего: <b>{total}</b>\n"
+            f"  🚫 В ЧС: <b>{blacklist}</b>\n\n"
+            f"<b>🌍 По регионам:</b>\n"
+            f"<pre>{regions}</pre>"
         )
         await admin_edit_or_answer(callback, state, text, reply_markup=stats_kb())
     except Exception as e:
@@ -60,6 +64,8 @@ async def clear_blacklist_action(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_dl_users")
 async def download_users_list(callback: CallbackQuery):
+    if not isinstance(callback.message, Message):
+        return
     try:
         users = await StatsRepo.get_all_users_detailed()
         

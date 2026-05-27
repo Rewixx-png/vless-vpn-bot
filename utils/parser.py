@@ -78,6 +78,69 @@ class LinkParser:
             return None
 
     @staticmethod
+    def parse_trojan(link: str):
+        try:
+            if not link.startswith("trojan://"):
+                return None
+            full_link = link
+            link = link.strip()
+            rest = link[9:]
+            
+            remarks = "Trojan Config"
+            if "#" in rest:
+                rest, remarks_raw = rest.split("#", 1)
+                remarks = unquote(remarks_raw).strip()
+            
+            params_str = ""
+            if "?" in rest:
+                rest, params_str = rest.split("?", 1)
+            
+            rest = rest.rstrip("/")
+
+            if "@" in rest:
+                password, host_port = rest.split("@", 1)
+            else:
+                return None
+            
+            if ":" in host_port:
+                server, port_str = host_port.rsplit(":", 1)
+                if server.startswith("[") and server.endswith("]"):
+                    server = server[1:-1]
+                port_str = port_str.split("/")[0].split("?")[0].split("#")[0]
+                try:
+                    port = int(port_str)
+                except ValueError:
+                    return None
+            else:
+                return None
+                
+            params = parse_qs(params_str)
+            
+            def get_p(key, default=""):
+                return params.get(key, [default])[0]
+            
+            config = {
+                "_protocol": "trojan",
+                "password": password,
+                "server": server,
+                "port": port,
+                "type": get_p("type", "tcp"),
+                "sni": get_p("sni", ""),
+                "host": get_p("host", ""),
+                "path": get_p("path", ""),
+                "security": get_p("security", "tls") or "tls",
+                "serviceName": get_p("serviceName", ""),
+                "mode": get_p("mode", ""),
+                "name": remarks,
+                "ps": remarks,
+                "full_config": full_link,
+                "original": full_link
+            }
+            return config
+        except Exception:
+            return None
+
+    @staticmethod
     def update_param(link: str, param: str, value: str) -> str:
         try:
             if "?" not in link:

@@ -16,7 +16,9 @@ async def clean_start(message: Message):
     except Exception:
         pass
 
-async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext = None, media_url: str = None):
+async def edit_or_answer(message: Message, text: str, reply_markup=None, state: FSMContext | None = None, media_url: str | None = None):
+    if message.bot is None:
+        return
     data = await state.get_data() if state else {}
     last_msg_id = data.get("last_msg_id")
     chat_id = message.chat.id
@@ -46,7 +48,7 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
                         media=media,
                         reply_markup=reply_markup
                     )
-                    if edited_msg.video and not isinstance(video_file, str):
+                    if isinstance(edited_msg, Message) and edited_msg.video and not isinstance(video_file, str):
                         VideoManager.set_file_id(edited_msg.video.file_id)
                     return
                 except TelegramBadRequest as e:
@@ -102,6 +104,8 @@ async def edit_or_answer(message: Message, text: str, reply_markup=None, state: 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
+    if not message.from_user:
+        return
     await clean_start(message)
     await state.clear()
 
@@ -111,22 +115,13 @@ async def cmd_start(message: Message, state: FSMContext):
     user_settings = await UserRepo.get_user(message.from_user.id)
     
     limit_display = "♾️ Безлимит"
-    if user_settings and user_settings.subscription_limit > 0:
+    if user_settings is not None and bool(user_settings.subscription_limit > 0):
         limit_display = f"{user_settings.subscription_limit} шт."
 
     text = (
-        f"<b>🚀 VLESS VPN | DASHBOARD</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
-        f"╔ <b>👤 ПРОФИЛЬ</b>\n"
-        f"║ 🔹 <b>ID:</b> <code>{message.from_user.id}</code>\n"
-        f"║ 🔹 <b>Тариф:</b> Free / {limit_display}\n"
-        f"║ 🔹 <b>Статус:</b> ✅ Активен\n\n"
-        f"╔ <b>🌍 СЕТЬ</b>\n"
-        f"║ ⚡ <b>Онлайн:</b> {stats['active']} серверов\n"
-        f"║ 🌍 <b>Стран:</b> {stats['regions']}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>👇 Выберите действие:</i>"
+        f"<b>Привет, {message.from_user.first_name}!</b>\n\n"
+        f"👤 <b>ID:</b> <code>{message.from_user.id}</code>  |  🔑 {limit_display}\n\n"
+        f"🌐 Серверов онлайн: <b>{stats['active']}</b>  |  🌍 Стран: <b>{stats['regions']}</b>"
     )
 
     is_admin = message.from_user.id in config.ADMIN_IDS
@@ -135,6 +130,10 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.callback_query(F.data == "user_mode")
 @router.callback_query(F.data == "home")
 async def go_home_user(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user:
+        return
+    if not isinstance(callback.message, Message):
+        return
     data = await state.get_data()
     last_msg_id = data.get("last_msg_id")
 
@@ -147,21 +146,13 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
     user_settings = await UserRepo.get_user(callback.from_user.id)
     
     limit_display = "♾️ Безлимит"
-    if user_settings and user_settings.subscription_limit > 0:
+    if user_settings is not None and bool(user_settings.subscription_limit > 0):
         limit_display = f"{user_settings.subscription_limit} шт."
     
     text = (
-        f"<b>🚀 VLESS VPN | DASHBOARD</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👋 С возвращением, <b>{callback.from_user.first_name}</b>!\n\n"
-        f"╔ <b>👤 ПРОФИЛЬ</b>\n"
-        f"║ 🔹 <b>ID:</b> <code>{callback.from_user.id}</code>\n"
-        f"║ 🔹 <b>Лимит:</b> {limit_display}\n\n"
-        f"╔ <b>🌍 СЕТЬ</b>\n"
-        f"║ ⚡ <b>Серверов:</b> {stats['active']}\n"
-        f"║ 🌍 <b>Локаций:</b> {stats['regions']}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>👇 Выберите действие:</i>"
+        f"<b>С возвращением, {callback.from_user.first_name}!</b>\n\n"
+        f"👤 <b>ID:</b> <code>{callback.from_user.id}</code>  |  🔑 {limit_display}\n\n"
+        f"🌐 Серверов онлайн: <b>{stats['active']}</b>  |  🌍 Стран: <b>{stats['regions']}</b>"
     )
 
     is_admin = callback.from_user.id in config.ADMIN_IDS
@@ -169,6 +160,8 @@ async def go_home_user(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "user_instruction")
 async def show_instruction(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     text = (
         "<b>📚 MANUAL | ИНСТРУКЦИЯ</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"

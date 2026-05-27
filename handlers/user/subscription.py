@@ -1,3 +1,4 @@
+from typing import Any
 import urllib.parse
 from datetime import datetime
 import time
@@ -5,7 +6,9 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from database.repo import SubRepo, UserRepo, SystemRepo
+from database.repo.subs import SubRepo
+from database.repo.users import UserRepo
+from database.repo.system import SystemRepo
 from keyboards.user import (
     settings_countries_kb,
     back_to_home,
@@ -14,6 +17,8 @@ from keyboards.user import (
     sub_action_kb,
     settings_tags_kb,
     tg_proxy_kb,
+    _protocol_label,  # type: ignore[reportPrivateUsage]
+    settings_protocols_kb,
 )
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
@@ -23,21 +28,34 @@ from utils.tg_proxy import TelegramProxyService
 
 router = Router()
 
-_PRIMARY_SUB_DOMAIN = "direct.rewexx.ru"
 
-
-async def _build_subscription_url(user_id: str | int) -> str:
+async def _build_subscription_url(user_id: str | int, protocol_filter: str | None = None) -> str:
     encoded_id = urllib.parse.quote(str(user_id), safe="/")
 
     db_domain = await SystemRepo.get_config("public_domain")
     domain = str(db_domain if db_domain else config.public_domain or "").strip()
-    if not domain or not domain.startswith("direct."):
-        domain = _PRIMARY_SUB_DOMAIN
 
-    return f"https://{domain}/sub64?id={encoded_id}"
+    if domain.startswith("http://") or domain.startswith("https://"):
+        base = domain.rstrip("/")
+    elif domain and ":" in domain.split("/")[0]:
+        base = f"http://{domain}"
+    elif domain:
+        base = f"https://{domain}"
+    else:
+        public_ip = config.PUBLIC_IP
+        base = f"http://{public_ip}:{config.WEB_PORT}"
+
+    url = f"{base}/sub64?id={encoded_id}"
+    if protocol_filter == "vless":
+        url += "&types=vless"
+    elif protocol_filter == "hy2":
+        url += "&types=hy2,hysteria2,tuic"
+    elif protocol_filter == "trojan":
+        url += "&types=trojan"
+    return url
 
 
-def _extract_proxy_items(data: dict) -> list[dict]:
+def _extract_proxy_items(data: Any) -> list[dict[str, Any]]:
     if not isinstance(data, dict):
         return []
 
@@ -52,7 +70,7 @@ def _extract_proxy_items(data: dict) -> list[dict]:
                 continue
             latency_raw = item.get("latency_ms")
             try:
-                latency_ms = int(latency_raw)
+                latency_ms = int(latency_raw) if latency_raw is not None else 0
             except Exception:
                 latency_ms = 0
             kind = str(item.get("kind", "mtproto") or "mtproto").strip().lower()
@@ -79,8 +97,8 @@ def _extract_proxy_items(data: dict) -> list[dict]:
 
 
 def _build_tg_proxy_text(
-    data: dict,
-    proxy_items: list[dict],
+    data: Any,
+    proxy_items: list[dict[str, Any]],
     is_stale: bool,
     offset: int,
     page_size: int,
@@ -157,13 +175,15 @@ def _queue_tg_proxy_refresh() -> bool:
     try:
         from tasks import update_tg_proxy_task
 
-        update_tg_proxy_task.delay()
+        getattr(update_tg_proxy_task, "delay")()
         return True
     except Exception:
         return False
 
 
 async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: int = 0):
+    if not isinstance(callback.message, Message):
+        return
     data = await TelegramProxyService.get_cached()
 
     if not data:
@@ -198,7 +218,7 @@ async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: i
     checked_at = int(data.get("checked_at", 0) or 0)
     is_stale = checked_at <= 0 or (int(time.time()) - checked_at) > 3600
     if is_stale:
-        _queue_tg_proxy_refresh()
+        _ = _queue_tg_proxy_refresh()
 
     proxy_items = _extract_proxy_items(data)
     page_size = 16
@@ -220,59 +240,61 @@ async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: i
 
 @router.callback_query(F.data == "tg_proxy_list")
 async def show_tg_proxy_list(callback: CallbackQuery, state: FSMContext):
-    await callback.answer("🧩 Открываю список прокси...", show_alert=False)
+    if not isinstance(callback.message, Message):
+        return
+    _ = await callback.answer("🧩 Открываю список прокси...", show_alert=False)
     await _render_tg_proxy(callback, state, offset=0)
 
 
 @router.callback_query(F.data == "tg_proxy_refresh")
 async def refresh_tg_proxy_list(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     queued = _queue_tg_proxy_refresh()
     if queued:
-        await callback.answer("🔄 Запустил обновление в фоне", show_alert=True)
+        _ = await callback.answer("🔄 Запустил обновление в фоне", show_alert=True)
     else:
-        await callback.answer("⚠️ Не удалось запустить обновление", show_alert=True)
+        _ = await callback.answer("⚠️ Не удалось запустить обновление", show_alert=True)
     await _render_tg_proxy(callback, state, offset=0)
 
 
 @router.callback_query(F.data.startswith("tg_proxy_page_"))
 async def tg_proxy_page(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
     try:
         offset = int(callback.data.split("tg_proxy_page_")[1])
     except Exception:
         offset = 0
 
-    await callback.answer("", show_alert=False)
+    _ = await callback.answer("", show_alert=False)
     await _render_tg_proxy(callback, state, offset=max(0, offset))
 
 
 @router.callback_query(F.data == "my_subscription")
 async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     user_id = callback.from_user.id
-    sub_url = await _build_subscription_url(user_id)
-
     user = await UserRepo.get_user(user_id)
+    protocol_filter: str | None = str(getattr(user, "protocol_filter")) if user and getattr(user, "protocol_filter") is not None else None
+    sub_url = await _build_subscription_url(user_id, protocol_filter)
+
+    limit = int(getattr(user, "subscription_limit")) if user else 0
     limit_txt = "Все доступные (∞)"
-    if user and user.subscription_limit > 0:
-        limit_txt = f"{user.subscription_limit} лучших"
+    if limit > 0:
+        limit_txt = f"{limit} лучших"
 
     links_block = f"<code>{sub_url}</code>"
 
-    warning = (
-        "\n\n⚠️ <b>Важно:</b> используйте только эту ссылку (формат <b>/sub64</b>) и удалите старые варианты из клиента."
-    )
-
     text = (
-        "<b>🔑 PERSONAL ACCESS KEY</b>\n"
+        "<b>🔑 Ваша подписка</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        "<b>🔗 Ваша ссылка подписки:</b>\n"
-        f"{links_block}\n"
-        "👇 <i>Используйте кнопки ниже: открыть или скопировать ссылку.</i>\n\n"
-        "<b>📋 Информация о ключе:</b>\n"
-        f"▪️ <b>Формат:</b> Auto (VLESS / Clash)\n"
-        f"▪️ <b>Серверов:</b> {limit_txt}\n"
-        f"▪️ <b>Обновление:</b> Автоматически\n"
-        f"{warning}\n\n"
-        "<i>⚙️ Используйте кнопку ниже для настройки фильтров (страны, AI, скорость).</i>"
+        f"<b>Ссылка:</b>\n{links_block}\n\n"
+        f"📦 Серверов: <b>{limit_txt}</b>  |  🔄 Обновление: авто\n\n"
+        "<i>Нажмите кнопку ниже, чтобы открыть в приложении или скопировать.</i>"
     )
 
     await edit_or_answer(
@@ -282,29 +304,34 @@ async def give_subscription_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "sub_qr_main")
 async def show_main_qr(callback: CallbackQuery):
+    if not isinstance(callback.message, Message):
+        return
     user_id = callback.from_user.id
     sub_url = await _build_subscription_url(user_id)
     qr_file = QRGenerator.generate(sub_url)
 
-    await callback.message.answer_photo(
+    _ = await callback.message.answer_photo(
         photo=qr_file,
         caption="<b>📱 Ваш QR-код для подключения</b>\nОтсканируйте его в приложении (v2rayNG, V2Box, FlClash и др.)",
         parse_mode="HTML",
     )
-    await callback.answer()
+    _ = await callback.answer()
 
 
 @router.callback_query(F.data == "settings_main")
 async def open_settings_main(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     data = await state.get_data()
     last_msg_id = data.get("last_msg_id")
-    await state.clear()
+    _ = await state.clear()
     if last_msg_id:
-        await state.update_data(last_msg_id=last_msg_id)
+        _ = await state.update_data(last_msg_id=last_msg_id)
 
     user = await UserRepo.get_user(callback.from_user.id)
-    limit = user.subscription_limit if user else 0
-    use_fragment = user.use_fragment if user else False
+    limit = int(getattr(user, "subscription_limit")) if user else 0
+    use_fragment = bool(getattr(user, "use_fragment")) if user else False
+    protocol_filter: str | None = str(getattr(user, "protocol_filter")) if user and getattr(user, "protocol_filter") is not None else None
 
     text = (
         "<b>⚙️ CONFIGURATION | НАСТРОЙКИ</b>\n"
@@ -315,13 +342,14 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
         "🌍 <b>Страны:</b> Выберите конкретные регионы.\n"
         "⚡ <b>Теги:</b> AI, скорость, Reality, Wi-Fi/Mobile и операторы.\n"
         "🔢 <b>Лимит:</b> Ограничить кол-во серверов (для старых телефонов).\n"
-        "🛡 <b>Фрагментация:</b> Обход жесткого DPI (в РФ/Иране)."
+        "🛡 <b>Фрагментация:</b> Обход жесткого DPI (в РФ/Иране).\n"
+        "🔀 <b>Протокол:</b> VLESS, Hysteria2 или оба сразу."
     )
 
     await edit_or_answer(
         callback.message,
         text,
-        settings_main_kb(limit, use_fragment),
+        settings_main_kb(limit, use_fragment, protocol_filter),
         state,
         media_url="video",
     )
@@ -329,15 +357,54 @@ async def open_settings_main(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "toggle_fragment")
 async def toggle_fragment_action(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     user = await UserRepo.get_user(callback.from_user.id)
     if user:
-        new_state = not user.use_fragment
-        await UserRepo.update_fragment_setting(user.id, new_state)
+        new_state = not bool(getattr(user, "use_fragment"))
+        await UserRepo.update_fragment_setting(int(getattr(user, "id")), new_state)
     await open_settings_main(callback, state)
+
+
+@router.callback_query(F.data == "settings_protocols")
+async def open_settings_protocols(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
+    user = await UserRepo.get_user(callback.from_user.id)
+    protocol: str | None = str(getattr(user, "protocol_filter")) if user and getattr(user, "protocol_filter") is not None else None
+    
+    text = (
+        "<b>🔀 CHOOSE PROTOCOL | ВЫБОР ПРОТОКОЛА</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Выберите протокол подключения для вашей подписки:\n\n"
+        "▫️ <b>Все вместе:</b> Автоматически комбинирует все доступные протоколы (Рекомендуется).\n"
+        "▫️ <b>Только VLESS:</b> Классический, стабильный протокол на базе TCP/Reality.\n"
+        "▫️ <b>Только Hysteria2:</b> Сверхбыстрый QUIC-протокол (отлично подходит для мобильного интернета и обхода глушилок).\n"
+        "▫️ <b>Только Trojan:</b> Легковесный и быстрый протокол с шифрованием TLS."
+    )
+    await edit_or_answer(
+        callback.message, text, settings_protocols_kb(protocol), state, media_url="video"
+    )
+
+
+@router.callback_query(F.data.startswith("set_protocol_"))
+async def set_protocol_action(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
+    proto_val = callback.data.split("set_protocol_")[1]
+    protocol = None if proto_val == "all" else proto_val
+    
+    await UserRepo.update_user_protocol_filter(callback.from_user.id, protocol)
+    _ = await callback.answer(f"✅ Установлен протокол: {_protocol_label(protocol)}", show_alert=False)
+    await open_settings_protocols(callback, state)
 
 
 @router.callback_query(F.data == "settings_tags")
 async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     user_tags = await UserRepo.get_user_tags(callback.from_user.id)
 
     text = (
@@ -363,6 +430,10 @@ async def open_settings_tags(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("toggle_tag_"))
 async def toggle_tag(callback: CallbackQuery):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
     tag = callback.data.split("toggle_tag_")[1]
     user_id = callback.from_user.id
 
@@ -374,15 +445,18 @@ async def toggle_tag(callback: CallbackQuery):
         current_tags.append(tag)
 
     await UserRepo.update_user_tags(user_id, current_tags)
-    await callback.message.edit_reply_markup(
+    _ = await callback.message.edit_reply_markup(
         reply_markup=settings_tags_kb(current_tags)
     )
 
 
 @router.callback_query(F.data == "settings_limit")
 async def open_settings_limit(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     user = await UserRepo.get_user(callback.from_user.id)
-    limit = user.subscription_limit if user else 0
+    limit = int(getattr(user, "subscription_limit")) if user else 0
+
 
     text = (
         "<b>🔢 SERVER LIMIT | ЛИМИТЫ</b>\n"
@@ -399,6 +473,10 @@ async def open_settings_limit(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("set_limit_"))
 async def set_limit_value(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
     val = callback.data.split("set_limit_")[1]
 
     if val == "custom":
@@ -409,7 +487,7 @@ async def set_limit_value(callback: CallbackQuery, state: FSMContext):
             state,
             media_url="video",
         )
-        await state.set_state(UserStates.waiting_for_custom_limit)
+        _ = await state.set_state(UserStates.waiting_for_custom_limit)
         return
 
     limit = int(val)
@@ -419,28 +497,35 @@ async def set_limit_value(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(UserStates.waiting_for_custom_limit))
 async def process_custom_limit_input(message: Message, state: FSMContext):
+    if not message.from_user:
+        return
     try:
-        await message.delete()
+        _ = await message.delete()
     except:
         pass
 
     try:
+        if not message.text:
+            raise ValueError
         limit = int(message.text.strip())
         if limit < 0:
             raise ValueError
 
         await UserRepo.update_subscription_limit(message.from_user.id, limit)
-        await state.clear()
+        _ = await state.clear()
 
+        user = await UserRepo.get_user(message.from_user.id)
+        protocol_filter: str | None = str(getattr(user, "protocol_filter")) if user and getattr(user, "protocol_filter") is not None else None
         await edit_or_answer(
             message,
             f"✅ Лимит установлен: <b>{limit}</b>",
-            settings_main_kb(limit, True),
+            settings_main_kb(limit, True, protocol_filter),
             state,
             media_url="video",
         )
 
     except ValueError:
+        _ = await state.clear()
         await edit_or_answer(
             message,
             "⚠️ Ошибка. Введите целое число.",
@@ -452,10 +537,10 @@ async def process_custom_limit_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "settings_countries")
 async def open_settings_countries(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     all_regions = await SubRepo.get_regions()
-    user_filter = await UserRepo.get_user_filter(
-        callback.fromuser.id if hasattr(callback, "fromuser") else callback.from_user.id
-    )
+    user_filter = await UserRepo.get_user_filter(callback.from_user.id)
 
     text = (
         "<b>🌍 REGIONS FILTER | СТРАНЫ</b>\n"
@@ -476,6 +561,10 @@ async def open_settings_countries(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("toggle_country_"))
 async def toggle_country(callback: CallbackQuery):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
     region = callback.data.split("toggle_country_")[1]
     user_id = callback.from_user.id
 
@@ -497,25 +586,29 @@ async def toggle_country(callback: CallbackQuery):
         new_filter = None
 
     await UserRepo.update_user_filter(user_id, new_filter)
-    await callback.message.edit_reply_markup(
+    _ = await callback.message.edit_reply_markup(
         reply_markup=settings_countries_kb(all_regions, new_filter)
     )
 
 
 @router.callback_query(F.data == "set_all_on")
 async def set_all_on(callback: CallbackQuery):
+    if not isinstance(callback.message, Message):
+        return
     all_regions = await SubRepo.get_regions()
     await UserRepo.update_user_filter(callback.from_user.id, None)
-    await callback.message.edit_reply_markup(
+    _ = await callback.message.edit_reply_markup(
         reply_markup=settings_countries_kb(all_regions, None)
     )
 
 
 @router.callback_query(F.data == "set_all_off")
 async def set_all_off(callback: CallbackQuery):
+    if not isinstance(callback.message, Message):
+        return
     all_regions = await SubRepo.get_regions()
     empty_filter = ["__EMPTY__"]
     await UserRepo.update_user_filter(callback.from_user.id, empty_filter)
-    await callback.message.edit_reply_markup(
+    _ = await callback.message.edit_reply_markup(
         reply_markup=settings_countries_kb(all_regions, empty_filter)
     )

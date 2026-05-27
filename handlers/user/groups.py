@@ -1,4 +1,5 @@
 import urllib.parse
+from typing import cast, Any
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
@@ -11,27 +12,22 @@ from keyboards.user import (
     settings_countries_kb,
     group_view_kb,
     settings_tags_kb,
+    _protocol_label,
+    settings_protocols_kb,
 )
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
+from handlers.user.subscription import _build_subscription_url
 from config import config
 from utils.qr import QRGenerator
 
 router = Router()
 
-_PRIMARY_SUB_DOMAIN = "direct.rewexx.ru"
-
-
-async def get_base_url():
-    db_domain = await SystemRepo.get_config("public_domain")
-    domain = str(db_domain if db_domain else config.public_domain or "").strip()
-    if not domain or not domain.startswith("direct."):
-        domain = _PRIMARY_SUB_DOMAIN
-    return f"https://{domain}"
-
 
 @router.callback_query(F.data == "groups_list")
 async def show_groups(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
     current_state = await state.get_state()
     if current_state != UserStates.waiting_for_group_name:
         data = await state.get_data()
@@ -53,6 +49,8 @@ async def show_groups(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "group_create")
 async def ask_group_name(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
     await edit_or_answer(
         callback.message,
         "✍️ <b>Создание группы</b>\n\n"
@@ -67,6 +65,8 @@ async def ask_group_name(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(UserStates.waiting_for_group_name))
 async def create_group_finish(message: Message, state: FSMContext):
+    if not message.from_user or not message.text:
+        return
     try:
         await message.delete()
     except:
@@ -111,7 +111,7 @@ async def create_group_finish(message: Message, state: FSMContext):
     await edit_or_answer(
         message,
         f"✅ Группа <b>{name}</b> создана!\nТеперь выберите страны для этой группы.",
-        settings_countries_kb(all_regions, None, group.id),
+        settings_countries_kb(all_regions, None, cast(Any, group.id)),
         state,
         media_url="video",
     )
@@ -119,6 +119,10 @@ async def create_group_finish(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("group_view_"))
 async def view_group(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("group_view_")[1])
     groups = await GroupRepo.get_user_groups(callback.from_user.id)
     group = next((g for g in groups if g.id == group_id), None)
@@ -128,8 +132,10 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
         await show_groups(callback, state)
         return
 
-    base = await get_base_url()
-    link_url = f"{base}/sub64?id={callback.from_user.id}/{group.name}"
+    protocol_filter = group.protocol_filter if group.protocol_filter else None
+    link_url = await _build_subscription_url(
+        f"{callback.from_user.id}/{group.name}", protocol_filter
+    )
 
     countries_txt = "Все доступные"
     if group.country_filter:
@@ -145,7 +151,8 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
     text = (
         f"📂 Группа: <b>{group.name}</b>\n\n"
         f"🌍 Страны: <b>{countries_txt}</b>\n"
-        f"🏷 Теги: <b>{tags_txt}</b>\n\n"
+        f"🏷 Теги: <b>{tags_txt}</b>\n"
+        f"🔀 Протокол: <b>{_protocol_label(protocol_filter)}</b>\n\n"
         f"🔗 <b>Ссылка подписки:</b>\n"
         f"<code>{link_url}</code>\n\n"
         f"👇 <i>Используйте кнопки ниже: открыть или скопировать ссылку.</i>"
@@ -154,7 +161,7 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
     await edit_or_answer(
         callback.message,
         text,
-        group_view_kb(group.id, link_url),
+        group_view_kb(group.id, link_url, protocol_filter),
         state,
         media_url="video",
     )
@@ -162,6 +169,10 @@ async def view_group(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("group_qr_"))
 async def show_group_qr(callback: CallbackQuery):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("group_qr_")[1])
     groups = await GroupRepo.get_user_groups(callback.from_user.id)
     group = next((g for g in groups if g.id == group_id), None)
@@ -170,8 +181,10 @@ async def show_group_qr(callback: CallbackQuery):
         await callback.answer("Группа не найдена", show_alert=True)
         return
 
-    base = await get_base_url()
-    link_url = f"{base}/sub64?id={callback.from_user.id}/{group.name}"
+    protocol_filter = group.protocol_filter if group.protocol_filter else None
+    link_url = await _build_subscription_url(
+        f"{callback.from_user.id}/{group.name}", protocol_filter
+    )
 
     qr_file = QRGenerator.generate(link_url)
     await callback.message.answer_photo(
@@ -184,6 +197,10 @@ async def show_group_qr(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("group_edit_countries_"))
 async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("group_edit_countries_")[1])
     groups = await GroupRepo.get_user_groups(callback.from_user.id)
     group = next((g for g in groups if g.id == group_id), None)
@@ -208,6 +225,10 @@ async def edit_group_countries(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("g_toggle_country_"))
 async def toggle_group_country(callback: CallbackQuery):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     prefix = "g_toggle_country_"
     data = callback.data[len(prefix) :]
     try:
@@ -249,6 +270,10 @@ async def toggle_group_country(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("g_set_all_on_"))
 async def group_set_all_on(callback: CallbackQuery):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("_")[-1])
     all_regions = await SubRepo.get_regions()
     await GroupRepo.update_group_countries(group_id, None)
@@ -259,6 +284,10 @@ async def group_set_all_on(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("g_set_all_off_"))
 async def group_set_all_off(callback: CallbackQuery):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("_")[-1])
     all_regions = await SubRepo.get_regions()
     await GroupRepo.update_group_countries(group_id, ["__EMPTY__"])
@@ -269,6 +298,10 @@ async def group_set_all_off(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("group_edit_tags_"))
 async def edit_group_tags(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("group_edit_tags_")[1])
     groups = await GroupRepo.get_user_groups(callback.from_user.id)
     group = next((g for g in groups if g.id == group_id), None)
@@ -293,6 +326,10 @@ async def edit_group_tags(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("g_toggle_tag_"))
 async def toggle_group_tag(callback: CallbackQuery):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     prefix = "g_toggle_tag_"
     data = callback.data[len(prefix) :]
     try:
@@ -321,7 +358,54 @@ async def toggle_group_tag(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("group_delete_"))
 async def delete_group(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
     group_id = int(callback.data.split("group_delete_")[1])
     await GroupRepo.delete_group(group_id)
     await callback.answer("Группа удалена", show_alert=True)
     await show_groups(callback, state)
+
+
+@router.callback_query(F.data.startswith("g_settings_protocols_"))
+async def open_group_protocols(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
+    group_id = int(callback.data.split("g_settings_protocols_")[1])
+    groups = await GroupRepo.get_user_groups(callback.from_user.id)
+    group = next((g for g in groups if g.id == group_id), None)
+    if not group:
+        await callback.answer("Группа не найдена", show_alert=True)
+        return
+        
+    text = (
+        f"<b>🔀 PROTOCOL FOR {group.name} | ВЫБОР ПРОТОКОЛА</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Выберите протокол подключения для этой группы подписок:\n\n"
+        "▫️ <b>Все вместе:</b> Автоматически комбинирует все доступные протоколы (Рекомендуется).\n"
+        "▫️ <b>Только VLESS:</b> Классический, стабильный протокол на базе TCP/Reality.\n"
+        "▫️ <b>Только Hysteria2:</b> Сверхбыстрый QUIC-протокол (отлично подходит для мобильного интернета и обхода DPI).\n"
+        "▫️ <b>Только Trojan:</b> Легковесный и быстрый протокол с шифрованием TLS."
+    )
+    await edit_or_answer(
+        callback.message, text, settings_protocols_kb(group.protocol_filter, group_id), state, media_url="video"
+    )
+
+
+@router.callback_query(F.data.startswith("g_set_protocol_"))
+async def set_group_protocol_action(callback: CallbackQuery, state: FSMContext):
+    if not callback.message or not isinstance(callback.message, Message):
+        return
+    if not callback.data:
+        return
+    parts = callback.data.split("g_set_protocol_")[1].split("_")
+    proto_val = parts[0]
+    group_id = int(parts[1])
+    protocol = None if proto_val == "all" else proto_val
+    
+    await GroupRepo.update_group_protocol(group_id, protocol)
+    await callback.answer(f"✅ Установлен протокол: {_protocol_label(protocol)}", show_alert=False)
+    await open_group_protocols(callback, state)

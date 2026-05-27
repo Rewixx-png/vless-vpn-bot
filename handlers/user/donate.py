@@ -4,6 +4,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
+from config import config
 from handlers.user.start import edit_or_answer
 from handlers.user.states import UserStates
 from keyboards.user import (
@@ -19,16 +20,17 @@ router = Router()
 
 @router.callback_query(F.data == "donate_info")
 async def show_donate_info(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     text = (
-        "<b>🤝 SUPPORT | ПОДДЕРЖКА</b>\n"
+        "<b>🤝 Поддержать проект</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        "Бот работает на платном оборудовании, которое обеспечивает вашу анонимность и свободу.\n\n"
-        "Если вам нравится сервис, вы можете поддержать его развитие любой суммой. Это помогает оплачивать мощные серверы.\n\n"
-        "<b>Способы поддержки:</b>\n"
-        "💎 <b>Криптовалюта:</b> USDT, TON, BTC (Crypto Pay)\n"
-        "💳 <b>Карты РФ:</b> <code>+79121668033</code> (Т-Банк/СБП)\n"
-        "💳 <b>Райффайзен:</b> <code>2200300581247390</code>\n\n"
-        "✉️ <b>Связь с админом:</b> @RewiX_X"
+        "Сервис работает на платных серверах — любая поддержка помогает.\n\n"
+        "<b>Способы перевода:</b>\n"
+        "💎 Crypto Pay (USDT / TON / BTC)\n"
+        f"💳 СБП: <code>{config.PAYMENT_PHONE}</code> (Т-Банк)\n"
+        f"💳 Райффайзен: <code>{config.PAYMENT_CARD_RAIFFEISEN}</code>\n\n"
+        f"✉️ Вопросы: {config.SUPPORT_USERNAME}"
     )
     await edit_or_answer(
         callback.message, text, donate_selection_kb(), state, media_url="video"
@@ -37,6 +39,8 @@ async def show_donate_info(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "crypto_selection")
 async def show_crypto_amounts(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     text = (
         "<b>💎 CRYPTO DONATION</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
@@ -50,6 +54,8 @@ async def show_crypto_amounts(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "pay_custom")
 async def ask_custom_amount(callback: CallbackQuery, state: FSMContext):
+    if not isinstance(callback.message, Message):
+        return
     text = (
         "<b>✍️ CUSTOM AMOUNT</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
@@ -63,6 +69,8 @@ async def ask_custom_amount(callback: CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(UserStates.waiting_for_custom_amount))
 async def process_custom_amount(message: Message, state: FSMContext):
+    if not message.text:
+        return
     try:
         await message.delete()
     except:
@@ -71,11 +79,13 @@ async def process_custom_amount(message: Message, state: FSMContext):
     try:
         amount = float(message.text.replace(",", "."))
         if amount < 0.1:
+            await state.clear()
             await edit_or_answer(
                 message, "⚠️ Минимум 0.1 USDT.", back_to_home(), state, media_url="video"
             )
             return
     except ValueError:
+        await state.clear()
         await edit_or_answer(
             message, "⚠️ Введите число.", back_to_home(), state, media_url="video"
         )
@@ -87,6 +97,10 @@ async def process_custom_amount(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("pay_create_"))
 async def create_crypto_invoice(callback: CallbackQuery, state: FSMContext):
+    if not callback.data:
+        return
+    if not isinstance(callback.message, Message):
+        return
     try:
         amount = int(callback.data.split("_")[2])
     except ValueError:

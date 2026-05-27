@@ -10,10 +10,10 @@ COLLECTOR_SETTINGS = {
 }
 
 CHECKER_SETTINGS = {
-    "max_concurrent": 40,
+    "max_concurrent": 25,
     "timeout": 8,
     "connect_timeout": 3,
-    "workers": 3,
+    "workers": 2,
 }
 
 WORKER_SETTINGS = {

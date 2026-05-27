@@ -29,8 +29,8 @@ def _setup_loop_exception_handler():
                 return
             loop.default_exception_handler(context)
         loop.set_exception_handler(custom_exc_handler)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"_setup_loop_exception_handler: {e}")
 
 def format_time(seconds: int) -> str:
     if seconds < 60:
