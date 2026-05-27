@@ -447,7 +447,11 @@ class VlessChecker:
     ) -> tuple[bool, str, int, float, bool, bool, str, str]:
         _ = strict_speed
         use_ru_proxy = bool(getattr(config, "CHECKER_USE_RU_PROXY_CHAIN", True))
-        parsed = LinkParser.parse_vless(config_url)
+        scheme = config_url.split("://")[0].lower() if "://" in config_url else "vless"
+        if scheme == "trojan":
+            parsed = LinkParser.parse_trojan(config_url)
+        else:
+            parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return (
                 False,

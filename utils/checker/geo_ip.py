@@ -454,21 +454,33 @@ class GeoIP:
         region = "🌍 UNK"
         try:
             if session is None:
-                timeout = aiohttp.ClientTimeout(total=3)
+                timeout = aiohttp.ClientTimeout(total=8)
                 async with aiohttp.ClientSession(timeout=timeout) as local_session:
                     async with local_session.get(
                         f"http://ip-api.com/json/{ip}?fields=countryCode",
-                        timeout=2,
+                        timeout=aiohttp.ClientTimeout(total=5),
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             code = data.get("countryCode")
                             if code:
                                 region = cls.code_to_region(code)
+                    if region == "🌍 UNK":
+                        try:
+                            async with local_session.get(
+                                f"https://ipapi.co/{ip}/country/",
+                                timeout=aiohttp.ClientTimeout(total=5),
+                            ) as resp2:
+                                if resp2.status == 200:
+                                    code2 = (await resp2.text()).strip()
+                                    if code2 and len(code2) == 2:
+                                        region = cls.code_to_region(code2)
+                        except Exception:
+                            pass
             else:
                 async with session.get(
                     f"http://ip-api.com/json/{ip}?fields=countryCode",
-                    timeout=2,
+                    timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()

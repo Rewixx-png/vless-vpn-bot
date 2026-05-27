@@ -22,8 +22,9 @@ async def start_add_subs(callback: CallbackQuery, state: FSMContext):
     await admin_edit_or_answer(
         callback,
         state,
-        "<blockquote>📝 <b>Массовая загрузка (ТОЛЬКО VLESS)</b>\n\n"
+        "<blockquote>📝 <b>Массовая загрузка</b>\n\n"
         "Отправьте .txt файл или список ссылок.\n"
+        "Поддерживаются: vless://, trojan://, hy2://, hysteria2://, tuic://\n"
         "Каждая ссылка будет проверена через Xray перед добавлением.</blockquote>",
         reply_markup=back_to_admin()
     )
@@ -71,12 +72,12 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    links = re.findall(r'(vless://[^\s\n<>"]+)', text_content)
+    links = re.findall(r'((?:vless|trojan|hy2|hysteria2|tuic)://[^\s\n<>"]+)', text_content)
     links = [link.strip() for link in links if link.strip()]
 
     if not links:
         await message.answer(
-            "<blockquote>⚠️ VLESS ссылки не найдены.</blockquote>",
+            "<blockquote>⚠️ Ссылки не найдены. Поддерживаются: vless://, trojan://, hy2://, hysteria2://, tuic://</blockquote>",
             reply_markup=back_to_admin(),
             parse_mode="HTML"
         )

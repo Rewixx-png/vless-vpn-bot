@@ -225,7 +225,7 @@ class SubscriptionCollector:
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
 
-        found_links = re.findall(r'(?:vless|hy2|hysteria2|tuic)://[^\s\'"<>]+', full_text)
+        found_links = re.findall(r'(?:vless|trojan|hy2|hysteria2|tuic)://[^\s\'"<>]+', full_text)
         found_links = list(set(found_links))
         del full_text
 
@@ -615,6 +615,63 @@ class SubscriptionCollector:
                         return True, {"region": final_region}
                     return False, "dup_or_bl"
 
+                if scheme == "trojan":
+                    _trojan_addr_re = re.compile(r'trojan://[^@]*@([^:/?#\s]+):(\d+)', re.ASCII)
+                    m = _trojan_addr_re.match(link)
+                    if not m:
+                        return False, "fmt_err"
+
+                    host = m.group(1).strip().lower()
+                    port = int(m.group(2))
+                    if not host or port < 1 or port > 65535:
+                        return False, "fmt_err"
+
+                    if host in cls.BLOCKED_HOSTS:
+                        return False, "blocked_host"
+
+                    (
+                        is_alive,
+                        region,
+                        latency,
+                        speed_mbps,
+                        ai_avail,
+                        no_ads,
+                        err,
+                        updated_link,
+                    ) = await VlessChecker.process_subscription(
+                        link,
+                        strict_speed=False,
+                        skip_speed=False,
+                    )
+
+                    if not is_alive:
+                        err_text = str(err or "")
+                        if err_text.startswith("SYS_ERR"):
+                            return False, "sys_err"
+                        return False, "dead"
+
+                    final_region = str(region or "").strip() or "🌍 UNK"
+                    try:
+                        final_latency = int(latency or 9999)
+                    except Exception:
+                        final_latency = 9999
+                    final_speed = float(speed_mbps or 0.0)
+                    if final_speed <= 1.05:
+                        final_speed = 30.0
+
+                    added = await SubRepo.smart_add_subscription(
+                        vless_key=updated_link if updated_link else link,
+                        region=final_region,
+                        latency=final_latency,
+                        speed_mbps=final_speed,
+                        ai_available=bool(ai_avail),
+                        no_ads=bool(no_ads),
+                    )
+
+                    if added:
+                        return True, {"region": final_region}
+                    return False, "dup_or_bl"
+
                 if "vless://" not in link or "@" not in link or ":" not in link:
                     return False, "fmt_err"
 
@@ -813,7 +870,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(line).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or not any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
+                if not dec or not any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
                     try:
                         dec = base64.urlsafe_b64decode(line).decode(
                             "utf-8", errors="ignore"
@@ -821,7 +878,7 @@ class SubscriptionCollector:
                     except:
                         pass
 
-                if dec and any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
+                if dec and any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
                     decoded_parts.append(dec)
             except Exception:
                 pass
@@ -838,7 +895,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(clean_text).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or not any(p in dec for p in ("vless://", "hy2://", "hysteria2://", "tuic://")):
+                if not dec or not any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
                     try:
                         dec = base64.urlsafe_b64decode(clean_text).decode(
                             "utf-8", errors="ignore"
@@ -847,7 +904,7 @@ class SubscriptionCollector:
                         pass
 
                 if dec:
-                    decoded_parts.extend(re.findall(r'(?:vless|hy2|hysteria2|tuic)://[^\s\'"<>]+', dec))
+                    decoded_parts.extend(re.findall(r'(?:vless|trojan|hy2|hysteria2|tuic)://[^\s\'"<>]+', dec))
             except Exception:
                 pass
 
