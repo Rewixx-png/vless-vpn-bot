@@ -1,5 +1,6 @@
 import logging
 from sqlalchemy import select, update, func, delete
+from sqlalchemy.dialects.postgresql import insert
 from database.core import async_session_factory
 from database.models import User, UserGroup
 
@@ -10,11 +11,13 @@ class UserRepo:
     async def add_user(user_id: int, username: str):
         try:
             async with async_session_factory() as session:
-                user = await session.get(User, user_id)
-                if not user:
-                    user = User(id=user_id, username=username)
-                    session.add(user)
-                    await session.commit()
+                stmt = (
+                    insert(User)
+                    .values(id=user_id, username=username)
+                    .on_conflict_do_nothing(index_elements=[User.id])
+                )
+                await session.execute(stmt)
+                await session.commit()
         except Exception as e:
             logger.error(f"add_user error: {e}")
 
