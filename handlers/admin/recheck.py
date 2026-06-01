@@ -5,6 +5,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
+from config import config
 from keyboards.admin import back_to_admin, recheck_menu_kb
 from handlers.admin.utils import admin_edit_or_answer
 from utils.state import BotState
@@ -42,6 +43,9 @@ def _get_recheck_runtime_status() -> tuple[bool, list[str], list[str]]:
 
 @router.callback_query(F.data == "admin_recheck_menu")
 async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     try:
         stats = await SubRepo.get_recheck_stats()
         total_count = stats["total"]
@@ -87,6 +91,9 @@ async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_recheck_stop_active")
 async def stop_active_recheck(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not callback.bot or not callback.from_user:
         return
     try:
@@ -132,6 +139,9 @@ async def stop_active_recheck(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_recheck_run_"))
 async def run_recheck(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not callback.bot or not callback.data or not callback.from_user or not isinstance(callback.message, Message):
         return
     try:

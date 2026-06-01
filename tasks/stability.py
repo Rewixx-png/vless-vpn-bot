@@ -10,7 +10,7 @@ from celery_app import app
 from tasks.base import (
     OptimizedTask,
     setup_log_rotation,
-    _setup_loop_exception_handler,
+    setup_loop_exception_handler_async,
     logger,
 )
 from database.repo import SubRepo, StatsRepo, SystemRepo
@@ -101,7 +101,7 @@ async def _is_collector_running() -> bool:
 )
 async def check_stability_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     lock_client = None
     lock_token = None

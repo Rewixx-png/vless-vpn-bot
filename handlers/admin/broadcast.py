@@ -119,6 +119,9 @@ async def _show_editor(target: Message | CallbackQuery, state: FSMContext, bot: 
 
 @router.callback_query(F.data == "admin_broadcast")
 async def ask_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     await state.clear()
@@ -171,6 +174,9 @@ async def got_broadcast_message(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "bc_add_button")
 async def ask_add_button(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     await callback.message.edit_text(
@@ -251,6 +257,9 @@ async def got_button_text(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "bc_clear_buttons")
 async def clear_buttons(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     await state.update_data(bc_buttons=[])
@@ -269,6 +278,9 @@ async def clear_buttons(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "bc_back_edit")
 async def back_to_editor(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     data = await state.get_data()
@@ -293,6 +305,9 @@ async def back_to_editor(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "bc_preview")
 async def show_preview(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     if not callback.bot:
@@ -324,6 +339,9 @@ async def show_preview(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.in_({"bc_send_all", "bc_send_active"}))
 async def choose_audience(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     audience = "all" if callback.data == "bc_send_all" else "active"
@@ -355,6 +373,9 @@ async def choose_audience(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("bc_confirm_"))
 async def do_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     if not callback.bot:

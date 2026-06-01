@@ -11,7 +11,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from celery_app import app
 from config import config
 from database.repo import UserRepo
-from tasks.base import OptimizedTask, _setup_loop_exception_handler, setup_log_rotation
+from tasks.base import OptimizedTask, setup_loop_exception_handler_async, setup_log_rotation
 from utils.reporter import Reporter
 
 
@@ -86,7 +86,7 @@ def _is_blocked_bad_request(error: TelegramBadRequest) -> bool:
 )
 async def probe_blocked_users_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
     lock_client = None

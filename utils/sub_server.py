@@ -13,12 +13,14 @@ from config import config
 from utils.parser import LinkParser
 from utils.clash import ClashGenerator
 from utils.singbox import SingBoxGenerator
+from utils.protocols import (
+    ACTIVE_SCHEMES,
+    BOTH_PROTOCOL_FILTER_VALUE,
+    RENAMED_FRAGMENT_SCHEMES,
+    SUPPORTED_SCHEMES,
+)
 
 logger = logging.getLogger("SubServer")
-
-_sub_cache = {"ts": 0.0, "data": None, "params_hash": ""}
-_SUB_CACHE_TTL = 60
-
 
 class SubscriptionServer:
     _external_cache = {"ts": 0.0, "links": []}
@@ -160,7 +162,7 @@ class SubscriptionServer:
         )
 
     @staticmethod
-    def _extract_links(text: str, allowed_schemes: set[str]) -> list[str]:
+    def _extract_links(text: str, allowed_schemes: set[str] | frozenset[str]) -> list[str]:
         links = []
         if not text:
             return links
@@ -208,7 +210,7 @@ class SubscriptionServer:
         return 0
 
     @classmethod
-    async def _get_external_links(cls, allowed_schemes: set[str]) -> list[str]:
+    async def _get_external_links(cls, allowed_schemes: set[str] | frozenset[str]) -> list[str]:
         now = time.time()
         if now - cls._external_cache["ts"] < 300:
             return [
@@ -321,7 +323,7 @@ class SubscriptionServer:
 
                     if not types_param and protocol_filter:
                         if protocol_filter == "both":
-                            types_param = "vless,hy2,hysteria2,tuic"
+                            types_param = BOTH_PROTOCOL_FILTER_VALUE
                         elif protocol_filter == "hy2":
                             types_param = "hy2,hysteria2,tuic"
                         else:
@@ -334,14 +336,16 @@ class SubscriptionServer:
                         auto_clean=auto_clean_param,
                     )
                 else:
-                    effective_limit = 0
-                    subs = await SubRepo.get_smart_keys(
-                        regions=None, limit=effective_limit, auto_clean=auto_clean_param
+                    return web.Response(
+                        status=404,
+                        text="# Not found: user not registered",
+                        content_type="text/plain",
                     )
             else:
-                effective_limit = 0
-                subs = await SubRepo.get_smart_keys(
-                    regions=None, limit=effective_limit, auto_clean=auto_clean_param
+                return web.Response(
+                    status=401,
+                    text="# Unauthorized: subscription ID required",
+                    content_type="text/plain",
                 )
 
             if not subs and user_id_raw:
@@ -394,7 +398,7 @@ class SubscriptionServer:
                             )
 
                 scheme = base_link.split("://", 1)[0].lower() if "://" in base_link else ""
-                if scheme in ("hy2", "hysteria2", "tuic"):
+                if scheme in RENAMED_FRAGMENT_SCHEMES:
                     clean_link = base_link.split("#", 1)[0]
                     renamed_links.append(f"{clean_link}#{urllib.parse.quote(final_name)}")
                 else:
@@ -403,19 +407,10 @@ class SubscriptionServer:
 
             renamed_links = [
                 k for k in renamed_links
-                if k.split("://", 1)[0].lower() in {"vless", "hy2", "hysteria2", "tuic", "trojan"}
+                if k.split("://", 1)[0].lower() in ACTIVE_SCHEMES
             ]
 
-            supported_schemes = {
-                "vless",
-                "vmess",
-                "trojan",
-                "ss",
-                "ssr",
-                "hysteria2",
-                "hy2",
-                "tuic",
-            }
+            supported_schemes = SUPPORTED_SCHEMES
             if types_param:
                 if types_param == "all":
                     allowed_schemes = supported_schemes
@@ -426,10 +421,10 @@ class SubscriptionServer:
                         if t.strip() in supported_schemes
                     }
             else:
-                allowed_schemes = {"vless", "hy2", "hysteria2", "tuic", "trojan"}
+                allowed_schemes = ACTIVE_SCHEMES
 
             if not allowed_schemes:
-                allowed_schemes = {"vless", "hy2", "hysteria2", "tuic", "trojan"}
+                allowed_schemes = ACTIVE_SCHEMES
 
             renamed_links = [
                 k
@@ -514,7 +509,7 @@ class SubscriptionServer:
 
         except Exception as e:
             logger.error(f"❌ CRITICAL ERROR: {e}", exc_info=True)
-            return web.Response(status=500, text=f"Error: {e}")
+            return web.Response(status=500, text="Internal server error")
 
     @staticmethod
     async def handle_redirect(request: web.Request) -> web.Response:
@@ -551,7 +546,7 @@ class SubscriptionServer:
             app,
             defaults={
                 "*": aiohttp_cors.ResourceOptions(
-                    allow_credentials=True, expose_headers="*", allow_headers="*"
+                    allow_credentials=False, expose_headers="*", allow_headers="*"
                 )
             },
         )

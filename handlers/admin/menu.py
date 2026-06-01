@@ -1,6 +1,7 @@
 import shutil
 import asyncio
 import asyncpg
+import urllib.parse
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -26,13 +27,15 @@ def _disk_info() -> tuple[str, str]:
 
 async def _db_ping() -> str:
     try:
+        _url = config.DB_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+        _parsed = urllib.parse.urlparse(_url)
         conn = await asyncio.wait_for(
             asyncpg.connect(
-                host="127.0.0.1",
-                port=5432,
-                user="vlessbot",
-                password="VlessBot2026pass",
-                database="vlessbot",
+                host=_parsed.hostname or "127.0.0.1",
+                port=_parsed.port or 5432,
+                user=urllib.parse.unquote(_parsed.username or ""),
+                password=urllib.parse.unquote(_parsed.password or ""),
+                database=(_parsed.path or "").lstrip("/"),
             ),
             timeout=2.0,
         )
@@ -70,6 +73,9 @@ async def admin_dashboard(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "toggle_collector")
 async def toggle_collector(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not isinstance(callback.message, Message):
         return
     enabled_str = await SystemRepo.get_config("collector_enabled")

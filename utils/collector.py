@@ -11,6 +11,7 @@ from database.repo import SubRepo, SourceRepo
 from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
 from utils.parser import LinkParser
+from utils.protocols import ACTIVE_PROTOCOL_PATTERN, PROTOCOL_PREFIXES
 from config import config
 
 logger = logging.getLogger("Collector")
@@ -225,7 +226,7 @@ class SubscriptionCollector:
         full_text = combined_text + "\n" + decoded_content
         del combined_text, decoded_content
 
-        found_links = re.findall(r'(?:vless|trojan|hy2|hysteria2|tuic)://[^\s\'"<>]+', full_text)
+        found_links = re.findall(rf'{ACTIVE_PROTOCOL_PATTERN}://[^\s\'"<>]+', full_text)
         found_links = list(set(found_links))
         del full_text
 
@@ -870,7 +871,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(line).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or not any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
+                if not dec or not any(p in dec for p in PROTOCOL_PREFIXES):
                     try:
                         dec = base64.urlsafe_b64decode(line).decode(
                             "utf-8", errors="ignore"
@@ -878,7 +879,7 @@ class SubscriptionCollector:
                     except:
                         pass
 
-                if dec and any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
+                if dec and any(p in dec for p in PROTOCOL_PREFIXES):
                     decoded_parts.append(dec)
             except Exception:
                 pass
@@ -895,7 +896,7 @@ class SubscriptionCollector:
                     dec = base64.b64decode(clean_text).decode("utf-8", errors="ignore")
                 except:
                     pass
-                if not dec or not any(p in dec for p in ("vless://", "trojan://", "hy2://", "hysteria2://", "tuic://")):
+                if not dec or not any(p in dec for p in PROTOCOL_PREFIXES):
                     try:
                         dec = base64.urlsafe_b64decode(clean_text).decode(
                             "utf-8", errors="ignore"
@@ -904,7 +905,7 @@ class SubscriptionCollector:
                         pass
 
                 if dec:
-                    decoded_parts.extend(re.findall(r'(?:vless|trojan|hy2|hysteria2|tuic)://[^\s\'"<>]+', dec))
+                    decoded_parts.extend(re.findall(rf'{ACTIVE_PROTOCOL_PATTERN}://[^\s\'"<>]+', dec))
             except Exception:
                 pass
 

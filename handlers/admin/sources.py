@@ -67,6 +67,9 @@ def _get_collector_runtime_status() -> dict[str, Any]:
 
 @router.callback_query(F.data == "admin_sources")
 async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     sources = await SourceRepo.get_all_sources()
     enabled_count = len([s for s in sources if bool(getattr(s, "is_enabled"))])
     fixed_total = len(FIXED_SOURCE_URLS)
@@ -132,6 +135,9 @@ async def show_sources_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "src_add")
 async def ask_source_url(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     await admin_edit_or_answer(
         callback,
         state,
@@ -187,6 +193,9 @@ async def add_source(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("src_toggle_"))
 async def toggle_source(callback: CallbackQuery):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not callback.bot or not callback.from_user or not callback.data or not isinstance(callback.message, Message):
         return
     src_id = int(callback.data.split("src_toggle_")[1])
@@ -203,6 +212,9 @@ async def toggle_source(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("src_del_"))
 async def delete_source(callback: CallbackQuery):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not callback.bot or not callback.from_user or not callback.data or not isinstance(callback.message, Message):
         return
     src_id = int(callback.data.split("src_del_")[1])
@@ -218,6 +230,9 @@ async def delete_source(callback: CallbackQuery):
 
 @router.callback_query(F.data == "src_force_run")
 async def force_run_collector(callback: CallbackQuery):
+    if not callback.from_user or callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     if not callback.bot or not callback.from_user:
         return
     runtime = _get_collector_runtime_status()

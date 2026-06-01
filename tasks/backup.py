@@ -13,11 +13,8 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from celery_app import app
 from config import config
 from database.repo import SystemRepo
-from tasks.base import OptimizedTask, _setup_loop_exception_handler, logger, setup_log_rotation
+from tasks.base import OptimizedTask, setup_loop_exception_handler_async, logger, setup_log_rotation
 from utils.reporter import Reporter
-
-
-BACKUP_ZIP_PASSWORD = "Rewix9188"
 
 
 def _parse_postgres_url(db_url: str) -> dict[str, Any]:
@@ -51,7 +48,7 @@ def _parse_postgres_url(db_url: str) -> dict[str, Any]:
 )
 async def run_backup_snapshot_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     temp_dir = None
     backup_path = None
@@ -110,7 +107,7 @@ async def run_backup_snapshot_task() -> Dict[str, Any]:
             "-j",
             "-q",
             "-P",
-            BACKUP_ZIP_PASSWORD,
+            config.BACKUP_ZIP_PASSWORD,
             zip_path,
             dump_path,
         ]

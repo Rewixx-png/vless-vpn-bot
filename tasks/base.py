@@ -15,22 +15,25 @@ def setup_log_rotation():
 
 logger = logging.getLogger("Worker")
 
-def _setup_loop_exception_handler():
-    try:
-        loop = asyncio.get_running_loop()
-        def custom_exc_handler(loop, context):
-            msg = context.get("message", "")
-            exc = context.get("exception")
-            if exc:
-                exc_type = str(type(exc)).lower()
-                if any(err in exc_type for err in["gaierror", "dnserror", "clientconnectorerror", "timeouterror", "cancellederror", "softtimelimitexceeded"]):
-                    return
-            if "Future exception was never retrieved" in msg or "Task was destroyed but it is pending" in msg:
+async def setup_loop_exception_handler_async() -> None:
+    loop = asyncio.get_running_loop()
+
+    def custom_exc_handler(loop, context):
+        msg = context.get("message", "")
+        exc = context.get("exception")
+        if exc:
+            exc_type = str(type(exc)).lower()
+            if any(err in exc_type for err in ["gaierror", "dnserror", "clientconnectorerror", "timeouterror", "cancellederror", "softtimelimitexceeded"]):
                 return
-            loop.default_exception_handler(context)
-        loop.set_exception_handler(custom_exc_handler)
-    except Exception as e:
-        logger.warning(f"_setup_loop_exception_handler: {e}")
+        if "Future exception was never retrieved" in msg or "Task was destroyed but it is pending" in msg:
+            return
+        loop.default_exception_handler(context)
+
+    loop.set_exception_handler(custom_exc_handler)
+
+
+def _setup_loop_exception_handler() -> None:
+    pass  # no-op; call await setup_loop_exception_handler_async() inside async task bodies
 
 def format_time(seconds: int) -> str:
     if seconds < 60:

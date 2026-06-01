@@ -11,7 +11,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 
 from celery_app import app
 from config import config
-from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler
+from tasks.base import OptimizedTask, setup_log_rotation, setup_loop_exception_handler_async
 from utils.reporter import Reporter
 from utils.tg_proxy import TelegramProxyService
 
@@ -75,7 +75,7 @@ async def _release_tg_proxy_lock(client: redis.Redis | None, token: str | None) 
 )
 async def update_tg_proxy_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     lock_client = None
     lock_token = None

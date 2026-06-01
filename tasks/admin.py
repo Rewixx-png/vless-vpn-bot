@@ -6,7 +6,7 @@ from celery_app import app
 from tasks.base import (
     OptimizedTask,
     setup_log_rotation,
-    _setup_loop_exception_handler,
+    setup_loop_exception_handler_async,
     format_time,
     logger,
 )
@@ -34,7 +34,7 @@ async def run_admin_recheck_task(
     self, mode: str, total_passes: int, chat_id: int, message_id: int
 ) -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
     from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
     from keyboards.admin import recheck_menu_kb
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import aiohttp
 
-OWNER_ID = 7485721661
 _ENV_PATH_FOR_TOKEN = Path(__file__).resolve().parent.parent / ".env"
+
 
 def _read_token() -> str:
     try:
@@ -19,7 +19,24 @@ def _read_token() -> str:
         pass
     return os.getenv("BOT_TOKEN", "")
 
+
+def _read_owner_id() -> int:
+    try:
+        for line in _ENV_PATH_FOR_TOKEN.read_text().splitlines():
+            if line.startswith("ADMIN_IDS="):
+                raw = line.split("=", 1)[1].strip().strip("[]\"' ")
+                return int(raw.split(",")[0].strip().strip("\"' "))
+    except Exception:
+        pass
+    try:
+        raw = os.getenv("ADMIN_IDS", "0").strip("[]\"' ")
+        return int(raw.split(",")[0].strip().strip("\"' "))
+    except Exception:
+        return 0
+
+
 BOT_TOKEN = _read_token()
+OWNER_ID = _read_owner_id()
 CHECK_INTERVAL = 30
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 9998

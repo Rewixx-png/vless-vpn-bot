@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from config import config
 from database.repo import SubRepo
 from utils.checker import VlessChecker
+from utils.protocols import ACTIVE_PROTOCOL_PATTERN
 from keyboards.admin import back_to_admin
 from handlers.admin.states import AdminStates
 from utils.batch_processor import SmartBatchProcessor
@@ -30,7 +31,7 @@ async def start_add_subs(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AdminStates.waiting_for_subs)
 
-@router.message(StateFilter(AdminStates.waiting_for_subs), F.fromuser.id.in_(config.ADMIN_IDS) if hasattr(F, 'fromuser') else F.from_user.id.in_(config.ADMIN_IDS))
+@router.message(StateFilter(AdminStates.waiting_for_subs), F.from_user.id.in_(config.ADMIN_IDS))
 async def process_batch(message: Message, state: FSMContext, bot: Bot):
     text_content = ""
     
@@ -72,7 +73,7 @@ async def process_batch(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    links = re.findall(r'((?:vless|trojan|hy2|hysteria2|tuic)://[^\s\n<>"]+)', text_content)
+    links = re.findall(rf'({ACTIVE_PROTOCOL_PATTERN}://[^\s\n<>"]+)', text_content)
     links = [link.strip() for link in links if link.strip()]
 
     if not links:

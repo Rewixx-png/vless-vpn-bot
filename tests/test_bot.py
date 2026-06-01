@@ -408,12 +408,29 @@ class TestSubServerEndpoints:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
-                    self.sub_base + "/sub?id=0",
+                    self.sub_base + "/sub",
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as r:
-                    assert r.status in (200, 204), f"Sub server unexpected status: {r.status}"
+                    assert r.status == 401, f"Anonymous /sub must be rejected: {r.status}"
+                    body = await r.text()
+                    assert "://" not in body, "Anonymous /sub must not return VPN configs"
         except Exception as e:
             pytest.fail(f"Sub server not reachable: {e}")
+
+    @pytest.mark.asyncio
+    async def test_sub_unknown_user_rejected(self):
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    self.sub_base + "/sub?id=999999999999",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as r:
+                    assert r.status == 404, f"Unknown user /sub must be rejected: {r.status}"
+                    body = await r.text()
+                    assert "://" not in body, "Unknown user /sub must not return VPN configs"
+        except Exception as e:
+            pytest.fail(f"Sub server unknown-user check failed: {e}")
 
     @pytest.mark.asyncio
     async def test_sub_clash_format_headers(self):
@@ -421,13 +438,12 @@ class TestSubServerEndpoints:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
-                    self.sub_base + "/sub?id=0&format=clash",
+                    self.sub_base + "/sub?format=clash",
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as r:
-                    ct = r.headers.get("Content-Type", "")
-                    assert "yaml" in ct.lower() or "text" in ct.lower(), (
-                        f"Clash format should return yaml content-type, got: {ct}"
-                    )
+                    assert r.status == 401
+                    body = await r.text()
+                    assert "Traceback" not in body
         except Exception as e:
             pytest.fail(f"Sub server clash endpoint failed: {e}")
 
@@ -437,15 +453,13 @@ class TestSubServerEndpoints:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
-                    self.sub_base + "/sub?id=0&format=singbox",
+                    self.sub_base + "/sub?format=singbox",
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as r:
-                    assert r.status == 200
-                    ct = r.headers.get("Content-Type", "")
-                    assert "json" in ct.lower(), f"sing-box format should return json, got: {ct}"
                     body = await r.text()
-                    parsed = json.loads(body)
-                    assert "outbounds" in parsed
+                    assert r.status == 401
+                    assert "Traceback" not in body
+                    assert "ValueError" not in body
         except Exception as e:
             pytest.fail(f"Sub server singbox endpoint failed: {e}")
 
@@ -874,6 +888,133 @@ class TestBroadcastHandler:
         src = inspect.getsource(ask_broadcast)
         assert "try:" in src, "ask_broadcast must handle media messages with try/except"
         assert "edit_caption" in src, "ask_broadcast must fallback to edit_caption for media"
+
+
+class TestSecurityRegressionGuards:
+    def test_admin_callback_handlers_have_admin_guards(self):
+        import inspect
+        from handlers.admin import broadcast, menu, recheck, sources
+
+        guarded_handlers = [
+            menu.toggle_collector,
+            sources.show_sources_menu,
+            sources.ask_source_url,
+            sources.toggle_source,
+            sources.delete_source,
+            sources.force_run_collector,
+            broadcast.ask_broadcast,
+            broadcast.ask_add_button,
+            broadcast.clear_buttons,
+            broadcast.back_to_editor,
+            broadcast.show_preview,
+            broadcast.choose_audience,
+            broadcast.do_broadcast,
+            recheck.show_recheck_menu,
+            recheck.stop_active_recheck,
+            recheck.run_recheck,
+        ]
+
+        for handler in guarded_handlers:
+            source = inspect.getsource(handler)
+            assert "ADMIN_IDS" in source, f"{handler.__name__} must check ADMIN_IDS"
+            assert "Доступ запрещён" in source, f"{handler.__name__} must reject non-admins"
+
+    def test_no_known_hardcoded_secrets_in_source(self):
+        from pathlib import Path
+
+        banned = [
+            "VlessBot2026pass",
+            "Rewix9188",
+            "79121668033",
+            "2200300581247390",
+        ]
+        root = Path(__file__).resolve().parents[1]
+        offenders = []
+
+        for path in root.rglob("*.py"):
+            rel = path.relative_to(root)
+            if rel.parts[0] in {".venv", ".venv_py310_backup"}:
+                continue
+            if rel == Path("tests/test_bot.py"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for value in banned:
+                if value in text:
+                    offenders.append(f"{rel}: {value}")
+
+        assert not offenders, f"Hardcoded secrets remain: {offenders}"
+
+    def test_protocol_constants_cover_active_protocols(self):
+        import re
+        from utils.protocols import ACTIVE_PROTOCOL_PATTERN, ACTIVE_SCHEMES, PROTOCOL_PREFIXES
+
+        assert {prefix[:-3] for prefix in PROTOCOL_PREFIXES} == set(ACTIVE_SCHEMES)
+        text = "vless://a trojan://b hy2://c hysteria2://d tuic://e http://ignored"
+        links = re.findall(rf"{ACTIVE_PROTOCOL_PATTERN}://[^\s]+", text)
+        assert len(links) == 5
+
+
+class TestUserRepoRegression:
+    @pytest.mark.asyncio
+    async def test_add_user_is_idempotent_under_concurrency(self):
+        from sqlalchemy import func, select
+        from database.core import async_session_factory
+        from database.models import User
+        from database.repo import UserRepo
+
+        user_id = 987654321012345
+        await UserRepo.delete_user(user_id)
+
+        try:
+            await asyncio.gather(
+                *(UserRepo.add_user(user_id, f"test_user_{idx}") for idx in range(10))
+            )
+
+            async with async_session_factory() as session:
+                count = await session.scalar(select(func.count()).where(User.id == user_id))
+                assert count == 1
+        finally:
+            await UserRepo.delete_user(user_id)
+
+
+class TestBatchUpdateStatusRegression:
+    @pytest.mark.asyncio
+    async def test_batch_update_status_dead_deactivates_at_threshold(self):
+        from sqlalchemy import delete
+        from database.core import async_session_factory
+        from database.models import Subscription
+        from database.repo import SubRepo
+
+        key = "vless://00000000-0000-0000-0000-000000000099@203.0.113.99:443?security=tls#batch-test"
+
+        async with async_session_factory() as session:
+            await session.execute(delete(Subscription).where(Subscription.vless_key == key))
+            sub = Subscription(
+                vless_key=key,
+                region="🧪 Test",
+                latency_ms=50,
+                speed_mbps=50.0,
+                is_active=True,
+                death_count=2,
+            )
+            session.add(sub)
+            await session.commit()
+            sub_id = sub.id
+
+        try:
+            await SubRepo.batch_update_status([{"id": sub_id, "check_status": "dead"}])
+
+            async with async_session_factory() as session:
+                updated = await session.get(Subscription, sub_id)
+                assert updated is not None
+                assert updated.death_count == 3
+                assert updated.is_active is False
+                assert updated.latency_ms == 9999
+                assert updated.speed_mbps == 0.0
+        finally:
+            async with async_session_factory() as session:
+                await session.execute(delete(Subscription).where(Subscription.vless_key == key))
+                await session.commit()
 
 
 class TestTrojanSupport:

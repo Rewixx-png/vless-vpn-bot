@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     ]
 
     # Payment info (shown to users)
-    PAYMENT_PHONE: str = "+79121668033"
-    PAYMENT_CARD_RAIFFEISEN: str = "2200300581247390"
+    PAYMENT_PHONE: str = ""
+    PAYMENT_CARD_RAIFFEISEN: str = ""
+
+    BACKUP_ZIP_PASSWORD: str = "changeme"
 
     # Support contacts
     SUPPORT_USERNAME: str = "@RewiX_X"

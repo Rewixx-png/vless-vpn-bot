@@ -1,7 +1,7 @@
 from typing import Dict, Any
 
 from celery_app import app
-from tasks.base import OptimizedTask, setup_log_rotation, _setup_loop_exception_handler, logger
+from tasks.base import OptimizedTask, setup_log_rotation, setup_loop_exception_handler_async, logger
 from utils.checker.geo_ip import GeoIP
 from database.repo import SubRepo
 
@@ -9,7 +9,7 @@ from database.repo import SubRepo
 @app.task(name="tasks.update_geoip_task", base=OptimizedTask, time_limit=600, soft_time_limit=540)
 async def update_geoip_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     success = await GeoIP.update_database()
 
@@ -24,7 +24,7 @@ async def update_geoip_task() -> Dict[str, Any]:
 @app.task(name="tasks.resolve_unk_regions_task", base=OptimizedTask, time_limit=900, soft_time_limit=840)
 async def resolve_unk_regions_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
     resolved = await _resolve_unk_regions()
     return {"resolved": resolved}
 

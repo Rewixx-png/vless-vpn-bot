@@ -9,7 +9,7 @@ from celery_app import app
 from tasks.base import (
     OptimizedTask,
     setup_log_rotation,
-    _setup_loop_exception_handler,
+    setup_loop_exception_handler_async,
     logger,
 )
 from utils.collector import SubscriptionCollector, FIXED_SOURCE_URLS
@@ -79,15 +79,26 @@ async def _acquire_collector_lock(
             }
 
             if not other_active:
-                await client.delete(COLLECTOR_LOCK_KEY)
-                acquired = await client.set(
-                    COLLECTOR_LOCK_KEY,
-                    token,
-                    ex=COLLECTOR_LOCK_TTL_SEC,
-                    nx=True,
-                )
-                if acquired:
-                    return client, token
+                existing_token = await client.get(COLLECTOR_LOCK_KEY)
+                if existing_token is not None:
+                    deleted = await cast(Any, client).eval(
+                        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                        "return redis.call('del', KEYS[1]) else return 0 end",
+                        1,
+                        COLLECTOR_LOCK_KEY,
+                        existing_token,
+                    )
+                else:
+                    deleted = 0
+                if deleted:
+                    acquired = await client.set(
+                        COLLECTOR_LOCK_KEY,
+                        token,
+                        ex=COLLECTOR_LOCK_TTL_SEC,
+                        nx=True,
+                    )
+                    if acquired:
+                        return client, token
     except Exception as e:
         logger.warning(f"_acquire_collector_lock error: {e}")
 
@@ -144,7 +155,7 @@ async def _is_stability_running() -> bool:
 )
 async def run_collector_task() -> Dict[str, Any]:
     setup_log_rotation()
-    _setup_loop_exception_handler()
+    await setup_loop_exception_handler_async()
 
     lock_client = None
     lock_token = None
