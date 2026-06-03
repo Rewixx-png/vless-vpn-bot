@@ -851,7 +851,7 @@ class SubRepo:
                     await session.execute(
                         pg_insert(BlacklistedItem)
                         .values(insert_rows)
-                        .on_conflict_do_nothing(index_elements=["vless_key"])
+                        .on_conflict_do_nothing()
                     )
 
                 del_result = await session.execute(
@@ -932,7 +932,7 @@ class SubRepo:
                     await session.execute(
                         pg_insert(BlacklistedItem)
                         .values(insert_rows)
-                        .on_conflict_do_nothing(index_elements=["vless_key"])
+                        .on_conflict_do_nothing()
                     )
 
                 del_stmt = delete(Subscription).where(

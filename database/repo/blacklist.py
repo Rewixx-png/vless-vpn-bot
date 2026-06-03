@@ -10,7 +10,7 @@ class BlacklistRepo:
             stmt = pg_insert(BlacklistedItem).values(
                 vless_key=vless_key, 
                 reason=reason
-            ).on_conflict_do_nothing(index_elements=['vless_key'])
+            ).on_conflict_do_nothing()
             
             await session.execute(stmt)
             await session.commit()

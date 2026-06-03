@@ -71,6 +71,50 @@ async def init_db():
 
             logger.info("✅ Migrations completed.")
 
+        async with engine.begin() as conn:
+            logger.info("🔄 Checking vless_key MD5 index migrations...")
+            md5_migrations = [
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'subscriptions_vless_key_key'
+                          AND conrelid = 'subscriptions'::regclass
+                    ) THEN
+                        ALTER TABLE subscriptions DROP CONSTRAINT subscriptions_vless_key_key;
+                    END IF;
+                END $$
+                """,
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_vless_key_md5_key
+                ON subscriptions USING btree (md5(vless_key))
+                """,
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'blacklist_vless_key_key'
+                          AND conrelid = 'blacklist'::regclass
+                    ) THEN
+                        ALTER TABLE blacklist DROP CONSTRAINT blacklist_vless_key_key;
+                    END IF;
+                END $$
+                """,
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS blacklist_vless_key_md5_key
+                ON blacklist USING btree (md5(vless_key))
+                """,
+            ]
+            for sql in md5_migrations:
+                try:
+                    await conn.execute(text(sql))
+                except Exception as e:
+                    if "exists" not in str(e).lower() and "already" not in str(e).lower():
+                        logger.warning(f"⚠️ MD5 index migration warning: {e}")
+            logger.info("✅ MD5 index migrations completed.")
+
         async with engine.connect() as conn:
             logger.info("🔄 Checking concurrent index migrations...")
             concurrent_migrations = [
