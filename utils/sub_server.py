@@ -958,10 +958,14 @@ echo "logs: $DIR/worker.log"
         if not cls._ru_checker_authorized(request):
             return cls._ru_checker_auth_response()
 
-        try:
-            limit = int(request.query.get("limit") or config.RU_CHECKER_BATCH_SIZE)
-        except Exception:
+        user_agent = str(request.headers.get("User-Agent") or "")
+        if user_agent.startswith("ru-termux-worker/"):
             limit = int(config.RU_CHECKER_BATCH_SIZE)
+        else:
+            try:
+                limit = int(request.query.get("limit") or config.RU_CHECKER_BATCH_SIZE)
+            except Exception:
+                limit = int(config.RU_CHECKER_BATCH_SIZE)
 
         items = await SubRepo.get_ru_check_batch(limit=limit)
         return web.json_response(
@@ -971,6 +975,7 @@ echo "logs: $DIR/worker.log"
                 "interval_seconds": int(config.RU_CHECKER_INTERVAL_SECONDS),
                 "connect_timeout": float(config.RU_CHECKER_CONNECT_TIMEOUT),
                 "concurrency": int(config.RU_CHECKER_CONCURRENCY),
+                "vpn_concurrency": int(config.RU_CHECKER_VPN_CONCURRENCY),
             }
         )
 
