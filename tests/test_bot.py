@@ -981,6 +981,9 @@ class TestRuCheckerWorker:
         assert "asyncio.open_connection" in code
         assert "sing-box" in code
         assert "vpn_alive" in code
+        assert 'fingerprint = "chrome"' in code
+        assert "normalize_vless_flow" in code
+        assert 'return "xtls-rprx-vision"' in code
         assert "/ru-check/batch" in code
         assert "/ru-check/report" in code
         for token in forbidden:

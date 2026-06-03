@@ -131,6 +131,7 @@ import asyncio
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -210,6 +211,8 @@ def build_tls(query, security, host):
     server_name = first_query_value(query, "sni", "peer", "host") or host
     tls = {"enabled": True, "server_name": server_name}
     fingerprint = first_query_value(query, "fp", "fingerprint")
+    if security == "reality" and not fingerprint:
+        fingerprint = "chrome"
     if fingerprint:
         tls["utls"] = {"enabled": True, "fingerprint": fingerprint}
     if security == "reality":
@@ -222,6 +225,21 @@ def build_tls(query, security, host):
             reality["short_id"] = short_id
         tls["reality"] = reality
     return tls
+
+
+def normalize_vless_flow(flow):
+    if not flow:
+        return None
+    normalized = str(flow).strip()
+    if normalized.startswith("xtls-rprx-vision"):
+        return "xtls-rprx-vision"
+    return None
+
+
+def clean_error_text(value):
+    text = str(value or "")
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return text.strip()[-300:]
 
 
 def outbound_from_link(url):
@@ -240,7 +258,7 @@ def outbound_from_link(url):
             "server_port": int(port),
             "uuid": urllib.parse.unquote(parsed.username or ""),
         }
-        flow = first_query_value(query, "flow")
+        flow = normalize_vless_flow(first_query_value(query, "flow"))
         if flow:
             outbound["flow"] = flow
     elif scheme == "trojan":
@@ -308,17 +326,20 @@ async def run_sing_box_url_test(url):
         await asyncio.sleep(0.8)
         if proc.returncode is not None:
             stderr = await proc.stderr.read() if proc.stderr else b""
-            return "vpn_error", None, stderr.decode("utf-8", errors="replace")[-300:] or "sing-box exited"
+            return "vpn_error", None, clean_error_text(stderr.decode("utf-8", errors="replace") or "sing-box exited")
         started = time.perf_counter()
         status_code = await asyncio.wait_for(asyncio.to_thread(probe_through_http_proxy, port), timeout=TIMEOUT + 2)
         latency = int((time.perf_counter() - started) * 1000)
         if status_code in {200, 204}:
             return "vpn_alive", latency, None
         return "vpn_error", latency, f"url_test_http_status:{status_code}"
+    except urllib.error.HTTPError as exc:
+        error_text = f"url_test_http_{exc.code}:{exc.reason}"
+        return "vpn_timeout" if exc.code == 502 else "vpn_error", None, error_text
     except (asyncio.TimeoutError, socket.timeout, urllib.error.URLError) as exc:
-        return "vpn_timeout", None, str(exc)[:300]
+        return "vpn_timeout", None, clean_error_text(exc)
     except Exception as exc:
-        return "vpn_error", None, str(exc)[:300]
+        return "vpn_error", None, clean_error_text(exc)
     finally:
         if proc and proc.returncode is None:
             proc.terminate()
