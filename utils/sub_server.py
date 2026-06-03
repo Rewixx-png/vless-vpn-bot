@@ -1,6 +1,8 @@
 import asyncio
 import base64
+import hmac
 import logging
+import shlex
 import time
 import urllib.parse
 from typing import Optional
@@ -86,6 +88,219 @@ class SubscriptionServer:
         "unk": "Неизвестно",
         "unknown": "Неизвестно",
     }
+
+    @staticmethod
+    def _ru_checker_expected_token() -> str:
+        return str(config.RU_CHECKER_TOKEN or "").strip()
+
+    @classmethod
+    def _ru_checker_authorized(cls, request: web.Request) -> bool:
+        expected = cls._ru_checker_expected_token()
+        if not expected:
+            return False
+
+        supplied = str(request.query.get("token") or "").strip()
+        auth_header = str(request.headers.get("Authorization") or "").strip()
+        if auth_header.lower().startswith("bearer "):
+            supplied = auth_header[7:].strip()
+        return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+    @classmethod
+    def _ru_checker_base_url(cls, request: web.Request) -> str:
+        scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
+        host = request.headers.get("X-Forwarded-Host") or request.host
+        return f"{scheme}://{host}".rstrip("/")
+
+    @classmethod
+    def _ru_checker_disabled_response(cls) -> web.Response:
+        return web.json_response(
+            {"ok": False, "error": "RU_CHECKER_TOKEN is not configured"},
+            status=503,
+        )
+
+    @classmethod
+    def _ru_checker_auth_response(cls) -> web.Response:
+        if not cls._ru_checker_expected_token():
+            return cls._ru_checker_disabled_response()
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+
+    @staticmethod
+    def _termux_worker_code() -> str:
+        return r'''#!/usr/bin/env python3
+import asyncio
+import json
+import os
+import platform
+import socket
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+SERVER = os.environ.get("RU_CHECKER_SERVER", "").rstrip("/")
+TOKEN = os.environ.get("RU_CHECKER_TOKEN", "")
+BATCH_SIZE = int(os.environ.get("RU_CHECKER_BATCH_SIZE", "30") or "30")
+TIMEOUT = float(os.environ.get("RU_CHECKER_CONNECT_TIMEOUT", "6.0") or "6.0")
+CONCURRENCY = max(1, int(os.environ.get("RU_CHECKER_CONCURRENCY", "10") or "10"))
+WORKER_ID = os.environ.get("RU_CHECKER_WORKER_ID") or f"termux-{platform.node() or 'android'}"
+
+
+def request_json(path, payload=None, method="GET"):
+    if not SERVER or not TOKEN:
+        raise RuntimeError("RU_CHECKER_SERVER or RU_CHECKER_TOKEN is empty")
+    url = f"{SERVER}{path}"
+    data = None
+    headers = {"Authorization": f"Bearer {TOKEN}", "User-Agent": f"ru-termux-worker/{WORKER_ID}"}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    return json.loads(body or "{}")
+
+
+def log_to_server(message, level="info"):
+    try:
+        request_json("/ru-check/worker-log", {"worker_id": WORKER_ID, "level": level, "message": str(message)[-4000:]}, method="POST")
+    except Exception:
+        pass
+
+
+def parse_endpoint(url):
+    parsed = urllib.parse.urlsplit(url.strip())
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"vless", "trojan"}:
+        return scheme, None, None
+    return scheme, parsed.hostname, parsed.port
+
+
+async def check_item(item, semaphore):
+    sub_id = int(item.get("id") or 0)
+    url = str(item.get("url") or "")
+    scheme, host, port = parse_endpoint(url)
+    if not host or not port:
+        return {"id": sub_id, "status": "unsupported", "latency_ms": None, "error": f"unsupported_or_invalid:{scheme}"}
+    async with semaphore:
+        started = time.perf_counter()
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=TIMEOUT)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            latency = int((time.perf_counter() - started) * 1000)
+            return {"id": sub_id, "status": "tcp_alive", "latency_ms": latency, "error": None}
+        except (asyncio.TimeoutError, socket.timeout):
+            return {"id": sub_id, "status": "timeout", "latency_ms": None, "error": f"connect_timeout:{TIMEOUT}s"}
+        except Exception as exc:
+            return {"id": sub_id, "status": "error", "latency_ms": None, "error": str(exc)[:300]}
+
+
+async def run_once():
+    batch = request_json(f"/ru-check/batch?limit={BATCH_SIZE}")
+    items = list(batch.get("items") or [])
+    if not items:
+        log_to_server("batch empty")
+        return 0
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+    results = await asyncio.gather(*(check_item(item, semaphore) for item in items))
+    report = {"worker_id": WORKER_ID, "results": results}
+    response = request_json("/ru-check/report", report, method="POST")
+    log_to_server(f"checked={len(results)} updated={response.get('updated')}")
+    return len(results)
+
+
+def main():
+    try:
+        count = asyncio.run(run_once())
+        print(json.dumps({"ok": True, "checked": count}, ensure_ascii=False))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        log_to_server(f"http_error={exc.code} body={body}", "error")
+        raise
+    except Exception as exc:
+        log_to_server(f"worker_error={exc}", "error")
+        raise
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    @classmethod
+    def _termux_install_script(cls, request: web.Request) -> str:
+        base_url = cls._ru_checker_base_url(request)
+        token = cls._ru_checker_expected_token()
+        token_url = urllib.parse.quote(token, safe="")
+        return f'''#!/usr/bin/env bash
+set -u
+
+SERVER={shlex.quote(base_url)}
+TOKEN={shlex.quote(token)}
+TOKEN_URL={shlex.quote(token_url)}
+DIR="$HOME/ru-checker"
+LOG="$DIR/install.log"
+mkdir -p "$DIR"
+exec > >(tee -a "$LOG") 2>&1
+
+send_log() {{
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS -X POST "$SERVER/ru-check/worker-log?token=$TOKEN_URL" --data-binary "@$LOG" >/dev/null 2>&1 || true
+  fi
+}}
+
+trap 'send_log' EXIT
+
+echo "ru-checker install started $(date)"
+if ! command -v pkg >/dev/null 2>&1; then
+  echo "Termux pkg command not found"
+  exit 2
+fi
+
+pkg update -y
+pkg install -y python curl
+
+cat > "$DIR/env" <<EOF
+export RU_CHECKER_SERVER=$SERVER
+export RU_CHECKER_TOKEN=$TOKEN
+export RU_CHECKER_BATCH_SIZE={int(config.RU_CHECKER_BATCH_SIZE)}
+export RU_CHECKER_CONNECT_TIMEOUT={float(config.RU_CHECKER_CONNECT_TIMEOUT)}
+export RU_CHECKER_CONCURRENCY={int(config.RU_CHECKER_CONCURRENCY)}
+export RU_CHECKER_INTERVAL_SECONDS={int(config.RU_CHECKER_INTERVAL_SECONDS)}
+EOF
+
+curl -fsSL "$SERVER/ru-check/worker.py?token=$TOKEN_URL" -o "$DIR/worker.py"
+chmod +x "$DIR/worker.py"
+
+cat > "$DIR/run.sh" <<'EOF'
+#!/usr/bin/env bash
+set -u
+DIR="$HOME/ru-checker"
+set -a
+. "$DIR/env"
+set +a
+while true; do
+  python "$DIR/worker.py" >> "$DIR/worker.log" 2>&1 || true
+  sleep "${{RU_CHECKER_INTERVAL_SECONDS:-120}}"
+done
+EOF
+
+chmod +x "$DIR/run.sh"
+if [ -f "$DIR/worker.pid" ]; then
+  OLD_PID=$(cat "$DIR/worker.pid" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ]; then
+    kill "$OLD_PID" >/dev/null 2>&1 || true
+  fi
+fi
+nohup "$DIR/run.sh" >> "$DIR/worker.log" 2>&1 &
+echo $! > "$DIR/worker.pid"
+STARTED_PID=$(cat "$DIR/worker.pid")
+echo "ru-checker started pid=$STARTED_PID"
+echo "logs: $DIR/worker.log"
+'''
 
     @classmethod
     def _format_region_ru(cls, region_name: str) -> str:
@@ -537,6 +752,97 @@ class SubscriptionServer:
             text="Redirecting...",
         )
 
+    @classmethod
+    async def handle_ru_check_batch(cls, request: web.Request) -> web.Response:
+        if not cls._ru_checker_authorized(request):
+            return cls._ru_checker_auth_response()
+
+        try:
+            limit = int(request.query.get("limit") or config.RU_CHECKER_BATCH_SIZE)
+        except Exception:
+            limit = int(config.RU_CHECKER_BATCH_SIZE)
+
+        items = await SubRepo.get_ru_check_batch(limit=limit)
+        return web.json_response(
+            {
+                "ok": True,
+                "items": items,
+                "interval_seconds": int(config.RU_CHECKER_INTERVAL_SECONDS),
+                "connect_timeout": float(config.RU_CHECKER_CONNECT_TIMEOUT),
+                "concurrency": int(config.RU_CHECKER_CONCURRENCY),
+            }
+        )
+
+    @classmethod
+    async def handle_ru_check_report(cls, request: web.Request) -> web.Response:
+        if not cls._ru_checker_authorized(request):
+            return cls._ru_checker_auth_response()
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+        if isinstance(payload, dict):
+            results = payload.get("results") or []
+            worker_id = str(payload.get("worker_id") or "unknown")[:120]
+        else:
+            results = []
+            worker_id = "unknown"
+
+        if not isinstance(results, list):
+            return web.json_response({"ok": False, "error": "results must be list"}, status=400)
+
+        updated = await SubRepo.apply_ru_check_results(results[:200])
+        logger.info("RU checker report worker=%s results=%s updated=%s", worker_id, len(results), updated)
+        return web.json_response({"ok": True, "updated": updated})
+
+    @classmethod
+    async def handle_ru_check_worker_log(cls, request: web.Request) -> web.Response:
+        if not cls._ru_checker_authorized(request):
+            return cls._ru_checker_auth_response()
+
+        worker_id = "unknown"
+        level = "info"
+        message = ""
+        try:
+            if request.content_type == "application/json":
+                payload = await request.json()
+                if isinstance(payload, dict):
+                    worker_id = str(payload.get("worker_id") or "unknown")[:120]
+                    level = str(payload.get("level") or "info")[:30]
+                    message = str(payload.get("message") or "")[-4000:]
+            else:
+                message = (await request.text())[-4000:]
+        except Exception as e:
+            message = f"failed to read worker log: {e}"
+            level = "error"
+
+        log_message = "RU checker worker=%s level=%s msg=%s"
+        if level.lower() in {"error", "critical"}:
+            logger.error(log_message, worker_id, level, message)
+        else:
+            logger.info(log_message, worker_id, level, message)
+        return web.json_response({"ok": True})
+
+    @classmethod
+    async def handle_ru_check_worker_py(cls, request: web.Request) -> web.Response:
+        if not cls._ru_checker_authorized(request):
+            return cls._ru_checker_auth_response()
+        return web.Response(
+            text=cls._termux_worker_code(),
+            headers={"Content-Type": "text/x-python; charset=utf-8"},
+        )
+
+    @classmethod
+    async def handle_ru_check_install(cls, request: web.Request) -> web.Response:
+        if not cls._ru_checker_authorized(request):
+            return cls._ru_checker_auth_response()
+        return web.Response(
+            text=cls._termux_install_script(request),
+            headers={"Content-Type": "text/x-shellscript; charset=utf-8"},
+        )
+
     _runner: web.AppRunner | None = None
 
     @classmethod
@@ -553,6 +859,11 @@ class SubscriptionServer:
         cors.add(app.router.add_get("/sub", SubscriptionServer.handle_subscription))
         cors.add(app.router.add_get("/sub64", SubscriptionServer.handle_subscription))
         app.router.add_get("/redirect", SubscriptionServer.handle_redirect)
+        app.router.add_get("/ru-check/batch", SubscriptionServer.handle_ru_check_batch)
+        app.router.add_post("/ru-check/report", SubscriptionServer.handle_ru_check_report)
+        app.router.add_post("/ru-check/worker-log", SubscriptionServer.handle_ru_check_worker_log)
+        app.router.add_get("/ru-check/worker.py", SubscriptionServer.handle_ru_check_worker_py)
+        app.router.add_get("/ru-check/install.sh", SubscriptionServer.handle_ru_check_install)
         app.router.add_get("/", lambda r: web.Response(text="VLESS Bot Online"))
 
         runner = web.AppRunner(app)

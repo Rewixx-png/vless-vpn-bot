@@ -53,6 +53,13 @@ class Subscription(Base):
     is_active = Column(Boolean, default=True, index=True)
     death_count = Column(Integer, default=0, index=True)
     stability_streak = Column(Integer, default=0)
+
+    ru_status = Column(String, nullable=True, default="unknown", index=True)
+    ru_latency_ms = Column(Integer, nullable=True)
+    ru_checked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    ru_error = Column(Text, nullable=True)
+    ru_success_count = Column(Integer, default=0)
+    ru_fail_count = Column(Integer, default=0)
     
     last_checked_at = Column(
         DateTime(timezone=True), server_default=func.now(), index=True

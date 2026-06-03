@@ -54,6 +54,12 @@ async def init_db():
                 "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS protocol_filter VARCHAR DEFAULT NULL",
                 "ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS protocol_filter VARCHAR DEFAULT NULL",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_status VARCHAR DEFAULT 'unknown'",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_latency_ms INTEGER DEFAULT NULL",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_checked_at TIMESTAMP WITH TIME ZONE DEFAULT NULL",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_error TEXT DEFAULT NULL",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_success_count INTEGER DEFAULT 0",
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS ru_fail_count INTEGER DEFAULT 0",
             ]
 
             for sql in migrations:
@@ -72,6 +78,8 @@ async def init_db():
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_speed_mbps ON subscriptions (speed_mbps)",
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_last_checked ON subscriptions (last_checked_at)",
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_death_count ON subscriptions (death_count)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_ru_status ON subscriptions (ru_status)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_subs_ru_checked_at ON subscriptions (ru_checked_at)",
             ]
             for sql in concurrent_migrations:
                 try:

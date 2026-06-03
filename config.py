@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     RU_PAID_PROXIES: str | None = None
     CHECKER_USE_RU_PROXY_CHAIN: bool = False
 
+    RU_CHECKER_TOKEN: str | None = None
+    RU_CHECKER_BATCH_SIZE: int = 30
+    RU_CHECKER_INTERVAL_SECONDS: int = 120
+    RU_CHECKER_CONNECT_TIMEOUT: float = 6.0
+    RU_CHECKER_CONCURRENCY: int = 10
+
     STRICT_RKN_FILTER: bool = False
     BLOCKED_SNIS: List[str] =[
         "discord.com", "discord.gg", "rutracker.org", 

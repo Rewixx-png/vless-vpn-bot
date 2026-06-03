@@ -335,7 +335,11 @@ class SubRepo:
                 quic_priority = text(
                     "CASE WHEN vless_key LIKE 'hy2://%' OR vless_key LIKE 'hysteria2://%' OR vless_key LIKE 'tuic://%' THEN 0 ELSE 1 END"
                 )
-                stmt = stmt.order_by(quic_priority, Subscription.speed_mbps.desc())
+                ru_priority = text(
+                    "CASE WHEN ru_status IN ('alive', 'tcp_alive') THEN 0 "
+                    "WHEN ru_status IS NULL OR ru_status = 'unknown' THEN 1 ELSE 2 END"
+                )
+                stmt = stmt.order_by(ru_priority, quic_priority, Subscription.speed_mbps.desc())
 
                 if limit > 0:
                     stmt = stmt.limit(limit)
@@ -345,6 +349,104 @@ class SubRepo:
         except Exception as e:
             logger.error(f"get_smart_keys error: {e}")
             return []
+
+    @staticmethod
+    async def get_ru_check_batch(limit: int = 30) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 30), 200))
+        try:
+            async with async_session_factory() as session:
+                stale_threshold = datetime.now(timezone.utc) - timedelta(hours=12)
+                stmt = (
+                    select(Subscription)
+                    .where(
+                        Subscription.is_active == True,
+                        Subscription.speed_mbps >= _MIN_ACTIVE_SPEED_MBPS,
+                        or_(
+                            Subscription.vless_key.like("vless://%"),
+                            Subscription.vless_key.like("trojan://%"),
+                        ),
+                        or_(
+                            Subscription.ru_checked_at.is_(None),
+                            Subscription.ru_checked_at < stale_threshold,
+                            Subscription.ru_status.is_(None),
+                            Subscription.ru_status == "unknown",
+                        ),
+                    )
+                    .order_by(
+                        text("ru_checked_at ASC NULLS FIRST"),
+                        Subscription.speed_mbps.desc(),
+                    )
+                    .limit(safe_limit)
+                )
+                result = await session.execute(stmt)
+                items = []
+                for sub in result.scalars().all():
+                    url = str(sub.vless_key or "").strip()
+                    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+                    items.append({"id": int(sub.id), "url": url, "protocol": scheme})
+                return items
+        except Exception as e:
+            logger.error(f"get_ru_check_batch error: {e}")
+            return []
+
+    @staticmethod
+    async def apply_ru_check_results(results: list[dict[str, Any]]) -> int:
+        allowed_statuses = {"alive", "tcp_alive", "timeout", "error", "unsupported"}
+        normalized = []
+        for raw in results or []:
+            try:
+                sub_id = int(raw.get("id"))
+            except Exception:
+                continue
+
+            status = str(raw.get("status") or "error").strip().lower()
+            if status not in allowed_statuses:
+                status = "error"
+
+            latency_raw = raw.get("latency_ms")
+            try:
+                latency_ms = int(latency_raw) if latency_raw is not None else None
+            except Exception:
+                latency_ms = None
+
+            error_text = str(raw.get("error") or "").strip()[:500] or None
+            normalized.append(
+                {
+                    "id": sub_id,
+                    "status": status,
+                    "latency_ms": latency_ms,
+                    "error": error_text,
+                }
+            )
+
+        if not normalized:
+            return 0
+
+        updated = 0
+        try:
+            async with async_session_factory() as session:
+                for item in normalized:
+                    is_alive = item["status"] in {"alive", "tcp_alive"}
+                    stmt = (
+                        update(Subscription)
+                        .where(Subscription.id == item["id"])
+                        .values(
+                            ru_status=item["status"],
+                            ru_latency_ms=item["latency_ms"],
+                            ru_checked_at=datetime.now(timezone.utc),
+                            ru_error=item["error"],
+                            ru_success_count=Subscription.ru_success_count + (1 if is_alive else 0),
+                            ru_fail_count=Subscription.ru_fail_count + (0 if is_alive else 1),
+                        )
+                    )
+                    result = await session.execute(stmt)
+                    updated += int(result.rowcount or 0)
+                await session.commit()
+                _invalidate_cache("subscription")
+                return updated
+        except Exception as e:
+            logger.error(f"apply_ru_check_results error: {e}")
+            return 0
 
     @staticmethod
     async def get_regions(protocol: str = None):

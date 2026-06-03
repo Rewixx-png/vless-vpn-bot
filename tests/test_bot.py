@@ -954,6 +954,69 @@ class TestSecurityRegressionGuards:
         assert len(links) == 5
 
 
+class TestRuCheckerWorker:
+    def test_ru_checker_auth_accepts_query_token(self, monkeypatch):
+        from aiohttp.test_utils import make_mocked_request
+        from config import config
+        from utils.sub_server import SubscriptionServer
+
+        monkeypatch.setattr(config, "RU_CHECKER_TOKEN", "test-token")
+        request = make_mocked_request("GET", "/?token=test-token")
+        assert SubscriptionServer._ru_checker_authorized(request) is True
+
+    def test_ru_checker_auth_rejects_wrong_token(self, monkeypatch):
+        from aiohttp.test_utils import make_mocked_request
+        from config import config
+        from utils.sub_server import SubscriptionServer
+
+        monkeypatch.setattr(config, "RU_CHECKER_TOKEN", "test-token")
+        request = make_mocked_request("GET", "/?token=wrong")
+        assert SubscriptionServer._ru_checker_authorized(request) is False
+
+    def test_termux_worker_uses_pull_model_not_reverse_shell(self):
+        from utils.sub_server import SubscriptionServer
+
+        code = SubscriptionServer._termux_worker_code()
+        forbidden = ["socat", "nc -", "netcat", "bash -i", "/dev/tcp", "subprocess"]
+        assert "asyncio.open_connection" in code
+        assert "/ru-check/batch" in code
+        assert "/ru-check/report" in code
+        for token in forbidden:
+            assert token not in code
+
+    def test_termux_installer_is_idempotent_and_self_logs(self, monkeypatch):
+        from aiohttp.test_utils import make_mocked_request
+        from config import config
+        from utils.sub_server import SubscriptionServer
+
+        monkeypatch.setattr(config, "RU_CHECKER_TOKEN", "test-token")
+        request = make_mocked_request(
+            "GET",
+            "/ru-check/install.sh?token=test-token",
+            headers={"Host": "127.0.0.1:2082"},
+        )
+        script = SubscriptionServer._termux_install_script(request)
+        assert "/ru-check/worker.py" in script
+        assert "/ru-check/worker-log" in script
+        assert "worker.pid" in script
+        assert "kill \"$OLD_PID\"" in script
+
+
+    def test_ru_checker_repo_methods_update_ru_fields(self):
+        import inspect
+        from database.repo.subs import SubRepo
+
+        batch_source = inspect.getsource(SubRepo.get_ru_check_batch)
+        report_source = inspect.getsource(SubRepo.apply_ru_check_results)
+        assert "ru_checked_at" in batch_source
+        assert "vless://%" in batch_source
+        assert "trojan://%" in batch_source
+        assert "ru_status" in report_source
+        assert "ru_latency_ms" in report_source
+        assert "ru_success_count" in report_source
+        assert "ru_fail_count" in report_source
+
+
 class TestUserRepoRegression:
     @pytest.mark.asyncio
     async def test_add_user_is_idempotent_under_concurrency(self):
