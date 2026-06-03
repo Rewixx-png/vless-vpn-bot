@@ -260,8 +260,19 @@ if ! command -v pkg >/dev/null 2>&1; then
   exit 2
 fi
 
-pkg update -y
-pkg install -y python curl
+if ! command -v python >/dev/null 2>&1; then
+  echo "installing python"
+  pkg install -y python
+else
+  echo "python already installed: $(python --version 2>&1)"
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "installing curl"
+  pkg install -y curl
+else
+  echo "curl already installed: $(curl --version | head -n 1)"
+fi
 
 cat > "$DIR/env" <<EOF
 export RU_CHECKER_SERVER=$SERVER
