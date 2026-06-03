@@ -355,7 +355,6 @@ class SubRepo:
         safe_limit = max(1, min(int(limit or 30), 200))
         try:
             async with async_session_factory() as session:
-                stale_threshold = datetime.now(timezone.utc) - timedelta(hours=12)
                 stmt = (
                     select(Subscription)
                     .where(
@@ -364,12 +363,6 @@ class SubRepo:
                         or_(
                             Subscription.vless_key.like("vless://%"),
                             Subscription.vless_key.like("trojan://%"),
-                        ),
-                        or_(
-                            Subscription.ru_checked_at.is_(None),
-                            Subscription.ru_checked_at < stale_threshold,
-                            Subscription.ru_status.is_(None),
-                            Subscription.ru_status == "unknown",
                         ),
                     )
                     .order_by(
