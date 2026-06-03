@@ -336,8 +336,9 @@ class SubRepo:
                     "CASE WHEN vless_key LIKE 'hy2://%' OR vless_key LIKE 'hysteria2://%' OR vless_key LIKE 'tuic://%' THEN 0 ELSE 1 END"
                 )
                 ru_priority = text(
-                    "CASE WHEN ru_status IN ('alive', 'tcp_alive') THEN 0 "
-                    "WHEN ru_status IS NULL OR ru_status = 'unknown' THEN 1 ELSE 2 END"
+                    "CASE WHEN ru_status = 'vpn_alive' THEN 0 "
+                    "WHEN ru_status IN ('alive', 'tcp_alive') THEN 1 "
+                    "WHEN ru_status IS NULL OR ru_status = 'unknown' THEN 2 ELSE 3 END"
                 )
                 stmt = stmt.order_by(ru_priority, quic_priority, Subscription.speed_mbps.desc())
 
@@ -384,7 +385,16 @@ class SubRepo:
 
     @staticmethod
     async def apply_ru_check_results(results: list[dict[str, Any]]) -> int:
-        allowed_statuses = {"alive", "tcp_alive", "timeout", "error", "unsupported"}
+        allowed_statuses = {
+            "alive",
+            "tcp_alive",
+            "vpn_alive",
+            "timeout",
+            "vpn_timeout",
+            "error",
+            "vpn_error",
+            "unsupported",
+        }
         normalized = []
         for raw in results or []:
             try:
@@ -419,7 +429,7 @@ class SubRepo:
         try:
             async with async_session_factory() as session:
                 for item in normalized:
-                    is_alive = item["status"] in {"alive", "tcp_alive"}
+                    is_alive = item["status"] in {"alive", "tcp_alive", "vpn_alive"}
                     stmt = (
                         update(Subscription)
                         .where(Subscription.id == item["id"])

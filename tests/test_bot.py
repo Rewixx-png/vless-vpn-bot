@@ -977,8 +977,10 @@ class TestRuCheckerWorker:
         from utils.sub_server import SubscriptionServer
 
         code = SubscriptionServer._termux_worker_code()
-        forbidden = ["socat", "nc -", "netcat", "bash -i", "/dev/tcp", "subprocess"]
+        forbidden = ["socat", "nc -", "netcat", "bash -i", "/dev/tcp"]
         assert "asyncio.open_connection" in code
+        assert "sing-box" in code
+        assert "vpn_alive" in code
         assert "/ru-check/batch" in code
         assert "/ru-check/report" in code
         for token in forbidden:
@@ -998,6 +1000,7 @@ class TestRuCheckerWorker:
         script = SubscriptionServer._termux_install_script(request)
         assert "/ru-check/worker.py" in script
         assert "/ru-check/worker-log" in script
+        assert "pkg install -y sing-box" in script
         assert "worker.pid" in script
         assert "kill \"$OLD_PID\"" in script
 
@@ -1012,6 +1015,7 @@ class TestRuCheckerWorker:
         assert "vless://%" in batch_source
         assert "trojan://%" in batch_source
         assert "ru_status" in report_source
+        assert "vpn_alive" in report_source
         assert "ru_latency_ms" in report_source
         assert "ru_success_count" in report_source
         assert "ru_fail_count" in report_source

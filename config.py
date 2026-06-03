@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     RU_CHECKER_INTERVAL_SECONDS: int = 120
     RU_CHECKER_CONNECT_TIMEOUT: float = 6.0
     RU_CHECKER_CONCURRENCY: int = 10
+    RU_CHECKER_VPN_CONCURRENCY: int = 2
+    RU_CHECKER_URL_TEST: str = "http://cp.cloudflare.com/generate_204"
 
     STRICT_RKN_FILTER: bool = False
     BLOCKED_SNIS: List[str] =[

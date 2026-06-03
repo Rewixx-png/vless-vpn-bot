@@ -131,7 +131,11 @@ import asyncio
 import json
 import os
 import platform
+import shutil
 import socket
+import subprocess
+import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -143,6 +147,8 @@ TOKEN = os.environ.get("RU_CHECKER_TOKEN", "")
 BATCH_SIZE = int(os.environ.get("RU_CHECKER_BATCH_SIZE", "30") or "30")
 TIMEOUT = float(os.environ.get("RU_CHECKER_CONNECT_TIMEOUT", "6.0") or "6.0")
 CONCURRENCY = max(1, int(os.environ.get("RU_CHECKER_CONCURRENCY", "10") or "10"))
+VPN_CONCURRENCY = max(1, min(3, int(os.environ.get("RU_CHECKER_VPN_CONCURRENCY", "2") or "2")))
+URL_TEST = os.environ.get("RU_CHECKER_URL_TEST", "http://cp.cloudflare.com/generate_204")
 WORKER_ID = os.environ.get("RU_CHECKER_WORKER_ID") or f"termux-{platform.node() or 'android'}"
 
 
@@ -164,8 +170,8 @@ def request_json(path, payload=None, method="GET"):
 def log_to_server(message, level="info"):
     try:
         request_json("/ru-check/worker-log", {"worker_id": WORKER_ID, "level": level, "message": str(message)[-4000:]}, method="POST")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"log_to_server_failed={exc}", file=sys.stderr)
 
 
 def parse_endpoint(url):
@@ -174,6 +180,157 @@ def parse_endpoint(url):
     if scheme not in {"vless", "trojan"}:
         return scheme, None, None
     return scheme, parsed.hostname, parsed.port
+
+
+def first_query_value(query, *names):
+    for name in names:
+        values = query.get(name)
+        if values:
+            return values[0]
+    return None
+
+
+def build_transport(query):
+    transport_type = (first_query_value(query, "type") or "tcp").lower()
+    if transport_type == "ws":
+        transport = {"type": "ws", "path": first_query_value(query, "path") or "/"}
+        host = first_query_value(query, "host")
+        if host:
+            transport["headers"] = {"Host": host}
+        return transport
+    if transport_type == "grpc":
+        service_name = first_query_value(query, "serviceName", "servicename", "service_name") or ""
+        return {"type": "grpc", "service_name": service_name}
+    return None
+
+
+def build_tls(query, security, host):
+    if security not in {"tls", "reality"}:
+        return None
+    server_name = first_query_value(query, "sni", "peer", "host") or host
+    tls = {"enabled": True, "server_name": server_name}
+    fingerprint = first_query_value(query, "fp", "fingerprint")
+    if fingerprint:
+        tls["utls"] = {"enabled": True, "fingerprint": fingerprint}
+    if security == "reality":
+        public_key = first_query_value(query, "pbk", "publicKey", "public_key")
+        short_id = first_query_value(query, "sid", "shortId", "short_id")
+        reality = {"enabled": True}
+        if public_key:
+            reality["public_key"] = public_key
+        if short_id:
+            reality["short_id"] = short_id
+        tls["reality"] = reality
+    return tls
+
+
+def outbound_from_link(url):
+    parsed = urllib.parse.urlsplit(url.strip())
+    scheme = (parsed.scheme or "").lower()
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    host = parsed.hostname
+    port = parsed.port
+    if not host or not port:
+        raise ValueError("missing host or port")
+    if scheme == "vless":
+        outbound = {
+            "type": "vless",
+            "tag": "proxy",
+            "server": host,
+            "server_port": int(port),
+            "uuid": urllib.parse.unquote(parsed.username or ""),
+        }
+        flow = first_query_value(query, "flow")
+        if flow:
+            outbound["flow"] = flow
+    elif scheme == "trojan":
+        outbound = {
+            "type": "trojan",
+            "tag": "proxy",
+            "server": host,
+            "server_port": int(port),
+            "password": urllib.parse.unquote(parsed.username or ""),
+        }
+    else:
+        raise ValueError(f"unsupported scheme:{scheme}")
+    security = (first_query_value(query, "security") or ("tls" if scheme == "trojan" else "none")).lower()
+    tls = build_tls(query, security, host)
+    if tls:
+        outbound["tls"] = tls
+    transport = build_transport(query)
+    if transport:
+        outbound["transport"] = transport
+    return outbound
+
+
+def find_free_port():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = int(sock.getsockname()[1])
+    sock.close()
+    return port
+
+
+def probe_through_http_proxy(port):
+    proxy_url = f"http://127.0.0.1:{port}"
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+    )
+    req = urllib.request.Request(URL_TEST, headers={"User-Agent": "ru-termux-worker"})
+    with opener.open(req, timeout=TIMEOUT) as resp:
+        resp.read(64)
+        return int(resp.status)
+
+
+async def run_sing_box_url_test(url):
+    if not shutil.which("sing-box"):
+        return "tcp_alive", None, "sing-box_not_installed"
+    port = find_free_port()
+    config_data = {
+        "log": {"level": "error"},
+        "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": port}],
+        "outbounds": [outbound_from_link(url), {"type": "direct", "tag": "direct"}],
+        "route": {"final": "proxy"},
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        json.dump(config_data, tmp, ensure_ascii=False)
+        config_path = tmp.name
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sing-box",
+            "run",
+            "-c",
+            config_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.sleep(0.8)
+        if proc.returncode is not None:
+            stderr = await proc.stderr.read() if proc.stderr else b""
+            return "vpn_error", None, stderr.decode("utf-8", errors="replace")[-300:] or "sing-box exited"
+        started = time.perf_counter()
+        status_code = await asyncio.wait_for(asyncio.to_thread(probe_through_http_proxy, port), timeout=TIMEOUT + 2)
+        latency = int((time.perf_counter() - started) * 1000)
+        if status_code in {200, 204}:
+            return "vpn_alive", latency, None
+        return "vpn_error", latency, f"url_test_http_status:{status_code}"
+    except (asyncio.TimeoutError, socket.timeout, urllib.error.URLError) as exc:
+        return "vpn_timeout", None, str(exc)[:300]
+    except Exception as exc:
+        return "vpn_error", None, str(exc)[:300]
+    finally:
+        if proc and proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2)
+            except Exception as exc:
+                print(f"sing-box_terminate_failed={exc}", file=sys.stderr)
+                proc.kill()
+        try:
+            os.unlink(config_path)
+        except Exception as exc:
+            print(f"temp_config_cleanup_failed={exc}", file=sys.stderr)
 
 
 async def check_item(item, semaphore):
@@ -189,10 +346,13 @@ async def check_item(item, semaphore):
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:
-                pass
-            latency = int((time.perf_counter() - started) * 1000)
-            return {"id": sub_id, "status": "tcp_alive", "latency_ms": latency, "error": None}
+            except Exception as exc:
+                print(f"tcp_close_failed={exc}", file=sys.stderr)
+            tcp_latency = int((time.perf_counter() - started) * 1000)
+            vpn_status, vpn_latency, vpn_error = await run_sing_box_url_test(url)
+            if vpn_status == "tcp_alive":
+                return {"id": sub_id, "status": "tcp_alive", "latency_ms": tcp_latency, "error": vpn_error}
+            return {"id": sub_id, "status": vpn_status, "latency_ms": vpn_latency or tcp_latency, "error": vpn_error}
         except (asyncio.TimeoutError, socket.timeout):
             return {"id": sub_id, "status": "timeout", "latency_ms": None, "error": f"connect_timeout:{TIMEOUT}s"}
         except Exception as exc:
@@ -205,7 +365,7 @@ async def run_once():
     if not items:
         log_to_server("batch empty")
         return 0
-    semaphore = asyncio.Semaphore(CONCURRENCY)
+    semaphore = asyncio.Semaphore(min(CONCURRENCY, VPN_CONCURRENCY))
     results = await asyncio.gather(*(check_item(item, semaphore) for item in items))
     report = {"worker_id": WORKER_ID, "results": results}
     response = request_json("/ru-check/report", report, method="POST")
@@ -274,12 +434,21 @@ else
   echo "curl already installed: $(curl --version | head -n 1)"
 fi
 
+if ! command -v sing-box >/dev/null 2>&1; then
+  echo "installing sing-box"
+  pkg install -y sing-box
+else
+  echo "sing-box already installed: $(sing-box version 2>&1 | head -n 1)"
+fi
+
 cat > "$DIR/env" <<EOF
 export RU_CHECKER_SERVER=$SERVER
 export RU_CHECKER_TOKEN=$TOKEN
 export RU_CHECKER_BATCH_SIZE={int(config.RU_CHECKER_BATCH_SIZE)}
 export RU_CHECKER_CONNECT_TIMEOUT={float(config.RU_CHECKER_CONNECT_TIMEOUT)}
 export RU_CHECKER_CONCURRENCY={int(config.RU_CHECKER_CONCURRENCY)}
+export RU_CHECKER_VPN_CONCURRENCY={int(config.RU_CHECKER_VPN_CONCURRENCY)}
+export RU_CHECKER_URL_TEST={shlex.quote(str(config.RU_CHECKER_URL_TEST))}
 export RU_CHECKER_INTERVAL_SECONDS={int(config.RU_CHECKER_INTERVAL_SECONDS)}
 EOF
 
