@@ -41,4 +41,8 @@ logs/
 *.sqlite
 *.db
 *.mp4
-storage/
+storage/*.zip
+*.pth
+*.tar.gz
+*.rar
+*.pth.tar

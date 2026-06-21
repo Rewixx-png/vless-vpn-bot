@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: vpn_bot
+    restart: unless-stopped
+    network_mode: host
+    command: python bot.py
+    env_file:
+      - .env
+    environment:
+      - PYTHONOPTIMIZE=1
+      - PYTHONDONTWRITEBYTECODE=1
+
+  checker:
+    build: .
+    container_name: vpn_checker
+    restart: unless-stopped
+    network_mode: host
+    command: python utils/checker/service.py
+    env_file:
+      - .env
+
+  worker_high:
+    build: .
+    container_name: vpn_worker_high
+    restart: unless-stopped
+    network_mode: host
+    command: python -m celery -A celery_app worker -n worker_high@%h -Q high_priority -c 1 --prefetch-multiplier=1
+    env_file:
+      - .env
+
+  worker_low:
+    build: .
+    container_name: vpn_worker_low
+    restart: unless-stopped
+    network_mode: host
+    command: python -m celery -A celery_app worker -n worker_low@%h -Q low_priority -c 1 --prefetch-multiplier=1
+    env_file:
+      - .env
+
+  beat:
+    build: .
+    container_name: vpn_beat
+    restart: unless-stopped
+    network_mode: host
+    command: python -m celery -A celery_app beat
+    env_file:
+      - .env
+
+  ru_proxy_monitor:
+    build: .
+    container_name: vpn_ru_proxy_monitor
+    restart: unless-stopped
+    network_mode: host
+    command: python utils/ru_proxy_monitor.py
+    env_file:
+      - .env
+
+  ssh_proxy:
+    build: .
+    container_name: vpn_ssh_proxy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /root/.ssh/ru_checker_tunnel:/root/.ssh/ru_checker_tunnel:ro
+    command: ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=no -i /root/.ssh/ru_checker_tunnel -L 19080:127.0.0.1:10808 user1@37.18.102.249
