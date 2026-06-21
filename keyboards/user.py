@@ -5,29 +5,79 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def user_main_kb(is_admin: bool = False):
     kb = InlineKeyboardBuilder()
 
-    kb.button(text="🚀 Подключиться", callback_data="my_subscription")
-    kb.button(text="📂 Профили", callback_data="groups_list")
+    kb.button(
+        text="Подключиться",
+        icon_custom_emoji_id="5364130646207772829",
+        callback_data="my_subscription",
+    )
+    kb.button(
+        text="Профили",
+        icon_custom_emoji_id="6039630677182254664",
+        callback_data="groups_list",
+    )
 
-    kb.button(text="📡 Статус сети", callback_data="public_stats")
-    kb.button(text="⚙️ Фильтры и лимит", callback_data="settings_main")
+    kb.button(
+        text="Статус сети",
+        icon_custom_emoji_id="6037397706505195857",
+        callback_data="public_stats",
+    )
+    kb.button(
+        text="Фильтры и лимит",
+        icon_custom_emoji_id="6032742198179532882",
+        callback_data="settings_main",
+    )
 
-    kb.button(text="🆘 Как подключить", callback_data="user_instruction")
+    kb.button(
+        text="Как подключить",
+        icon_custom_emoji_id="6030848053177486888",
+        callback_data="user_instruction",
+    )
+    kb.button(
+        text="TG Прокси",
+        icon_custom_emoji_id="5890925363067886150",
+        callback_data="tg_proxy_list",
+    )
 
-    kb.button(text="💎 Поддержать проект", callback_data="donate_info")
+    kb.button(
+        text="Поддержать проект",
+        icon_custom_emoji_id="6037083366438737901",
+        callback_data="donate_info",
+    )
 
     if is_admin:
-        kb.button(text="🔒 Панель Админа", callback_data="admin_home")
+        kb.button(
+            text="Панель Админа",
+            icon_custom_emoji_id="5884097155341226387",
+            callback_data="admin_home",
+        )
 
-    kb.adjust(2, 2, 1, 1)
+    kb.adjust(2, 2, 1, 1, 1)
     return kb.as_markup()
 
 
 def sub_action_kb(url: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📱 QR-Код", callback_data="sub_qr_main")
-    kb.button(text="⚙️ Фильтры", callback_data="settings_main")
-    kb.button(text="🏠 Главное меню", callback_data="home")
-    kb.adjust(1, 1, 1)
+    kb.button(
+        text="QR-Код",
+        icon_custom_emoji_id="5766975922620076409",
+        callback_data="sub_qr_main",
+    )
+    kb.button(
+        text="TG Прокси",
+        icon_custom_emoji_id="5890925363067886150",
+        callback_data="tg_proxy_list",
+    )
+    kb.button(
+        text="Фильтры",
+        icon_custom_emoji_id="6032742198179532882",
+        callback_data="settings_main",
+    )
+    kb.button(
+        text="Главное меню",
+        icon_custom_emoji_id="5938537205847822613",
+        callback_data="home",
+    )
+    kb.adjust(1, 1, 1, 1)
     return kb.as_markup()
 
 
@@ -36,11 +86,25 @@ def settings_main_kb(current_limit: int, use_fragment: bool = False):
     limit_text = "♾️ Безлимит" if current_limit == 0 else f"{current_limit} шт."
     frag_text = "✅ Вкл" if use_fragment else "❌ Выкл"
 
-    kb.button(text="🌍 Фильтр стран", callback_data="settings_countries")
-    kb.button(text="⚡ Тип серверов", callback_data="settings_tags")
-    kb.button(text=f"🔢 Лимит: {limit_text}", callback_data="settings_limit")
     kb.button(
-        text=f"🛡 Фрагментация (DPI): {frag_text}", callback_data="toggle_fragment"
+        text="Фильтр стран",
+        icon_custom_emoji_id="5776233299424843260",
+        callback_data="settings_countries",
+    )
+    kb.button(
+        text="Тип серверов",
+        icon_custom_emoji_id="5881806211195605908",
+        callback_data="settings_tags",
+    )
+    kb.button(
+        text=f"Лимит: {limit_text}",
+        icon_custom_emoji_id="5794164805065514131",
+        callback_data="settings_limit",
+    )
+    kb.button(
+        text=f"Фрагментация (DPI): {frag_text}",
+        icon_custom_emoji_id="6030445631921721471",
+        callback_data="toggle_fragment",
     )
     kb.button(text="🔙 Назад", callback_data="home")
     kb.adjust(2, 2, 1)
@@ -157,8 +221,16 @@ def groups_list_kb(groups: list):
     kb = InlineKeyboardBuilder()
     for g in groups:
         kb.button(text=f"📂 {g.name}", callback_data=f"group_view_{g.id}")
-    kb.button(text="➕ Новая группа", callback_data="group_create")
-    kb.button(text="🔙 Главное меню", callback_data="home")
+    kb.button(
+        text="Новая группа",
+        icon_custom_emoji_id="5886473311637999700",
+        callback_data="group_create",
+    )
+    kb.button(
+        text="Главное меню",
+        icon_custom_emoji_id="5938537205847822613",
+        callback_data="home",
+    )
     kb.adjust(1)
     return kb.as_markup()
 
@@ -204,6 +276,75 @@ def pay_link_kb(url: str):
 def back_to_home():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="home")]
+            [
+                InlineKeyboardButton(
+                    text="Главное меню",
+                    icon_custom_emoji_id="5938537205847822613",
+                    callback_data="home",
+                )
+            ]
         ]
     )
+
+
+def tg_proxy_kb(proxy_items: list | None = None, offset: int = 0, page_size: int = 16):
+    kb = InlineKeyboardBuilder()
+
+    items = proxy_items or []
+    total = len(items)
+    safe_offset = max(0, min(offset, max(0, total - 1))) if total else 0
+
+    if total > 0:
+        page = items[safe_offset : safe_offset + page_size]
+        for idx, item in enumerate(page, start=safe_offset + 1):
+            link = str(item.get("link", "") or "").strip()
+            latency_raw = item.get("latency_ms")
+            kind_raw = str(item.get("kind", "mtproto") or "mtproto").strip().lower()
+            kind_text = "SOCKS5" if kind_raw == "socks5" else "MTProto"
+            try:
+                latency_ms = int(latency_raw)
+                latency_text = f"{latency_ms}ms"
+            except Exception:
+                latency_text = "~"
+
+            if not link:
+                continue
+
+            button_text = f"{idx}. {kind_text} - {latency_text}"
+            if len(button_text) > 64:
+                button_text = f"#{idx} {kind_text} {latency_text}"
+            kb.button(text=button_text, url=link)
+
+        kb.adjust(2)
+
+        nav_row = []
+        prev_offset = safe_offset - page_size
+        next_offset = safe_offset + page_size
+
+        if prev_offset >= 0:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="⬅️ Назад", callback_data=f"tg_proxy_page_{prev_offset}"
+                )
+            )
+        if next_offset < total:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="➡️ Дальше", callback_data=f"tg_proxy_page_{next_offset}"
+                )
+            )
+
+        if nav_row:
+            kb.row(*nav_row)
+
+    kb.row(
+        InlineKeyboardButton(
+            text="🔄 Обновить список", callback_data="tg_proxy_refresh"
+        ),
+        InlineKeyboardButton(
+            text="Главное меню",
+            icon_custom_emoji_id="5938537205847822613",
+            callback_data="home",
+        ),
+    )
+    return kb.as_markup()

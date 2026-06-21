@@ -63,12 +63,12 @@ async def run_collector_task() -> Dict[str, Any]:
         )
         await Reporter.send_info(
             bot_instance,
-            "🟢 Стартовал плановый сборщик конфигов (2 базовых источника).",
+            "🟢 Стартовал плановый сборщик конфигов (2 фиксированных источника).",
         )
 
         old_counts = await StatsRepo.get_regions_counts()
         result = await SubscriptionCollector.run_collection()
-        cleaned = await SubRepo.cleanup_dead_subs(max_deaths=10)
+        cleaned = await SubRepo.cleanup_dead_subs(max_deaths=20)
         new_counts = await StatsRepo.get_regions_counts()
 
         await SystemRepo.set_config(

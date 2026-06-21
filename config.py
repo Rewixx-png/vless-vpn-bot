@@ -2,12 +2,11 @@ from pydantic_settings import BaseSettings
 from typing import List
 from pydantic import SecretStr
 
-
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     ADMIN_IDS: List[int]
-    DB_URL: str
-    CRYPTO_BOT_TOKEN: SecretStr
+    DB_URL: str = "sqlite+aiosqlite:///./storage/vless.db"
+    CRYPTO_BOT_TOKEN: SecretStr | None = None
 
     REDIS_URL: str = "redis://localhost:6379/0"
     PUBLIC_IP: str = "127.0.0.1"
@@ -46,9 +45,16 @@ class Settings(BaseSettings):
     public_domain: str | None = None
     EXTERNAL_SUB_URL: str | None = None
 
+    STRICT_RKN_FILTER: bool = True
+    BLOCKED_SNIS: List[str] =[
+        "discord.com", "discord.gg", "rutracker.org", 
+        "googlevideo.com", "youtube.com", "ytimg.com",
+        "instagram.com", "facebook.com", "twitter.com", "x.com",
+        "t.co", "linkedin.com", "netflix.com"
+    ]
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
 
 config = Settings()

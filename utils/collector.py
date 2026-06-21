@@ -13,9 +13,13 @@ from utils.batch_processor import CpuAdaptiveProcessor
 
 logger = logging.getLogger("Collector")
 
-DEFAULT_SOURCES = [
+FIXED_SOURCE_URLS = [
     "https://github.com/igareck/vpn-configs-for-russia/blob/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://github.com/igareck/vpn-configs-for-russia/blob/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+]
+
+DEFAULT_SOURCES = [
+    *FIXED_SOURCE_URLS,
 ]
 
 
@@ -27,7 +31,13 @@ class SubscriptionCollector:
     @classmethod
     async def run_collection(cls) -> dict:
         db_sources = await SourceRepo.get_enabled_urls()
-        base_sources = list(dict.fromkeys(DEFAULT_SOURCES[:2] + db_sources))
+        allowed_sources_set = set(FIXED_SOURCE_URLS)
+        allowed_db_sources = [
+            url
+            for url in db_sources
+            if url in allowed_sources_set
+        ]
+        base_sources = list(dict.fromkeys(DEFAULT_SOURCES + allowed_db_sources))
 
         connector = aiohttp.TCPConnector(limit=15)
 

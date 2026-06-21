@@ -3,13 +3,31 @@ import asyncio
 import os
 import random
 import logging
+import re
+import shutil
+import tempfile
 import uuid
 from utils.parser import LinkParser
 
 logger = logging.getLogger("XrayCore")
 
 class XrayExecutor:
-    XRAY_BIN = "/usr/local/bin/xray"
+    XRAY_BIN = os.getenv("XRAY_BIN", "/usr/local/bin/xray")
+
+    @classmethod
+    def _resolve_xray_bin(cls) -> str | None:
+        candidates = [
+            os.getenv("XRAY_BIN"),
+            cls.XRAY_BIN,
+            shutil.which("xray"),
+            "/data/data/com.termux/files/usr/bin/xray",
+            "/usr/local/bin/xray",
+            "/usr/bin/xray",
+        ]
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return None
     
     @staticmethod
     def _generate_config(parsed: dict, local_port: int) -> dict:
@@ -84,23 +102,32 @@ class XrayExecutor:
         parsed = LinkParser.parse_vless(config_url)
         if not parsed:
             return None, 0, "CONFIG_ERR: Invalid Link Format"
-        
-        import re
+
         uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         if not re.match(uuid_pattern, parsed.get('uuid', ''), re.IGNORECASE):
             return None, 0, "CONFIG_ERR: Invalid UUID Format"
 
+        xray_bin = cls._resolve_xray_bin()
+        if not xray_bin:
+            return None, 0, "SYS_ERR: Xray binary not found (set XRAY_BIN)"
+
         local_port = random.randint(20000, 60000)
-        unique_id = uuid.uuid4().hex
-        config_path = f"/tmp/xray_{unique_id}.json"
+        config_path = ""
 
         try:
+            unique_id = uuid.uuid4().hex
+            fd, config_path = tempfile.mkstemp(
+                prefix=f"xray_{unique_id}",
+                suffix=".json",
+            )
+            os.close(fd)
+
             xray_conf = cls._generate_config(parsed, local_port)
-            with open(config_path, 'w') as f:
+            with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(xray_conf, f)
 
             process = await asyncio.create_subprocess_exec(
-                cls.XRAY_BIN, "-c", config_path,
+                xray_bin, "-c", config_path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 start_new_session=True
@@ -148,12 +175,10 @@ class XrayExecutor:
     @staticmethod
     def cleanup_zombies(max_age_sec: int = 300):
         try:
-            import re
             import time
             import psutil
 
             now = time.time()
-            pattern = re.compile(r"/tmp/xray_[0-9a-f]+\.json", re.IGNORECASE)
 
             for proc in psutil.process_iter(["name", "cmdline", "create_time"]):
                 try:
@@ -167,11 +192,18 @@ class XrayExecutor:
                     if "xray" not in proc_name and "/xray" not in cmdline_str:
                         continue
 
-                    match = pattern.search(cmdline_str)
-                    if not match:
+                    config_path = None
+                    for arg in cmdline:
+                        if not isinstance(arg, str):
+                            continue
+                        base = os.path.basename(arg)
+                        if base.startswith("xray_") and base.endswith(".json"):
+                            config_path = arg
+                            break
+
+                    if not config_path:
                         continue
 
-                    config_path = match.group(0)
                     proc_age = now - float(proc.info.get("create_time") or now)
                     config_age = proc_age
 

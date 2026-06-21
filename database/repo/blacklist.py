@@ -1,18 +1,17 @@
-from sqlalchemy import select, insert, delete, func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import delete, func, select
 from database.core import async_session_factory
 from database.models import BlacklistedItem
+
 
 class BlacklistRepo:
     @staticmethod
     async def add_to_blacklist(vless_key: str, reason: str = "Unknown Region"):
         async with async_session_factory() as session:
-            stmt = pg_insert(BlacklistedItem).values(
-                vless_key=vless_key, 
-                reason=reason
-            ).on_conflict_do_nothing(index_elements=['vless_key'])
-            
-            await session.execute(stmt)
+            existing = await session.scalar(
+                select(BlacklistedItem.id).where(BlacklistedItem.vless_key == vless_key)
+            )
+            if existing is None:
+                session.add(BlacklistedItem(vless_key=vless_key, reason=reason))
             await session.commit()
 
     @staticmethod
@@ -27,13 +26,13 @@ class BlacklistRepo:
     async def get_count() -> int:
         async with async_session_factory() as session:
             return await session.scalar(select(func.count(BlacklistedItem.id))) or 0
-    
+
     @staticmethod
     async def clear_blacklist():
         async with async_session_factory() as session:
             await session.execute(delete(BlacklistedItem))
             await session.commit()
-            
+
     @staticmethod
     async def clear_all():
         async with async_session_factory() as session:

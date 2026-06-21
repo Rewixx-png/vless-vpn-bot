@@ -1,9 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-pm2 flush
+set -euo pipefail
 
-pm2 start ecosystem.config.js
+if command -v pm2 >/dev/null 2>&1; then
+    pm2 flush
+    pm2 start ecosystem.config.js
+    pm2 save
+    pm2 list
+    exit 0
+fi
 
-pm2 save
-
-pm2 list
+echo "pm2 not found, using Termux launcher"
+if [ -x "./termux/start.sh" ]; then
+    ./termux/start.sh
+else
+    echo "Missing executable script: ./termux/start.sh"
+    echo "Run: chmod +x termux/*.sh"
+    exit 1
+fi

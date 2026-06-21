@@ -57,15 +57,11 @@ def recheck_menu_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="♻️ Full recheck (1 проход)", callback_data="admin_recheck_run_all_1")
     kb.button(text="⚡ Active (1 проход)", callback_data="admin_recheck_run_active_1")
-    kb.button(text="⚡ Active (3 прохода)", callback_data="admin_recheck_run_active_3")
-    kb.button(text="⚡ Active (5 проходов)", callback_data="admin_recheck_run_active_5")
-    kb.button(
-        text="⚡ Active (10 проходов)", callback_data="admin_recheck_run_active_10"
-    )
     kb.button(text="💀 Dead recheck", callback_data="admin_recheck_run_dead_1")
+    kb.button(text="🛑 Завершить активную", callback_data="admin_recheck_stop_active")
     kb.button(text="🌍 Обновить GeoIP", callback_data="admin_recheck_regions_force")
     kb.button(text="🔙 Назад", callback_data="admin_home")
-    kb.adjust(1, 2, 2, 1, 1, 1)
+    kb.adjust(1, 1, 1, 1, 1, 1)
     return kb.as_markup()
 
 

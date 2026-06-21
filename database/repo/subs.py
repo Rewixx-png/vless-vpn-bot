@@ -275,6 +275,8 @@ class SubRepo:
                 else:
                     case_death.append(f"WHEN {upd['id']} THEN death_count")
 
+            checked_at = datetime.now(timezone.utc)
+
             sql = text(f"""
                 UPDATE subscriptions
                 SET 
@@ -284,12 +286,12 @@ class SubRepo:
                     ai_available = CASE id {" ".join(case_ai)} END,
                     no_ads = CASE id {" ".join(case_no_ads)} END,
                     death_count = CASE id {" ".join(case_death)} END,
-                    last_checked_at = NOW()
+                    last_checked_at = :checked_at
                 WHERE id IN ({",".join(map(str, ids))})
             """)
 
             try:
-                await session.execute(sql)
+                await session.execute(sql, {"checked_at": checked_at})
                 await session.commit()
                 _invalidate_cache("subscription")
             except Exception as e:
@@ -430,18 +432,31 @@ class SubRepo:
                 return 0
 
             from database.models import BlacklistedItem
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            keys_to_move = [sub.vless_key for sub in subs if sub.vless_key]
+            existing_keys = set()
+            if keys_to_move:
+                existing_result = await session.execute(
+                    select(BlacklistedItem.vless_key).where(
+                        BlacklistedItem.vless_key.in_(keys_to_move)
+                    )
+                )
+                existing_keys = set(existing_result.scalars().all())
 
             count = 0
             for sub in subs:
-                ins = (
-                    pg_insert(BlacklistedItem)
-                    .values(
-                        vless_key=sub.vless_key, reason="Unknown Region (Admin Action)"
+                if not sub.vless_key:
+                    continue
+
+                if sub.vless_key not in existing_keys:
+                    session.add(
+                        BlacklistedItem(
+                            vless_key=sub.vless_key,
+                            reason="Unknown Region (Admin Action)",
+                        )
                     )
-                    .on_conflict_do_nothing()
-                )
-                await session.execute(ins)
+                    existing_keys.add(sub.vless_key)
+
                 count += 1
 
             del_stmt = delete(Subscription).where(

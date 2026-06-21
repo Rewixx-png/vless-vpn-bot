@@ -3,6 +3,8 @@
 Telegram-бот и набор сервисов для автоматической выдачи и управления VLESS/Reality подписками.
 Проект ориентирован на продакшен-нагрузку: отдельный checker-сервис, очереди Celery, фоновая очистка и мониторинг.
 
+> Эта копия адаптирована под **Termux Lite**: SQLite + Redis + Celery без обязательного PostgreSQL.
+
 ## Что умеет
 
 - Автоматически выдает подписки пользователям через Telegram.
@@ -17,17 +19,53 @@ Telegram-бот и набор сервисов для автоматическо
 - `CheckerSVC` (`utils/checker/service.py`) - микросервис проверки прокси.
 - `VPN_Worker` + `VPN_Beat` (`celery_app.py`) - обработка и планирование фоновых задач.
 - `SubscriptionServer` (`utils/sub_server.py`) - HTTP endpoint для ссылок подписки (по умолчанию порт `2082`).
-- PostgreSQL - хранение пользователей, подписок, групп, источников.
+- SQLite (Termux Lite) или PostgreSQL (прод) - хранение пользователей, подписок, групп, источников.
 - Redis - брокер и backend очередей Celery.
+
+## Termux Lite (рекомендуется для телефона)
+
+1) Запустите подготовку окружения:
+
+```bash
+bash termux/setup.sh
+```
+
+2) Настройте `.env`:
+
+```bash
+cp .env.termux.example .env
+nano .env
+```
+
+Минимально заполните:
+
+- `BOT_TOKEN`
+- `ADMIN_IDS`
+
+3) Запустите сервисы:
+
+```bash
+bash termux/start.sh
+```
+
+4) Проверка статуса и остановка:
+
+```bash
+bash termux/status.sh
+bash termux/stop.sh
+```
+
+Логи находятся в `.termux/logs/`.
 
 ## Требования
 
+- Termux (Android) + `pkg`
 - Ubuntu 20.04+ или Debian 11+
 - Python 3.10+
-- PostgreSQL
+- PostgreSQL (только для full/prod профиля)
 - Redis
 - Xray-core
-- Node.js/npm (для PM2)
+- Node.js/npm (только для PM2 в Linux-профиле)
 
 ## Быстрый старт
 
@@ -147,6 +185,7 @@ python3 bot.py
 - `MD/API.md` - API и форматы подписок
 - `MD/USER_COMMANDS.md` - команды для пользователей
 - `MD/ADMIN_COMMANDS.md` - команды для админов
+- `MD/TERMUX.md` - запуск и обслуживание в Termux
 - `MD/TROUBLESHOOTING.md` - диагностика проблем
 
 ## Частые проблемы

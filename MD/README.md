@@ -8,6 +8,7 @@
 - [API.md](API.md) - HTTP endpoints подписочного сервера и checker.
 - [USER_COMMANDS.md](USER_COMMANDS.md) - пользовательские сценарии в Telegram-боте.
 - [ADMIN_COMMANDS.md](ADMIN_COMMANDS.md) - функции админ-панели и операционные действия.
+- [TERMUX.md](TERMUX.md) - запуск и сопровождение Lite-профиля на Android.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - диагностика и быстрые восстановительные шаги.
 
 ## С чего начать

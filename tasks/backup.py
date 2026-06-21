@@ -58,6 +58,15 @@ async def run_backup_snapshot_task() -> Dict[str, Any]:
     bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
 
     try:
+        normalized_db_url = config.DB_URL.replace(
+            "postgresql+asyncpg://",
+            "postgresql://",
+            1,
+        )
+        if not normalized_db_url.startswith(("postgresql://", "postgres://")):
+            logger.info("Backup snapshot skipped: DB_URL is not PostgreSQL")
+            return {"status": "skipped", "reason": "non_postgres"}
+
         await Reporter.send_system_log(bot, "Backup snapshot task started")
 
         pg = _parse_postgres_url(config.DB_URL)

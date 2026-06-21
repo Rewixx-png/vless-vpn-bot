@@ -60,6 +60,7 @@ app.conf.task_routes = {
     "tasks.check_stability_task": {"queue": "low_priority"},
     "tasks.update_geoip_task": {"queue": "low_priority"},
     "tasks.run_backup_snapshot_task": {"queue": "low_priority"},
+    "tasks.update_tg_proxy_task": {"queue": "low_priority"},
 }
 
 app.conf.beat_schedule = {
@@ -69,7 +70,7 @@ app.conf.beat_schedule = {
     },
     "check-stability-every-30-minutes": {
         "task": "tasks.check_stability_task",
-        "schedule": 1800.0,
+        "schedule": float(BEAT_SCHEDULE.get("stability_interval", 3600.0)),
     },
     "update-geoip-monthly": {
         "task": "tasks.update_geoip_task",
@@ -78,6 +79,10 @@ app.conf.beat_schedule = {
     "backup-db-hourly": {
         "task": "tasks.run_backup_snapshot_task",
         "schedule": float(BEAT_SCHEDULE.get("backup_interval", 3600.0)),
+    },
+    "update-tg-proxy-hourly": {
+        "task": "tasks.update_tg_proxy_task",
+        "schedule": float(BEAT_SCHEDULE.get("tg_proxy_interval", 3600.0)),
     },
 }
 

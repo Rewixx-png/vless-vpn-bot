@@ -1,4 +1,6 @@
 import urllib.parse
+from datetime import datetime
+import time
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import StateFilter
@@ -11,13 +13,206 @@ from keyboards.user import (
     settings_limit_kb,
     sub_action_kb,
     settings_tags_kb,
+    tg_proxy_kb,
 )
 from handlers.user.states import UserStates
 from handlers.user.start import edit_or_answer
 from config import config
 from utils.qr import QRGenerator
+from utils.tg_proxy import TelegramProxyService
 
 router = Router()
+
+
+def _extract_proxy_items(data: dict) -> list[dict]:
+    if not isinstance(data, dict):
+        return []
+
+    raw_items = data.get("proxy_items")
+    if isinstance(raw_items, list) and raw_items:
+        cleaned = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            link = str(item.get("link", "") or "").strip()
+            if not link:
+                continue
+            latency_raw = item.get("latency_ms")
+            try:
+                latency_ms = int(latency_raw)
+            except Exception:
+                latency_ms = 0
+            kind = str(item.get("kind", "mtproto") or "mtproto").strip().lower()
+            if kind not in {"mtproto", "socks5"}:
+                kind = "mtproto"
+            cleaned.append(
+                {
+                    "link": link,
+                    "latency_ms": latency_ms,
+                    "kind": kind,
+                }
+            )
+        if cleaned:
+            return cleaned
+
+    proxies = data.get("proxies", [])
+    if not isinstance(proxies, list):
+        return []
+    return [
+        {"link": str(link).strip(), "latency_ms": 0, "kind": "mtproto"}
+        for link in proxies
+        if str(link).strip()
+    ]
+
+
+def _build_tg_proxy_text(
+    data: dict,
+    proxy_items: list[dict],
+    is_stale: bool,
+    offset: int,
+    page_size: int,
+) -> str:
+    checked_at = int(data.get("checked_at", 0) or 0) if isinstance(data, dict) else 0
+
+    checked_at_text = "—"
+    if checked_at > 0:
+        checked_at_text = datetime.fromtimestamp(checked_at).strftime("%d.%m.%Y %H:%M")
+
+    if not proxy_items:
+        return (
+            "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Сейчас нет рабочих прокси в кэше.\n"
+            "Нажмите «Обновить список», чтобы запустить проверку в фоне.\n\n"
+            "⚠️ <b>Важно:</b> проверяйте и подключайте прокси через <b>официальный Telegram</b>.\n"
+            "В неофициальных клиентах (fork) бывает бесконечная проверка."
+        )
+
+    total = len(proxy_items)
+    mtproto_total = sum(1 for item in proxy_items if item.get("kind") == "mtproto")
+    socks_total = total - mtproto_total
+    safe_offset = max(0, min(offset, max(0, total - 1))) if total else 0
+    start_idx = safe_offset + 1
+    end_idx = min(total, safe_offset + page_size)
+
+    lines = [
+        "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>",
+        "━━━━━━━━━━━━━━━━━━",
+        "",
+        f"<b>Обновлено:</b> {checked_at_text}",
+        f"<b>Проверено:</b> {int(data.get('checked', 0) or 0)}",
+        f"<b>Рабочих:</b> {total}",
+        f"<b>MTProto:</b> {mtproto_total}",
+        f"<b>SOCKS5:</b> {socks_total}",
+        f"<b>Показано:</b> {start_idx}-{end_idx}",
+    ]
+
+    if is_stale:
+        lines.append("<i>Показываю кэш; обновление уже запущено в фоне.</i>")
+
+    lines.append(
+        "⚠️ <b>Важно:</b> проверяйте и подключайте прокси через <b>официальный Telegram</b>."
+    )
+    lines.append(
+        "В неофициальных клиентах (fork) бывает бесконечная проверка."
+    )
+
+    lines.append("")
+    lines.append("<i>Выберите прокси кнопкой ниже — у каждой кнопки есть тип и пинг (ms).</i>")
+    lines.append("<i>Нажимайте аккуратно: одна кнопка = один прокси.</i>")
+    return "\n".join(lines)
+
+
+def _queue_tg_proxy_refresh() -> bool:
+    try:
+        from tasks import update_tg_proxy_task
+
+        update_tg_proxy_task.delay()
+        return True
+    except Exception:
+        return False
+
+
+async def _render_tg_proxy(callback: CallbackQuery, state: FSMContext, offset: int = 0):
+    data = await TelegramProxyService.get_cached()
+
+    if not data:
+        queued = _queue_tg_proxy_refresh()
+        if queued:
+            text = (
+                "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "⏳ Первый список еще готовится.\n"
+                "Я запустил проверку в фоне — нажмите «Обновить список» через 20-40 секунд.\n\n"
+                "⚠️ <b>Важно:</b> проверяйте и подключайте прокси через <b>официальный Telegram</b>.\n"
+                "В неофициальных клиентах (fork) бывает бесконечная проверка."
+            )
+        else:
+            text = (
+                "<b>🧩 TG Proxy (MTProto / SOCKS5)</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "⚠️ Не удалось запустить фоновое обновление. Попробуйте еще раз.\n\n"
+                "⚠️ <b>Важно:</b> проверяйте и подключайте прокси через <b>официальный Telegram</b>.\n"
+                "В неофициальных клиентах (fork) бывает бесконечная проверка."
+            )
+
+        await edit_or_answer(
+            callback.message,
+            text,
+            tg_proxy_kb(),
+            state,
+            media_url="video",
+        )
+        return
+
+    checked_at = int(data.get("checked_at", 0) or 0)
+    is_stale = checked_at <= 0 or (int(time.time()) - checked_at) > 3600
+    if is_stale:
+        _queue_tg_proxy_refresh()
+
+    proxy_items = _extract_proxy_items(data)
+    page_size = 16
+    text = _build_tg_proxy_text(
+        data,
+        proxy_items=proxy_items,
+        is_stale=is_stale,
+        offset=offset,
+        page_size=page_size,
+    )
+    await edit_or_answer(
+        callback.message,
+        text,
+        tg_proxy_kb(proxy_items=proxy_items, offset=offset, page_size=page_size),
+        state,
+        media_url="video",
+    )
+
+
+@router.callback_query(F.data == "tg_proxy_list")
+async def show_tg_proxy_list(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("🧩 Открываю список прокси...", show_alert=False)
+    await _render_tg_proxy(callback, state, offset=0)
+
+
+@router.callback_query(F.data == "tg_proxy_refresh")
+async def refresh_tg_proxy_list(callback: CallbackQuery, state: FSMContext):
+    queued = _queue_tg_proxy_refresh()
+    if queued:
+        await callback.answer("🔄 Запустил обновление в фоне", show_alert=True)
+    else:
+        await callback.answer("⚠️ Не удалось запустить обновление", show_alert=True)
+    await _render_tg_proxy(callback, state, offset=0)
+
+
+@router.callback_query(F.data.startswith("tg_proxy_page_"))
+async def tg_proxy_page(callback: CallbackQuery, state: FSMContext):
+    try:
+        offset = int(callback.data.split("tg_proxy_page_")[1])
+    except Exception:
+        offset = 0
+
+    await callback.answer("", show_alert=False)
+    await _render_tg_proxy(callback, state, offset=max(0, offset))
 
 
 @router.callback_query(F.data == "my_subscription")

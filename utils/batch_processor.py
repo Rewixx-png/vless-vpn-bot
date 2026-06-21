@@ -1,8 +1,12 @@
 import asyncio
-import psutil
 import time
 from typing import Callable, List, Any, Optional, Dict
 from dataclasses import dataclass
+
+try:
+    import psutil
+except Exception:
+    psutil = None
 
 @dataclass
 class BatchResult:
@@ -253,8 +257,12 @@ class CpuAdaptiveProcessor(BatchProcessor):
             while not self._cancelled and stats["completed"] < len(items):
                 await asyncio.sleep(2.0)
                 try:
-                    cpu_usage = psutil.cpu_percent(interval=None)
-                    ram_usage = psutil.virtual_memory().percent
+                    if psutil is None:
+                        cpu_usage = 0.0
+                        ram_usage = 0.0
+                    else:
+                        cpu_usage = psutil.cpu_percent(interval=None)
+                        ram_usage = psutil.virtual_memory().percent
                     
                     if ram_usage >= self.target_ram:
                         self.current_concurrency = max(self.min_workers, int(self.current_concurrency * 0.5))

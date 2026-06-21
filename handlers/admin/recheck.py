@@ -70,9 +70,9 @@ async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
 💀 <b>Dead</b> - Попытка воскрешения мёртвых
 🌍 <b>Regions</b> - Обновить геолокацию
 
-<b>Многопроходная проверка:</b>
-Чем больше проходов - тем точнее результат,
-но дольше проверка.</blockquote>"""
+<b>Режим проверки:</b>
+Сейчас используется только 1 проход
+для каждого конфига.</blockquote>"""
 
         await admin_edit_or_answer(
             callback, state, text,
@@ -82,6 +82,50 @@ async def show_recheck_menu(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error showing recheck menu: {e}")
         await callback.answer("❌ Ошибка загрузки меню", show_alert=True)
+
+
+@router.callback_query(F.data == "admin_recheck_stop_active")
+async def stop_active_recheck(callback: CallbackQuery, state: FSMContext):
+    try:
+        is_running, active_ids, reserved_ids = _get_recheck_runtime_status()
+        if not is_running:
+            await BotState.set_maintenance(False)
+            await callback.answer("ℹ️ Активных recheck-задач нет", show_alert=True)
+            await show_recheck_menu(callback, state)
+            return
+
+        task_ids = sorted(
+            {
+                task_id
+                for task_id in (active_ids + reserved_ids)
+                if task_id and task_id != "unknown"
+            }
+        )
+
+        revoked_count = 0
+        for task_id in task_ids:
+            try:
+                celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                revoked_count += 1
+            except Exception:
+                pass
+
+        await BotState.set_maintenance(False)
+        await Reporter.send_admin_action(
+            callback.bot,
+            f"Recheck stop requested by admin {callback.from_user.id}: revoked={revoked_count}, active_ids={active_ids}, reserved_ids={reserved_ids}",
+        )
+
+        await callback.answer(
+            f"🛑 Остановил задач: {revoked_count}",
+            show_alert=True,
+        )
+        await asyncio.sleep(0.3)
+        await show_recheck_menu(callback, state)
+    except Exception as e:
+        logger.error(f"Error stopping recheck task: {e}", exc_info=True)
+        await callback.answer("❌ Не удалось завершить активную задачу", show_alert=True)
+
 
 @router.callback_query(F.data.startswith("admin_recheck_run_"))
 async def run_recheck(callback: CallbackQuery, state: FSMContext):
@@ -101,6 +145,8 @@ async def run_recheck(callback: CallbackQuery, state: FSMContext):
         passes = int(data_parts[4]) if len(data_parts) > 4 else 1
     except ValueError:
         passes = 1
+
+    passes = 1
 
     mode_info = {
         "all": ("♻️ Full", "проверка ВСЕХ конфигов"),

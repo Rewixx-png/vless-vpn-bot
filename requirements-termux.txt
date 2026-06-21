@@ -1,0 +1,17 @@
+aiogram>=3.17.0
+sqlalchemy[asyncio]>=2.0.36
+aiosqlite>=0.20.0
+pydantic-settings>=2.7.0
+pydantic>=2.10.0
+aiohttp>=3.11.0
+aiohttp-cors>=0.8.0
+aiohttp-socks>=0.11.0
+aiofiles>=24.1.0
+celery>=5.4.0
+redis>=5.2.0
+geoip2>=4.8.0
+qrcode[pil]>=8.0
+python-dotenv>=1.0.1
+aiodns>=3.1.1
+pycares>=4.4.0
+aiocryptopay

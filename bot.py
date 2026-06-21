@@ -9,15 +9,23 @@ import signal
 import re
 import gc
 import html
-import psutil
 from datetime import datetime, timedelta
 from typing import Iterable
 from aiogram import Bot, Dispatcher
+
+try:
+    import psutil
+except Exception:
+    psutil = None
 
 from config import config
 
 
 async def memory_monitor(bot: Bot):
+    if psutil is None:
+        logger.warning("psutil unavailable, memory monitor disabled")
+        return
+
     process = psutil.Process(os.getpid())
     while True:
         try:
@@ -365,6 +373,10 @@ async def main():
 
 
 def set_process_affinity():
+    if psutil is None:
+        logger.warning("psutil unavailable, skipping CPU affinity setup")
+        return
+
     try:
         import os
 
