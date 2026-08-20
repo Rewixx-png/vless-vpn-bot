@@ -32,8 +32,6 @@ async def setup_loop_exception_handler_async() -> None:
     loop.set_exception_handler(custom_exc_handler)
 
 
-def _setup_loop_exception_handler() -> None:
-    pass  # no-op; call await setup_loop_exception_handler_async() inside async task bodies
 
 def format_time(seconds: int) -> str:
     if seconds < 60:
@@ -47,5 +45,4 @@ def format_time(seconds: int) -> str:
         m = (seconds % 3600) // 60
         return f"{h} ч {m} мин"
 
-class OptimizedTask(AsyncTask):
-    pass
+OptimizedTask = AsyncTask  # ponytail: alias, all task files use this; rename when touching them

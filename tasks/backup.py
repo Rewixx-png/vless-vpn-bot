@@ -7,11 +7,9 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import unquote, urlparse
 
-from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 
 from celery_app import app
-from config import config
+from config import config, make_bot
 from database.repo import SystemRepo
 from tasks.base import OptimizedTask, setup_loop_exception_handler_async, logger, setup_log_rotation
 from utils.reporter import Reporter
@@ -52,7 +50,7 @@ async def run_backup_snapshot_task() -> Dict[str, Any]:
 
     temp_dir = None
     backup_path = None
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
+    bot = make_bot()
 
     try:
         await Reporter.send_system_log(bot, "Backup snapshot task started")

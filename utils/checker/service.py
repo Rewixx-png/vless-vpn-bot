@@ -15,7 +15,6 @@ asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 import aiohttp
 from aiohttp import web
 from aiohttp_socks import ProxyConnector
-from gunicorn.app.base import BaseApplication
 import redis.asyncio as redis
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -845,19 +844,6 @@ def app_factory():
     app.on_cleanup.append(cleanup_background_tasks)
     return app
 
-
-class GunicornApp(BaseApplication):
-    def __init__(self, options=None):
-        self.options = options or {}
-        super().__init__()
-
-    def load_config(self):
-        for key, value in self.options.items():
-            if key in self.cfg.settings and value is not None:
-                self.cfg.set(key.lower(), value)
-
-    def load(self):
-        return app_factory()
 
 
 def main():

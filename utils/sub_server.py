@@ -667,8 +667,6 @@ echo "logs: $DIR/worker.log"
         try:
             user_id_raw = request.query.get("id")
             format_param = request.query.get("format", "").lower()
-            if request.path.lower().endswith("/sub64"):
-                format_param = "base64"
             types_param = request.query.get("types", "").lower()
             auto_clean_param = request.query.get("auto_clean", "").lower() == "true"
 
@@ -681,6 +679,10 @@ echo "logs: $DIR/worker.log"
             is_hiddify = "hiddify" in user_agent and not is_singbox
             is_v2raytun = "v2raytun" in user_agent
             is_happ = "happ" in user_agent.lower()
+
+            if request.path.lower().endswith("/sub64") and not format_param:
+                if not (is_clash or is_singbox or is_hiddify):
+                    format_param = "base64"
 
             subs = []
             use_fragment = False

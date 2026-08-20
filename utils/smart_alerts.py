@@ -2,7 +2,7 @@ import logging
 import asyncio
 from datetime import datetime, time
 from aiogram import Bot
-from config import config
+from config import config, make_bot
 from database.repo import UserRepo
 
 logger = logging.getLogger("SmartAlerts")
@@ -91,7 +91,7 @@ class SmartAlerts:
                 message_parts.append(current_part)
             
             if bot is None:
-                bot = Bot(token=config.BOT_TOKEN.get_secret_value())
+                bot = make_bot()
                 close_bot = True
             else:
                 close_bot = False
@@ -119,10 +119,3 @@ class SmartAlerts:
             cls._accumulated_adds.clear()
             cls._accumulated_drops.clear()
     
-    @staticmethod
-    async def _notify_region_down(bot: Bot, region: str):
-        pass
-    
-    @staticmethod
-    async def _notify_region_boost(bot: Bot, region: str, added: int):
-        pass

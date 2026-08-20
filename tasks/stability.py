@@ -2,8 +2,6 @@ import asyncio
 import uuid
 from typing import Dict, Any, cast
 
-from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 import redis.asyncio as redis
 
 from celery_app import app
@@ -19,7 +17,7 @@ from utils.batch_processor import SmartBatchProcessor
 from utils.state import BotState
 from utils.smart_alerts import SmartAlerts
 from utils.reporter import Reporter
-from config import config
+from config import config, make_bot
 
 
 STABILITY_LOCK_KEY = "lock:tasks:check_stability"
@@ -105,7 +103,7 @@ async def check_stability_task() -> Dict[str, Any]:
 
     lock_client = None
     lock_token = None
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
+    bot = make_bot()
     try:
         is_maint = await BotState.is_maintenance()
         if is_maint:

@@ -11,15 +11,21 @@ from database.repo import SystemRepo
 
 logger = logging.getLogger("Reporter")
 
+def trim_str(text: str, max_len: int, suffix: str = "...") -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - len(suffix)] + suffix
+
+
 
 class Reporter:
     MAX_MESSAGE_LEN = 3800
 
+
+
     @staticmethod
     def _trim(text: str, max_len: int = MAX_MESSAGE_LEN) -> str:
-        if len(text) <= max_len:
-            return text
-        return text[: max_len - 26] + "\n<i>... сообщение обрезано</i>"
+        return trim_str(text, max_len, "\n<i>... сообщение обрезано</i>")
 
     @staticmethod
     def _escape(value: object) -> str:

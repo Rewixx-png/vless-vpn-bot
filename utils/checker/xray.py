@@ -129,7 +129,6 @@ class XrayExecutor:
             tls_settings = {
                 "serverName": parsed.get('sni') or parsed.get('host') or parsed['server'],
                 "fingerprint": fp,
-                "allowInsecure": True
             }
             if parsed['security'] == 'reality':
                 tls_settings['show'] = False
@@ -161,7 +160,8 @@ class XrayExecutor:
                 "host": parsed.get('host') or parsed.get('sni') or parsed['server'],
             }
         elif parsed['type'] == 'xhttp':
-            stream['xhttpSettings'] = {
+            stream['network'] = 'splithttp'
+            stream['splithttpSettings'] = {
                 "path": parsed.get('path', '/'),
                 "host": parsed.get('host') or parsed.get('sni') or parsed['server'],
                 "mode": parsed.get('mode', 'auto') or 'auto',

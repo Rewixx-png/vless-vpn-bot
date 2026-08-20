@@ -15,11 +15,7 @@ from utils.checker import VlessChecker
 from utils.batch_processor import CpuAdaptiveProcessor
 from utils.state import BotState
 from utils.reporter import Reporter
-from config import config
-
-from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
-
+from config import config, make_bot
 
 @app.task(
     name="tasks.run_admin_recheck_task",
@@ -38,8 +34,7 @@ async def run_admin_recheck_task(
     from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
     from keyboards.admin import recheck_menu_kb
 
-    session = AiohttpSession()
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=session)
+    bot = make_bot()
     try:
         await Reporter.send_admin_action(
             bot,

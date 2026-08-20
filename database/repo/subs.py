@@ -674,14 +674,13 @@ class SubRepo:
 
             async with async_session_factory() as session:
                 stmt = (
-                    sa_update(Subscription)
-                    .where(Subscription.id == bindparam("sub_id"))
-                    .values(region=bindparam("region_val"))
-                    .execution_options(synchronize_session=False)
+                    sa_update(Subscription.__table__)
+                    .where(Subscription.__table__.c.id == bindparam("b_id"))
+                    .values(region=bindparam("b_region"))
                 )
                 await session.execute(
                     stmt,
-                    [{"sub_id": k, "region_val": v} for k, v in updates_dict.items()],
+                    [{"b_id": k, "b_region": v} for k, v in updates_dict.items()],
                 )
                 await session.commit()
                 _invalidate_cache("subscription")

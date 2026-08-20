@@ -5,7 +5,7 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from config import config
-from utils.reporter import Reporter
+from utils.reporter import Reporter, trim_str
 
 
 class ActionLoggingMiddleware(BaseMiddleware):
@@ -13,11 +13,7 @@ class ActionLoggingMiddleware(BaseMiddleware):
         super().__init__()
         self.bot = bot
 
-    @staticmethod
-    def _trim(value: str, max_len: int = 700) -> str:
-        if len(value) <= max_len:
-            return value
-        return value[: max_len - 3] + "..."
+
 
     async def _log_event(self, event: TelegramObject, ok: bool, error: Exception | None) -> None:
         if isinstance(event, Message):
@@ -35,7 +31,7 @@ class ActionLoggingMiddleware(BaseMiddleware):
                 f"username=@{user.username or '-'}\n"
                 f"chat_id={event.chat.id}\n"
                 f"chat_type={event.chat.type}\n"
-                f"text=<code>{html.escape(self._trim(text), quote=False)}</code>"
+                f"text=<code>{html.escape(trim_str(text, 700), quote=False)}</code>"
             )
         elif isinstance(event, CallbackQuery):
             user = event.from_user
@@ -50,13 +46,13 @@ class ActionLoggingMiddleware(BaseMiddleware):
                 f"user_id={user.id}\n"
                 f"username=@{user.username or '-'}\n"
                 f"chat_id={chat_id}\n"
-                f"callback=<code>{html.escape(self._trim(callback_data), quote=False)}</code>"
+                f"callback=<code>{html.escape(trim_str(callback_data, 700), quote=False)}</code>"
             )
         else:
             return
 
         if error is not None:
-            payload += f"\nerror=<code>{html.escape(self._trim(str(error)), quote=False)}</code>"
+            payload += f"\nerror=<code>{html.escape(trim_str(str(error), 700), quote=False)}</code>"
 
         if user.id in config.ADMIN_IDS:
             await Reporter.send_admin_action(self.bot, payload)

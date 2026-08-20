@@ -1,6 +1,15 @@
 # Конфигурация и секреты (НИКОГДА НЕ ПУШИТЬ)
 .env
+.env.*
+*.env
+!.env.example
 config.ini
+credentials*.json
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python кэш и артефакты
 __pycache__/
@@ -29,6 +38,7 @@ venv/
 env/
 ENV/
 .venv/
+.venv*/
 
 # IDE настройки
 .idea/
@@ -40,6 +50,10 @@ logs/
 *.log
 *.sqlite
 *.db
+*.db-*
+*.sqlite3
+celerybeat-schedule*
+*.dump
 *.mp4
 storage/*.zip
 *.pth

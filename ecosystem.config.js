@@ -12,7 +12,7 @@ module.exports = {
       out_file: "/root/Projects/vless-vpn-bot/logs/checker.out.log",
       error_file: "/root/Projects/vless-vpn-bot/logs/checker.err.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",
-      max_memory_restart: "200M",
+      max_memory_restart: "1G",
       kill_timeout: 5000,
       wait_ready: true,
       listen_timeout: 10000
@@ -83,21 +83,6 @@ module.exports = {
         PYTHONOPTIMIZE: "1",
         PYTHONDONTWRITEBYTECODE: "1"
       }
-    },
-    {
-      name: "RU_SSH_Proxy",
-      cwd: "/root/Projects/vless-vpn-bot",
-      script: "/usr/bin/ssh",
-      args: "-N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=no -i /root/.ssh/ru_checker_tunnel -L 19080:127.0.0.1:10808 user1@37.18.102.249",
-      interpreter: "none",
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      out_file: "/root/Projects/vless-vpn-bot/logs/ssh_proxy.out.log",
-      error_file: "/root/Projects/vless-vpn-bot/logs/ssh_proxy.err.log",
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
-      max_memory_restart: "64M",
-      kill_timeout: 5000
     }
   ]
 };

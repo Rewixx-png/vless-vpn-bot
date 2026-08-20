@@ -3,13 +3,11 @@ import uuid
 from typing import Any, Dict, cast
 
 import redis.asyncio as redis
-from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 from celery_app import app
-from config import config
+from config import config, make_bot
 from database.repo import UserRepo
 from tasks.base import OptimizedTask, setup_loop_exception_handler_async, setup_log_rotation
 from utils.reporter import Reporter
@@ -88,7 +86,7 @@ async def probe_blocked_users_task() -> Dict[str, Any]:
     setup_log_rotation()
     await setup_loop_exception_handler_async()
 
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
+    bot = make_bot()
     lock_client = None
     lock_token = None
 

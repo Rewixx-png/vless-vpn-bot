@@ -15,7 +15,7 @@ from typing import Iterable, Callable, Any
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from cachetools import TTLCache
 
-from config import config
+from config import config, make_bot
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +291,7 @@ async def main():
     logger.info("🎬 Starting video preparation...")
     await VideoManager.prepare()
 
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value())
+    bot = make_bot()
     dp = Dispatcher()
     dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
     dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=0.3))

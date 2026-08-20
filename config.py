@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     PUBLIC_IP: str = "127.0.0.1"
     WEB_PORT: int = 2082
 
-    CHECKER_PORT: int = 8081
-    CHECKER_URL: str = "http://127.0.0.1:8081"
+    CHECKER_PORT: int = 8082
+    CHECKER_URL: str = "http://127.0.0.1:8082"
 
     REPORT_CHAT_ID: int | None = None
 
@@ -75,8 +75,22 @@ class Settings(BaseSettings):
     SUPPORT_USERNAME: str = "@RewiX_X"
     FEEDBACK_BOT_USERNAME: str = "@RewFeedBackBot"
 
+
+    TELEGRAM_API_URL: str = "https://api.telegram.org"
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
 
 config = Settings()
+
+from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
+
+def make_bot() -> Bot:
+    api = TelegramAPIServer(
+        base=config.TELEGRAM_API_URL + "/bot{token}/{method}",
+        file=config.TELEGRAM_API_URL + "/file/bot{token}/{path}",
+    )
+    return Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession(api=api))
+

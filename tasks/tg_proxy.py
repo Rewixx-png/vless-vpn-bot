@@ -6,11 +6,9 @@ import uuid
 
 import redis.asyncio as redis
 
-from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 
 from celery_app import app
-from config import config
+from config import config, make_bot
 from tasks.base import OptimizedTask, setup_log_rotation, setup_loop_exception_handler_async
 from utils.reporter import Reporter
 from utils.tg_proxy import TelegramProxyService
@@ -78,8 +76,8 @@ async def update_tg_proxy_task() -> Dict[str, Any]:
     await setup_loop_exception_handler_async()
 
     lock_client = None
-    lock_token = None
-    bot = Bot(token=config.BOT_TOKEN.get_secret_value(), session=AiohttpSession())
+    lock_token: str | None = None
+    bot = make_bot()
     try:
         lock_client, lock_token = await _acquire_tg_proxy_lock()
         if lock_client is None:
